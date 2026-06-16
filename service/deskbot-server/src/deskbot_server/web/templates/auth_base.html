@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{% block page_title %}OpenDesk{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}" />
+</head>
+<body class="agent-theme auth-page">
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <p class="agent-badge" style="margin-bottom:14px;">账户登录</p>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash-msg {% if category == 'error' %}error{% else %}success{% endif %}" style="margin-bottom:14px;">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</body>
+</html>

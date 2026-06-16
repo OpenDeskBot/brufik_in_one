@@ -1,0 +1,30 @@
+# 环境变量
+.env
+
+# Python 虚拟环境
+.venv
+.venv*/
+venv
+venv*/
+ENV/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.so
+
+# 运行时日志 / 缓存
+*.log
+paddle-cache/
+data/
+.pytest_cache/
+.ruff_cache/
+out_phoneme_test.wav
+
+# 如需二次开发 PaddleSpeech 源码，请自行 clone 到此目录（不入仓库）
+PaddleSpeech/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

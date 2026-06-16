@@ -1,0 +1,11 @@
+(footprint "R0805"
+  (version 20240108) (generator "brufik_board1_generator")
+  (layer "F.Cu") (descr "0805") (tags "0805 R0805")
+  (property "Reference" "R" (at 0 -1.2 0) (layer "F.SilkS") (effects (font (size 0.8 0.8))))
+  (property "Value" "R0805" (at 0 1.2 0) (layer "F.Fab") (effects (font (size 0.8 0.8))))
+  (attr smd)
+  (fp_line (start -1 -0.625) (end 1 -0.625) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  (fp_line (start -1 0.625) (end 1 0.625) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  (pad "1" smd rect (at -0.9125 0) (size 0.975 1.25) (layers "F.Cu" "F.Paste" "F.Mask"))
+  (pad "2" smd rect (at 0.9125 0) (size 0.975 1.25) (layers "F.Cu" "F.Paste" "F.Mask"))
+)

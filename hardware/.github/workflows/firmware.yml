@@ -1,0 +1,26 @@
+name: Firmware CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Check flash_rom.sh
+        run: bash -n flash_rom.sh
+
+      - name: Build deskbot_rom
+        run: pio run -e seeed_xiao_esp32s3

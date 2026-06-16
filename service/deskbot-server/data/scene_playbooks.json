@@ -1,0 +1,669 @@
+[
+  {
+    "name": "focused",
+    "title": "专注",
+    "text": "",
+    "text_track": [],
+    "expr_track": [
+      {
+        "id": "e_main",
+        "scene": "focused",
+        "ms": 3565
+      }
+    ],
+    "servo_track": [
+      {
+        "id": "s0",
+        "ms": 480,
+        "preset": "center"
+      },
+      {
+        "id": "s1",
+        "ms": 360,
+        "preset": "pose_x90_y89"
+      },
+      {
+        "id": "s2",
+        "ms": 360,
+        "preset": "pose_x90_y89"
+      },
+      {
+        "id": "s3",
+        "ms": 40,
+        "preset": "pose_x90_y88"
+      },
+      {
+        "id": "s4",
+        "ms": 45,
+        "preset": "pose_x90_y88"
+      },
+      {
+        "id": "s5",
+        "ms": 45,
+        "preset": "pose_x90_y87"
+      },
+      {
+        "id": "s6",
+        "ms": 40,
+        "preset": "pose_x90_y87"
+      },
+      {
+        "id": "s7",
+        "ms": 100,
+        "preset": "pose_x88_y87"
+      },
+      {
+        "id": "s8",
+        "ms": 100,
+        "preset": "pose_x93_y88"
+      },
+      {
+        "id": "s9",
+        "ms": 100,
+        "preset": "pose_x86_y86"
+      },
+      {
+        "id": "s10",
+        "ms": 100,
+        "preset": "pose_x94_y87"
+      },
+      {
+        "id": "s11",
+        "ms": 100,
+        "preset": "pose_x90_y88"
+      },
+      {
+        "id": "s12",
+        "ms": 100,
+        "preset": "pose_x92_y87"
+      },
+      {
+        "id": "s13",
+        "ms": 100,
+        "preset": "pose_x87_y86"
+      },
+      {
+        "id": "s14",
+        "ms": 100,
+        "preset": "pose_x91_y88"
+      },
+      {
+        "id": "s15",
+        "ms": 280,
+        "preset": "pose_x90_y87"
+      },
+      {
+        "id": "s16",
+        "ms": 70,
+        "preset": "pose_x90_y88"
+      },
+      {
+        "id": "s17",
+        "ms": 70,
+        "preset": "pose_x89_y87"
+      },
+      {
+        "id": "s18",
+        "ms": 360,
+        "preset": "pose_x90_y87"
+      },
+      {
+        "id": "s19",
+        "ms": 50,
+        "preset": "pose_x90_y88"
+      },
+      {
+        "id": "s20",
+        "ms": 45,
+        "preset": "pose_x90_y89"
+      },
+      {
+        "id": "s21",
+        "ms": 40,
+        "preset": "center"
+      },
+      {
+        "id": "s22",
+        "ms": 480,
+        "preset": "center"
+      }
+    ]
+  },
+  {
+    "name": "shy",
+    "title": "害羞",
+    "text": "",
+    "text_track": [],
+    "expr_track": [
+      {
+        "id": "e_main",
+        "scene": "shy",
+        "ms": 3315
+      }
+    ],
+    "servo_track": [
+      {
+        "id": "s0",
+        "ms": 400,
+        "preset": "center"
+      },
+      {
+        "id": "s1",
+        "ms": 320,
+        "preset": "pose_x90_y89"
+      },
+      {
+        "id": "s2",
+        "ms": 45,
+        "preset": "pose_x90_y92"
+      },
+      {
+        "id": "s3",
+        "ms": 45,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s4",
+        "ms": 50,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s5",
+        "ms": 90,
+        "preset": "pose_x88_y94"
+      },
+      {
+        "id": "s6",
+        "ms": 85,
+        "preset": "pose_x92_y93"
+      },
+      {
+        "id": "s7",
+        "ms": 90,
+        "preset": "pose_x86_y94"
+      },
+      {
+        "id": "s8",
+        "ms": 85,
+        "preset": "pose_x93_y93"
+      },
+      {
+        "id": "s9",
+        "ms": 90,
+        "preset": "pose_x87_y94"
+      },
+      {
+        "id": "s10",
+        "ms": 80,
+        "preset": "pose_x91_y93"
+      },
+      {
+        "id": "s11",
+        "ms": 90,
+        "preset": "pose_x88_y94"
+      },
+      {
+        "id": "s12",
+        "ms": 85,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s13",
+        "ms": 70,
+        "preset": "pose_x91_y92"
+      },
+      {
+        "id": "s14",
+        "ms": 55,
+        "preset": "pose_x92_y92"
+      },
+      {
+        "id": "s15",
+        "ms": 65,
+        "preset": "pose_x89_y94"
+      },
+      {
+        "id": "s16",
+        "ms": 60,
+        "preset": "pose_x87_y94"
+      },
+      {
+        "id": "s17",
+        "ms": 40,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s18",
+        "ms": 45,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s19",
+        "ms": 40,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s20",
+        "ms": 45,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s21",
+        "ms": 75,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s22",
+        "ms": 70,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s23",
+        "ms": 65,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s24",
+        "ms": 75,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s25",
+        "ms": 80,
+        "preset": "pose_x90_y93"
+      },
+      {
+        "id": "s26",
+        "ms": 100,
+        "preset": "pose_x91_y93"
+      },
+      {
+        "id": "s27",
+        "ms": 90,
+        "preset": "pose_x89_y93"
+      },
+      {
+        "id": "s28",
+        "ms": 300,
+        "preset": "pose_x90_y92"
+      },
+      {
+        "id": "s29",
+        "ms": 45,
+        "preset": "pose_x90_y91"
+      },
+      {
+        "id": "s30",
+        "ms": 40,
+        "preset": "center"
+      },
+      {
+        "id": "s31",
+        "ms": 400,
+        "preset": "center"
+      }
+    ]
+  },
+  {
+    "name": "nod",
+    "title": "点头",
+    "text": "",
+    "text_track": [],
+    "expr_track": [
+      {
+        "id": "e_main",
+        "scene": "nod",
+        "ms": 1515
+      }
+    ],
+    "servo_track": [
+      {
+        "id": "s0",
+        "ms": 161,
+        "preset": "center"
+      },
+      {
+        "id": "s1",
+        "ms": 112,
+        "preset": "pose_x90_y86"
+      },
+      {
+        "id": "s2",
+        "ms": 87,
+        "preset": "pose_x90_y80"
+      },
+      {
+        "id": "s3",
+        "ms": 124,
+        "preset": "pose_x90_y75"
+      },
+      {
+        "id": "s4",
+        "ms": 74,
+        "preset": "pose_x90_y75"
+      },
+      {
+        "id": "s5",
+        "ms": 65,
+        "preset": "pose_x90_y77"
+      },
+      {
+        "id": "s6",
+        "ms": 99,
+        "preset": "pose_x90_y75"
+      },
+      {
+        "id": "s7",
+        "ms": 87,
+        "preset": "pose_x90_y82"
+      },
+      {
+        "id": "s8",
+        "ms": 99,
+        "preset": "pose_x90_y94"
+      },
+      {
+        "id": "s9",
+        "ms": 124,
+        "preset": "pose_x90_y107"
+      },
+      {
+        "id": "s10",
+        "ms": 87,
+        "preset": "pose_x90_y107"
+      },
+      {
+        "id": "s11",
+        "ms": 74,
+        "preset": "pose_x90_y103"
+      },
+      {
+        "id": "s12",
+        "ms": 99,
+        "preset": "pose_x90_y97"
+      },
+      {
+        "id": "s13",
+        "ms": 74,
+        "preset": "pose_x90_y88"
+      },
+      {
+        "id": "s14",
+        "ms": 149,
+        "preset": "center"
+      }
+    ]
+  },
+  {
+    "name": "patrol_lr",
+    "title": "左右巡查",
+    "text": "",
+    "text_track": [],
+    "expr_track": [
+      {
+        "id": "e_main",
+        "scene": "patrol_lr",
+        "ms": 7360
+      }
+    ],
+    "servo_track": [
+      {
+        "id": "s0",
+        "ms": 580,
+        "preset": "center"
+      },
+      {
+        "id": "s1",
+        "ms": 520,
+        "preset": "pose_x82_y90"
+      },
+      {
+        "id": "s2",
+        "ms": 720,
+        "preset": "pose_x72_y90"
+      },
+      {
+        "id": "s3",
+        "ms": 560,
+        "preset": "center"
+      },
+      {
+        "id": "s4",
+        "ms": 520,
+        "preset": "pose_x99_y90"
+      },
+      {
+        "id": "s5",
+        "ms": 780,
+        "preset": "pose_x108_y90"
+      },
+      {
+        "id": "s6",
+        "ms": 520,
+        "preset": "pose_x99_y90"
+      },
+      {
+        "id": "s7",
+        "ms": 720,
+        "preset": "pose_x72_y90"
+      },
+      {
+        "id": "s8",
+        "ms": 560,
+        "preset": "center"
+      },
+      {
+        "id": "s9",
+        "ms": 520,
+        "preset": "pose_x99_y90"
+      },
+      {
+        "id": "s10",
+        "ms": 780,
+        "preset": "pose_x108_y90"
+      },
+      {
+        "id": "s11",
+        "ms": 580,
+        "preset": "center"
+      }
+    ]
+  },
+  {
+    "name": "shake",
+    "title": "摇头",
+    "text": "",
+    "text_track": [],
+    "expr_track": [
+      {
+        "id": "e_main",
+        "scene": "shake",
+        "ms": 2114
+      }
+    ],
+    "servo_track": [
+      {
+        "id": "s0",
+        "ms": 186,
+        "preset": "center"
+      },
+      {
+        "id": "s1",
+        "ms": 161,
+        "preset": "pose_x84_y90"
+      },
+      {
+        "id": "s2",
+        "ms": 236,
+        "preset": "pose_x72_y90"
+      },
+      {
+        "id": "s3",
+        "ms": 74,
+        "preset": "pose_x72_y90"
+      },
+      {
+        "id": "s4",
+        "ms": 65,
+        "preset": "pose_x75_y90"
+      },
+      {
+        "id": "s5",
+        "ms": 149,
+        "preset": "pose_x82_y90"
+      },
+      {
+        "id": "s6",
+        "ms": 174,
+        "preset": "center"
+      },
+      {
+        "id": "s7",
+        "ms": 186,
+        "preset": "pose_x99_y90"
+      },
+      {
+        "id": "s8",
+        "ms": 248,
+        "preset": "pose_x108_y90"
+      },
+      {
+        "id": "s9",
+        "ms": 74,
+        "preset": "pose_x111_y90"
+      },
+      {
+        "id": "s10",
+        "ms": 174,
+        "preset": "pose_x104_y90"
+      },
+      {
+        "id": "s11",
+        "ms": 136,
+        "preset": "pose_x96_y90"
+      },
+      {
+        "id": "s12",
+        "ms": 65,
+        "preset": "pose_x87_y90"
+      },
+      {
+        "id": "s13",
+        "ms": 186,
+        "preset": "center"
+      }
+    ]
+  },
+  {
+    "name": "demo_greet",
+    "title": "演示问候",
+    "text": "你好，很高兴见到你",
+    "text_track": [],
+    "expr_track": [
+      {
+        "id": "e1",
+        "scene": "happy_smile",
+        "ms": 800
+      },
+      {
+        "id": "e2",
+        "scene": "default",
+        "ms": 1500
+      }
+    ],
+    "servo_track": [
+      {
+        "id": "s1",
+        "ms": 500,
+        "preset": "look_left"
+      },
+      {
+        "id": "s2",
+        "ms": 500,
+        "preset": "center"
+      }
+    ]
+  },
+  {
+    "name": "agree",
+    "title": "同意",
+    "text": "",
+    "text_track": [
+      {
+        "id": "cmpqtdlj4170j",
+        "text": "嗯嗯, 你的意见太好了, 一下子解开了我的疑惑",
+        "ms": 1500
+      }
+    ],
+    "expr_track": [
+      {
+        "id": "cmpqsbkg7qlj4",
+        "scene": "big_laugh",
+        "ms": 1800
+      },
+      {
+        "id": "cmpqsd73e3eth",
+        "scene": "fake_smile",
+        "ms": 1800
+      },
+      {
+        "id": "cmpqsdfcwlgtb",
+        "scene": "cat_cute",
+        "ms": 1800
+      }
+    ],
+    "servo_track": [
+      {
+        "id": "cmpqsbkg7fjsg",
+        "ms": 500,
+        "preset": "nod_head"
+      },
+      {
+        "id": "cmpqsdml66x4t",
+        "ms": 500,
+        "preset": "nod_head"
+      },
+      {
+        "id": "cmpqse6ejyug8",
+        "ms": 500,
+        "preset": "nod_head"
+      }
+    ]
+  },
+  {
+    "name": "angry",
+    "title": "生气",
+    "text": "",
+    "text_track": [
+      {
+        "id": "cmpqsgkkegg2z",
+        "text": "气死我了",
+        "ms": 1500
+      }
+    ],
+    "expr_track": [
+      {
+        "id": "cmpqsgbnnbn3a",
+        "scene": "angry",
+        "ms": 800
+      },
+      {
+        "id": "cmpqsgvpoy4lf",
+        "scene": "angry",
+        "ms": 800
+      }
+    ],
+    "servo_track": [
+      {
+        "id": "cmpqsgbno0wio",
+        "ms": 500,
+        "preset": "center"
+      },
+      {
+        "id": "cmpqsh33p4xoq",
+        "ms": 500,
+        "preset": "nod_head"
+      }
+    ]
+  }
+]

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block page_title %}系统配置 · OpenDesk{% endblock %}
+{% block extra_head %}
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+{% endblock %}
+{% block content %}
+  <header class="page-header">
+    <h1>系统配置</h1>
+    <p class="page-lead">修改 <code class="mono">config.yaml</code> 中的常用项。保存后需重启 <code class="mono">deskbot-server</code> 主进程方生效。</p>
+  </header>
+  {% raw %}
+  <div id="app">
+    <div class="card">
+      <h3 style="margin-top:0;">服务状态</h3>
+      <p>Deskbot Server ({{ health.deskbot_target }}):
+        <b :class="health.deskbot_server ? 'ok' : 'bad'">{{ health.deskbot_server ? '在线' : '离线' }}</b>
+      </p>
+      <p>TTS Server ({{ health.tts_target }}):
+        <b :class="health.tts_server ? 'ok' : 'bad'">{{ health.tts_server ? '在线' : '离线' }}</b>
+      </p>
+      <button @click="refreshHealth">刷新状态</button>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0;">常用配置</h3>
+      <div class="row">
+        <label>Deskbot 端口</label>
+        <input v-model="form.server_port" />
+      </div>
+      <div class="row">
+        <label>ASR 语言</label>
+        <input v-model="form.asr_language" placeholder="zh / auto" />
+      </div>
+      <div class="row">
+        <label>VAD 模式</label>
+        <input v-model="form.vad_mode" placeholder="0~3" />
+      </div>
+      <div class="row">
+        <label>TTS WS URL</label>
+        <input v-model="form.tts_ws_url" />
+      </div>
+      <div class="row">
+        <label>TTS 音色ID</label>
+        <input v-model="form.tts_spk_id" />
+      </div>
+      <button @click="saveConfig">保存配置</button>
+      <button @click="loadConfig">重载配置</button>
+      <p class="muted" style="margin-top:8px;">{{ message }}</p>
+    </div>
+  </div>
+  <style>
+    #app .row { display: grid; grid-template-columns: 120px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+    #app button { margin-right: 8px; }
+  </style>
+  <script>
+    const { createApp } = Vue;
+    createApp({
+      data() {
+        return {
+          form: {
+            server_port: 9000,
+            asr_language: "zh",
+            vad_mode: 1,
+            tts_ws_url: "ws://127.0.0.1:8092/paddlespeech/tts/streaming",
+            tts_spk_id: 0,
+          },
+          health: { deskbot_server: false, tts_server: false, deskbot_target: "-", tts_target: "-" },
+          message: "",
+        };
+      },
+      methods: {
+        async loadConfig() {
+          const res = await fetch("/api/config");
+          const cfg = await res.json();
+          this.form.server_port = cfg.server?.port ?? 9000;
+          this.form.asr_language = cfg.asr?.language ?? "zh";
+          this.form.vad_mode = cfg.vad?.mode ?? 1;
+          this.form.tts_ws_url = cfg.tts?.ws_url ?? "";
+          this.form.tts_spk_id = cfg.tts?.spk_id ?? 0;
+          this.message = "配置已加载";
+        },
+        async saveConfig() {
+          const res = await fetch("/api/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(this.form),
+          });
+          const result = await res.json();
+          this.message = result.ok ? "保存成功（请重启 deskbot-server 生效）" : "保存失败";
+        },
+        async refreshHealth() {
+          const res = await fetch("/api/health");
+          this.health = await res.json();
+        },
+      },
+      async mounted() {
+        await this.loadConfig();
+        await this.refreshHealth();
+      },
+    }).mount("#app");
+  </script>
+  {% endraw %}
+{% endblock %}

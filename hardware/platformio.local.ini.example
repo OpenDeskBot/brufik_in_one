@@ -1,0 +1,6 @@
+; 可选：覆盖 platformio.ini 中的 build_flags（如 LCD 型号）。
+; WiFi / WS：编辑 firmware/deskbot_config.h，见 README.md
+
+[env:seeed_xiao_esp32s3]
+build_flags =
+	${env:seeed_xiao_esp32s3.build_flags}

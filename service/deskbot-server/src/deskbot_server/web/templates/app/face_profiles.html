@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block page_title %}人脸识别 · OpenDesk{% endblock %}
+{% block content %}
+<header class="page-header">
+  <h1>人脸识别</h1>
+  <p class="page-lead">查看与管理设备已注册人脸档案。注册请在 <a href="{{ url_for('debug.debug_devices') }}">设备调试</a> 或对话中让 LLM 调用 <code class="mono">register_face</code>。</p>
+</header>
+
+<div class="section-card">
+  <h3>选择设备</h3>
+  {% if devices %}
+  <div class="form-row" style="align-items:flex-end;">
+    <div style="flex:1;">
+      <label>当前设备</label>
+      <select id="deviceSelect" class="agent-input">
+        <option value="">— 请选择 —</option>
+        {% for d in devices %}
+        <option value="{{ d.device_id }}" {% if d.device_id == current_device_id %}selected{% endif %}>
+          {{ d.display_name or d.device_id }} ({{ d.device_id }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="flex:0;">
+      <label>&nbsp;</label>
+      <button type="button" id="selectBtn" class="agent-btn secondary">切换</button>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">尚未绑定设备，请先在 <a href="{{ url_for('app.devices_page') }}">我的设备</a> 页添加。</p>
+  {% endif %}
+</div>
+
+{% if current_device_id %}
+<div class="section-card">
+  <h3>已注册人脸 <span class="muted" style="font-weight:400;font-size:13px;">{{ current_device_id }}</span></h3>
+  <table class="agent-table" id="profileTable">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>姓名</th>
+        <th>向量类型</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in profiles %}
+      <tr data-id="{{ p.person_id }}">
+        <td class="mono">{{ p.person_id }}</td>
+        <td><strong>{{ p.name }}</strong></td>
+        <td>{{ p.descriptor_kind or '—' }}</td>
+        <td>
+          <button type="button" class="agent-btn ghost sm del-btn" data-id="{{ p.person_id }}" data-name="{{ p.name }}">删除</button>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">暂无已注册人脸</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif devices %}
+<div class="section-card">
+  <p class="muted">请先在上方选择设备，再查看该设备的人脸档案。</p>
+</div>
+{% endif %}
+
+<script>
+  const deviceSelect = document.getElementById("deviceSelect");
+  document.getElementById("selectBtn")?.addEventListener("click", async () => {
+    const device_id = deviceSelect?.value?.trim() || "";
+    const res = await fetch("{{ url_for('app.api_select_device') }}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: device_id || null }),
+    });
+    const data = await res.json();
+    if (data.ok) location.reload();
+  });
+
+  document.querySelectorAll(".del-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const name = btn.dataset.name || "";
+      if (!confirm(`确定删除人脸档案「${name}」？`)) return;
+      const personId = btn.dataset.id;
+      const deviceId = "{{ current_device_id or '' }}";
+      const res = await fetch(
+        `{{ url_for('app.api_delete_face_profile', person_id=0) }}`.replace("/0", `/${personId}`)
+          + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""),
+        { method: "DELETE" }
+      );
+      const data = await res.json();
+      if (data.ok) {
+        btn.closest("tr")?.remove();
+      } else {
+        alert(data.error || "删除失败");
+      }
+    });
+  });
+</script>
+{% endblock %}

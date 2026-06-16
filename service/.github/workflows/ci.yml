@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  deskbot-server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deskbot-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package and dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check src
+
+      - name: Compile all modules
+        run: python -m compileall -q src
+
+  paddlespeech-server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: paddlespeech-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dev tools and test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest numpy
+
+      - name: Ruff
+        run: ruff check src tests
+
+      - name: Compile all modules
+        run: python -m compileall -q src
+
+      - name: Unit tests (pure phoneme logic)
+        run: PYTHONPATH=src pytest tests/ -q

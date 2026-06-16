@@ -1,0 +1,444 @@
+{% extends "base.html" %}
+{% block page_title %}在线调试 · Deskbot Server{% endblock %}
+{% block extra_head %}
+  <script>window.__DESKBOT_WS_DEFAULT__ = {{ deskbot_ws_default|tojson }};</script>
+  <script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+{% endblock %}
+{% block content %}
+  <h1>在线调试</h1>
+  <p class="sub">与 Deskbot Server 建立 WebSocket 后，可用麦克风说一句话（服务端 VAD 分句）或直接输入文字；对话以聊天气泡展示，回复含 LLM 文本与可点播放的 TTS 音频。耗时来自服务端 <code>t_mono</code>。</p>
+  {% raw %}
+  <div id="app" class="online-debug">
+    <div class="toolbar">
+      <label class="t-label">WebSocket</label>
+      <input v-model="wsUrl" :disabled="connected" class="t-ws" />
+      <button type="button" @click="toggleConn">{{ connected ? "断开" : "连接" }}</button>
+      <span :class="['t-status', connected ? 'ok' : 'bad']">{{ statusText }}</span>
+    </div>
+    <p v-if="!connected" class="warn">请先连接。跨机访问时请把地址中的主机名改为可路由的 IP。</p>
+
+    <div class="layout-chat">
+      <div class="chat-panel" ref="chatBox">
+        <p v-if="!turns.length" class="empty">暂无消息。连接后使用下方麦克风或文本输入开始对话。</p>
+        <div v-for="t in turns" :key="t.id" class="turn">
+          <div v-if="t.errNotice" class="bubble bubble-sys">{{ t.errNotice }}</div>
+          <template v-else>
+            <div v-if="t.rejected" class="bubble bubble-sys">已忽略：未通过文本过滤（<span class="mono">{{ t.rejectedText }}</span>）</div>
+            <template v-else>
+              <div class="bubble bubble-user" v-if="t.userText != null">
+                <div class="src">{{ t.userSource === 'text' ? '键入' : 'ASR' }}</div>
+                <div class="txt">{{ t.userText }}</div>
+                <div v-if="t.userAudioUrl" class="row-audio">
+                  <span class="lbl">用户音频</span>
+                  <audio :src="t.userAudioUrl" controls preload="none" class="audio-ctrl"></audio>
+                  <a :href="t.userAudioUrl" :download="t.userAudioName || ('user-' + t.id + '.wav')" class="btn-file">下载</a>
+                </div>
+                <div class="ts" v-if="t.asrMs != null && t.userSource === 'asr'">ASR: {{ t.asrMs }} ms</div>
+              </div>
+              <div
+                v-if="t.assistantText || t.audioUrl || t.ttsErr || t.srvErr"
+                class="bubble bubble-assistant"
+              >
+                <div class="src">助手</div>
+                <div v-if="t.assistantText" class="txt">{{ t.assistantText }}</div>
+                <div v-if="t.ttsErr" class="err-line">TTS: {{ t.ttsErr }}</div>
+                <div v-if="t.srvErr" class="err-line">错误: {{ t.srvErr }}</div>
+                <div v-if="t.audioUrl" class="row-audio">
+                  <span class="lbl">回复音频</span>
+                  <audio :src="t.audioUrl" controls preload="none" class="audio-ctrl"></audio>
+                  <a :href="t.audioUrl" :download="t.audioName || ('assistant-' + t.id + '.wav')" class="btn-file">下载</a>
+                </div>
+                <div class="ts" v-if="hasTimings(t)">
+                  <span v-if="t.llmMs != null">LLM: {{ t.llmMs }} ms</span>
+                  <span v-if="t.ttsGenMs != null" class="sep">· 合成: {{ t.ttsGenMs }} ms</span>
+                  <span v-if="t.e2eMs != null" class="sep">· 端到端: {{ t.e2eMs }} ms</span>
+                </div>
+              </div>
+            </template>
+          </template>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="row-mic" v-show="connected">
+          <button type="button" @click="toggleMic" class="btn-mic">{{ micOn ? "停止麦克风" : "开始麦克风" }}</button>
+          <span class="muted">16kHz PCM 上行，VAD 分句；点「停止」时发送 <code>flush</code>。</span>
+        </div>
+        <div class="row-text" v-show="connected">
+          <textarea v-model="draft" rows="2" placeholder="输入文字后发送；Enter 发送，Shift+Enter 换行" @keydown="onDraftKey" class="ta" :disabled="!connected"></textarea>
+          <button type="button" class="btn-send" :disabled="!canSend" @click="sendText">发送</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <style>
+    .sub { color: #6e6e73; font-size: 14px; max-width: 48rem; line-height: 1.5; }
+    .online-debug { max-width: 48rem; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .t-label { font-size: 13px; color: #6e6e73; }
+    .t-ws { flex: 1; min-width: 200px; padding: 8px 10px; border: 1px solid #c7c7cc; border-radius: 6px; }
+    .t-status { font-size: 14px; }
+    .t-status.ok { color: #1a7f37; }
+    .t-status.bad { color: #b42318; }
+    .warn { color: #b44; font-size: 13px; }
+    .layout-chat { display: flex; flex-direction: column; gap: 0; }
+    .chat-panel {
+      border: 1px solid #d2d2d7;
+      border-radius: 10px;
+      background: #e8e8ed;
+      min-height: 220px;
+      max-height: min(56vh, 520px);
+      overflow-y: auto;
+      padding: 12px 14px;
+    }
+    .empty { text-align: center; color: #6e6e73; font-size: 14px; margin: 2rem 0; }
+    .turn { margin-bottom: 12px; }
+    .turn:last-child { margin-bottom: 0; }
+    .bubble { border-radius: 12px; padding: 10px 12px; max-width: 92%; font-size: 14px; }
+    .bubble .src { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #6e6e73; margin-bottom: 4px; }
+    .bubble .txt { white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+    .bubble .ts { font-size: 12px; color: #6e6e73; margin-top: 6px; }
+    .sep { margin-left: 0.2em; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+    .bubble-user { background: #d1e7ff; margin-left: 12%; }
+    .bubble-assistant { background: #fff; border: 1px solid #d2d2d7; }
+    .bubble-sys { background: #fff3cd; border: 1px solid #e6d89c; color: #665; font-size: 13px; }
+    .actions-row { margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .actions-row .lbl { color: #6e6e73; font-size: 12px; margin-right: 2px; }
+    .action-chip {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e9f4ff;
+      border: 1px solid #b8dafe;
+      color: #0a4d8c;
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+    }
+    .err-line { color: #b42318; font-size: 13px; margin-top: 6px; }
+    .row-audio { margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .row-audio .lbl { color: #6e6e73; font-size: 13px; }
+    .audio-ctrl { min-width: 200px; height: 32px; }
+    .btn-file { padding: 5px 10px; border-radius: 6px; border: 1px solid #c7c7cc; color: #1d1d1f; text-decoration: none; font-size: 12px; background: #fff; }
+    .btn-file:hover { background: #f5f5f7; }
+    .composer { margin-top: 12px; }
+    .row-mic { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .row-text { display: flex; gap: 8px; align-items: flex-end; }
+    .ta { flex: 1; padding: 8px 10px; border: 1px solid #c7c7cc; border-radius: 6px; resize: vertical; min-height: 52px; }
+    .btn-send, .btn-mic { padding: 8px 16px; border-radius: 6px; border: 1px solid #c7c7cc; background: #fff; cursor: pointer; }
+    .btn-send { flex-shrink: 0; }
+    .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-mic:hover, .btn-send:hover:not(:disabled) { background: #f5f5f7; }
+    .muted { color: #6e6e73; font-size: 12px; }
+  </style>
+  <script>
+    if (!window.Vue) {
+      const mount = document.getElementById("app");
+      if (mount) {
+        mount.innerHTML = '<div class="bubble bubble-sys">前端依赖 Vue 加载失败，请检查服务器到 CDN 的网络连通性。</div>';
+      }
+    } else {
+    const { createApp } = Vue;
+    const FRAME_SAMPLES = 480;
+
+    function resampleF32(f32, inRate, outRate) {
+      if (Math.abs(inRate - outRate) < 1) return f32;
+      const outLen = Math.floor(f32.length * (outRate / inRate));
+      const out = new Float32Array(outLen);
+      const r = inRate / outRate;
+      for (let i = 0; i < outLen; i++) {
+        const x = i * r;
+        const j = Math.floor(x);
+        const f = x - j;
+        out[i] = j + 1 < f32.length ? (1 - f) * f32[j] + f * f32[j + 1] : f32[j];
+      }
+      return out;
+    }
+    function floatToI16(f32) {
+      const n = f32.length;
+      const a = new Int16Array(n);
+      for (let i = 0; i < n; i++) {
+        const v = Math.round(f32[i] * 32768);
+        a[i] = v < -32768 ? -32768 : v > 32767 ? 32767 : v;
+      }
+      return a;
+    }
+    function u8ToB64(u8) {
+      let s = "";
+      for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+      return btoa(s);
+    }
+    function mergeI16(a, b) {
+      const m = new Int16Array(a.length + b.length);
+      m.set(a);
+      m.set(b, a.length);
+      return m;
+    }
+    function getUserMediaCompat(constraints) {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        return navigator.mediaDevices.getUserMedia(constraints);
+      }
+      const legacy =
+        navigator.getUserMedia ||
+        navigator.webkitGetUserMedia ||
+        navigator.mozGetUserMedia ||
+        navigator.msGetUserMedia;
+      if (!legacy) {
+        return Promise.reject(new Error("当前浏览器不支持 getUserMedia"));
+      }
+      return new Promise((resolve, reject) => legacy.call(navigator, constraints, resolve, reject));
+    }
+    function i16ToWavBlob(i16, sampleRate = 16000) {
+      const pcmBytes = i16.length * 2;
+      const ab = new ArrayBuffer(44 + pcmBytes);
+      const dv = new DataView(ab);
+      let off = 0;
+      function ws(s) { for (let i = 0; i < s.length; i++) dv.setUint8(off++, s.charCodeAt(i)); }
+      function u16(v) { dv.setUint16(off, v, true); off += 2; }
+      function u32(v) { dv.setUint32(off, v, true); off += 4; }
+      ws("RIFF"); u32(36 + pcmBytes); ws("WAVE");
+      ws("fmt "); u32(16); u16(1); u16(1);
+      u32(sampleRate); u32(sampleRate * 2); u16(2); u16(16);
+      ws("data"); u32(pcmBytes);
+      for (let i = 0; i < i16.length; i++) {
+        dv.setInt16(off, i16[i], true);
+        off += 2;
+      }
+      return new Blob([ab], { type: "audio/wav" });
+    }
+
+    createApp({
+      data() {
+        return {
+          nextId: 0,
+          wsUrl: window.__DESKBOT_WS_DEFAULT__ || "ws://127.0.0.1:9000",
+          ws: null,
+          connected: false,
+          statusText: "未连接",
+          draft: "",
+          turns: [],
+          activeTurn: null,
+          _tAsr0: null,
+          _tAsrText: null,
+          _tLlm: null,
+          micOn: false,
+          _ctx: null,
+          _source: null,
+          _proc: null,
+          _mute: null,
+          _stream: null,
+          _i16Buffer: new Int16Array(0),
+          _captureI16: new Int16Array(0),
+          _pendingTtsTurn: null,
+        };
+      },
+      computed: {
+        canSend() {
+          if (!this.connected) return false;
+          return !!this.draft.trim();
+        },
+      },
+      watch: { turns: { deep: true, handler() { this._scrollEnd(); } } },
+      methods: {
+        hasTimings(t) { return t.llmMs != null || t.ttsGenMs != null || t.e2eMs != null; },
+        _scrollEnd() {
+          this.$nextTick(() => {
+            const el = this.$refs.chatBox;
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+        },
+        ms(t0, t1) {
+          if (t0 == null || t1 == null) return null;
+          return Math.round((t1 - t0) * 1000);
+        },
+        beginTurn() {
+          const t = { id: ++this.nextId, userText: "… 识别中", userSource: "asr" };
+          if (this._captureI16.length > 0) {
+            const blob = i16ToWavBlob(this._captureI16, 16000);
+            t.userAudioUrl = URL.createObjectURL(blob);
+            t.userAudioName = `user-${t.id}.wav`;
+            this._captureI16 = new Int16Array(0);
+          }
+          this.activeTurn = t;
+          this._pendingTtsTurn = null;
+          this.turns.push(t);
+        },
+        onJson(d) {
+          const tmono = d.t_mono;
+          if (d.type === "pb_start") {
+            if (this.activeTurn && tmono != null) {
+              const t0 = this._tAsrText != null ? this._tAsrText : this._tAsr0;
+              if (t0 != null) this.activeTurn.llmMs = this.ms(t0, tmono);
+              this._tLlm = tmono;
+              this._pendingTtsTurn = this.activeTurn;
+            }
+            return;
+          }
+          if (d.type === "pb_single" && this.activeTurn && this.activeTurn.llmMs == null && tmono != null) {
+            const t0 = this._tAsrText != null ? this._tAsrText : this._tAsr0;
+            if (t0 != null) this.activeTurn.llmMs = this.ms(t0, tmono);
+            this._tLlm = tmono;
+            this._pendingTtsTurn = this.activeTurn;
+          }
+          if ((d.type === "pb_end" || d.type === "pb_single") && d.t_mono != null && this._tAsr0 != null) {
+            if (this.activeTurn) {
+              this.activeTurn.e2eMs = this.ms(this._tAsr0, d.t_mono);
+              this.activeTurn = null;
+            }
+            return;
+          }
+        },
+        attachTts(u8) {
+          const target = this.activeTurn || this._pendingTtsTurn;
+          if (!target) return;
+          if (target.audioUrl) {
+            try { URL.revokeObjectURL(target.audioUrl); } catch (e) {}
+            target.audioUrl = null;
+          }
+          target.audioUrl = URL.createObjectURL(
+            new Blob([u8], { type: "audio/wav" })
+          );
+          target.audioName = `assistant-${target.id}.wav`;
+          if (this._pendingTtsTurn && this._pendingTtsTurn.id === target.id) {
+            this._pendingTtsTurn = null;
+          }
+        },
+        onWsMessage(ev) {
+          if (ev.data instanceof Blob) {
+            ev.data.arrayBuffer().then((ab) => this.attachTts(new Uint8Array(ab)));
+            return;
+          }
+          if (ev.data instanceof ArrayBuffer) {
+            this.attachTts(new Uint8Array(ev.data));
+            return;
+          }
+          let d;
+          try { d = JSON.parse(ev.data); } catch (e) { return; }
+          this.onJson(d);
+        },
+        async stopMic() {
+          this.micOn = false;
+          if (this._proc) {
+            this._proc.disconnect();
+            this._proc.onaudioprocess = null;
+            this._proc = null;
+          }
+          if (this._mute) { this._mute.disconnect(); this._mute = null; }
+          if (this._source) { this._source.disconnect(); this._source = null; }
+          if (this._stream) { this._stream.getTracks().forEach((x) => x.stop()); this._stream = null; }
+          this._i16Buffer = new Int16Array(0);
+        },
+        async startMic() {
+          if (!this.ws || this.ws.readyState !== 1) return;
+          if (!window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+            this.turns.push({
+              id: ++this.nextId,
+              errNotice: "浏览器安全限制：请使用 HTTPS 或 localhost 打开页面后再启用麦克风。",
+            });
+            return;
+          }
+          this._ctx = this._ctx || new (window.AudioContext || window.webkitAudioContext)();
+          const c = this._ctx;
+          if (c.state === "suspended") await c.resume();
+          const inRate = c.sampleRate;
+          try {
+            this._stream = await getUserMediaCompat({
+              audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+            });
+          } catch (e) {
+            this.turns.push({
+              id: ++this.nextId,
+              errNotice: `麦克风启动失败: ${e?.message || e}`,
+            });
+            return;
+          }
+          this._source = c.createMediaStreamSource(this._stream);
+          this._proc = c.createScriptProcessor(4096, 1, 1);
+          this._proc.onaudioprocess = (e) => {
+            if (!this.micOn || !this.ws || this.ws.readyState !== 1) return;
+            const f32 = e.inputBuffer.getChannelData(0);
+            const f16 = resampleF32(f32, inRate, 16000);
+            const i16 = floatToI16(f16);
+            this._i16Buffer = mergeI16(this._i16Buffer, i16);
+            while (this._i16Buffer.length >= FRAME_SAMPLES) {
+              const chunk = this._i16Buffer.subarray(0, FRAME_SAMPLES);
+              this._i16Buffer = this._i16Buffer.subarray(FRAME_SAMPLES);
+              this._captureI16 = mergeI16(this._captureI16, chunk);
+              const u8 = new Uint8Array(chunk.buffer, chunk.byteOffset, FRAME_SAMPLES * 2);
+              this.ws.send(JSON.stringify({ type: "audio", codec: "pcm16", data: u8ToB64(u8) }));
+            }
+          };
+          this._mute = c.createGain();
+          this._mute.gain.value = 0;
+          this._source.connect(this._proc);
+          this._proc.connect(this._mute);
+          this._mute.connect(c.destination);
+          this.micOn = true;
+        },
+        async toggleMic() {
+          if (this.micOn) {
+            if (this.ws && this.ws.readyState === 1) {
+              this._tAsr0 = performance.now() / 1000;
+              this._tAsrText = this._tLlm = null;
+              this.beginTurn();
+              this.ws.send(JSON.stringify({ type: "flush" }));
+            }
+            await this.stopMic();
+          } else {
+            await this.startMic();
+          }
+        },
+        onDraftKey(e) {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.sendText(); }
+        },
+        sendText() {
+          const text = (this.draft || "").trim();
+          if (!text || !this.ws || this.ws.readyState !== 1) return;
+          this._tAsr0 = performance.now() / 1000;
+          this._tAsrText = this._tLlm = null;
+          const t = { id: ++this.nextId, userText: text, userSource: "text" };
+          this.activeTurn = t;
+          this._pendingTtsTurn = null;
+          this.turns.push(t);
+          this.ws.send(JSON.stringify({ type: "user_text", text }));
+          this.draft = "";
+        },
+        connectWs() {
+          return new Promise((resolve) => {
+            this.ws = new WebSocket(this.wsUrl);
+            this.ws.binaryType = "blob";
+            this.ws.onopen = () => { this.connected = true; this.statusText = "已连接"; resolve(); };
+            this.ws.onerror = () => { this.statusText = "错误"; };
+            this.ws.onclose = () => {
+              this.connected = false;
+              this.statusText = "已断开";
+              this.stopMic();
+            };
+            this.ws.onmessage = (ev) => this.onWsMessage(ev);
+          });
+        },
+        async toggleConn() {
+          if (this.connected && this.ws) {
+            this.ws.close();
+            this.ws = null;
+            return;
+          }
+          this.statusText = "连接中…";
+          try { await this.connectWs(); } catch (e) {
+            this.statusText = "连接失败";
+            this.connected = false;
+          }
+        },
+      },
+      beforeUnmount() {
+        this.stopMic();
+        for (const t of this.turns) {
+          if (t.audioUrl) { try { URL.revokeObjectURL(t.audioUrl); } catch (e) {} }
+          if (t.userAudioUrl) { try { URL.revokeObjectURL(t.userAudioUrl); } catch (e) {} }
+        }
+      },
+    }).mount("#app");
+    }
+  </script>
+  {% endraw %}
+{% endblock %}

@@ -1,0 +1,17 @@
+{
+  "num_faces": 5,
+  "min_face_detection_confidence": 0.5,
+  "min_face_presence_confidence": 0.2,
+  "frontal_threshold": 0.4,
+  "gaze_yaw_threshold_deg": 15.0,
+  "gaze_pitch_threshold_deg": 15.0,
+  "face_track_max_dist_px": 90.0,
+  "face_track_max_lost_frames": 18,
+  "horizontal_fov_deg": 120.0,
+  "eye_yaw_range_deg": 50.0,
+  "frontal_angle_threshold_deg": 15.0,
+  "face_embedding_enabled": true,
+  "identity_similarity_threshold": 0.42,
+  "frame_width": 320,
+  "frame_height": 240
+}

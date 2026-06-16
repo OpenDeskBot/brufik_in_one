@@ -1,0 +1,1028 @@
+{% extends "base.html" %}
+{% block page_title %}仿真调试 · Deskbot Server{% endblock %}
+{% block extra_head %}
+  <script>
+    window.__SIM__ = {
+      defaultSpk: {{ default_spk|int }},
+      sampleRate: {{ sample_rate|int }},
+      faceLcdW: {{ face_lcd_w|int }},
+      faceLcdH: {{ face_lcd_h|int }},
+      defaultFaceCircles: {{ default_face_circles|tojson }},
+    };
+  </script>
+  <script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+{% endblock %}
+{% block content %}
+  <h1>仿真调试</h1>
+  <p class="sub">
+    左侧：调用 PaddleSpeech 音素+TTS，生成 <code>pb_*</code> 协议预览并与口型表合成表情序列；播放时整段音频与口型时间轴对齐。
+    右侧：在 **284×240** 彩色 LCD 逻辑画布上编辑；**鼻与双眼默认为圆**；**音素→嘴型表**预置约两百余个中文音素，嘴型均为**矩形**（静音扁、韵母+声调略张大、声母中等）；可「重置」恢复；数据可存 localStorage。
+    协议字段约定见仓库 <code>docs/esp32_pb_protocol.md</code>。
+  </p>
+  {% raw %}
+  <div id="app" class="sim-root">
+    <div class="sim-split">
+      <section class="sim-left card">
+        <h2 class="h2">调试</h2>
+        <textarea v-model="draft" rows="3" class="ta" placeholder="输入要合成的文字"></textarea>
+        <div class="row2">
+          <label class="lbl">spk_id</label>
+          <input v-model.number="spkId" type="number" min="0" class="num" />
+          <button type="button" class="btn" :disabled="busy" @click="fetchTts">{{ busy ? "请求中…" : "合成（音素+音频）" }}</button>
+        </div>
+        <p v-if="errL" class="err">{{ errL }}</p>
+        <details v-if="tts" class="box" open>
+          <summary>PaddleSpeech 返回摘要</summary>
+          <p class="mono sm">sample_rate={{ tts.sample_rate }} · pcm_total={{ tts.pcm_total_bytes }} · segments={{ tts.segments.length }}</p>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead><tr><th>#</th><th>phoneme</th><th>id</th><th>ms</th><th>pcm_bytes</th></tr></thead>
+              <tbody>
+                <tr v-for="(s,i) in tts.segments" :key="i">
+                  <td>{{ i+1 }}</td><td class="mono">{{ s.phoneme }}</td><td>{{ s.phoneme_id }}</td><td>{{ s.ms }}</td><td>{{ s.pcm_bytes }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+        <div class="row2">
+          <button type="button" class="btn secondary" :disabled="!tts" @click="buildAnimAndProtocol">生成表情序列 + 协议预览</button>
+        </div>
+        <details v-if="animSeq.length" class="box">
+          <summary>表情序列（phonemeSeqToAnimSeq）</summary>
+          <pre class="pre">{{ animSeqJson }}</pre>
+        </details>
+        <details v-if="pbPreview.length" class="box">
+          <summary>pb 协议 JSON（不含 binary 本体）</summary>
+          <pre class="pre">{{ pbPreviewJson }}</pre>
+        </details>
+        <div class="row2">
+          <button type="button" class="btn primary" :disabled="!tts || !animSeq.length || playing" @click="playSim">播放（声画同步）</button>
+          <button type="button" class="btn secondary" :disabled="!playing" @click="stopSim">停止</button>
+        </div>
+        <div class="preview-wrap">
+          <span class="lbl">口型预览（当前帧，284×240）</span>
+          <div class="canvas-wrap canvas-wrap--sm">
+            <canvas ref="pvCanvas" class="pv-canvas" width="284" height="240"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section class="sim-right card sim-right--wide">
+        <h2 class="h2">表情设计</h2>
+        <p class="hint">画布逻辑分辨率 <strong>284×240</strong>（与设备彩色 LCD 一致）；下为放大显示。新图形画在「当前图层」。</p>
+        <div class="row2 layer-row">
+          <label class="lbl">当前图层</label>
+          <select v-model="activeLayer" class="sel">
+            <option v-for="o in layerOptions" :key="o.id" :value="o.id">{{ o.label }}</option>
+          </select>
+        </div>
+        <div class="tools">
+          <button type="button" :class="['tbtn', tool==='pointer'?'on':'']" @click="tool='pointer'" title="选择与移动">指针</button>
+          <button type="button" :class="['tbtn', tool==='circle'?'on':'']" @click="tool='circle'">圆</button>
+          <button type="button" :class="['tbtn', tool==='rect'?'on':'']" @click="tool='rect'">矩形</button>
+          <button type="button" :class="['tbtn', tool==='line'?'on':'']" @click="tool='line'">线段</button>
+          <button type="button" class="tbtn danger" @click="clearCanvas">清空画布</button>
+        </div>
+        <div class="canvas-wrap" ref="canvasWrap">
+          <canvas
+            ref="editCanvas"
+            class="edit-canvas"
+            :class="canvasCursorClass"
+            width="284"
+            height="240"
+            @mousedown="onCanvasDown"
+            @mousemove="onCanvasMove"
+            @mouseup="onCanvasUp"
+            @mouseleave="onCanvasUp"
+          ></canvas>
+        </div>
+        <div class="tool-params card-inset">
+          <div class="tp-title">工具 / 参数</div>
+          <div v-if="tool==='pointer'" class="tp-body mono sm">
+            <template v-if="selectedRef">
+              已选：<strong>{{ selectedRef.layer }}</strong> #{{ selectedRef.index }} ·
+              <span v-if="selectedShapeDesc">{{ selectedShapeDesc }}</span>
+            </template>
+            <template v-else>点击图形可选中；拖曳移动。未选中。</template>
+          </div>
+          <div v-else-if="tool==='circle'" class="tp-body mono sm">
+            <span v-if="drag">绘制中：圆心 ({{ drag.x0 }}, {{ drag.y0 }}) 半径 ≈ {{ circleDraftR }}</span>
+            <span v-else>拖曳确定半径；单击用默认半径 8。</span>
+          </div>
+          <div v-else-if="tool==='rect'" class="tp-body mono sm">
+            <span v-if="drag">矩形：左上角 ({{ rectDraft.x }}, {{ rectDraft.y }}) 宽 {{ rectDraft.w }} 高 {{ rectDraft.h }}</span>
+            <span v-else>拖曳确定矩形。</span>
+          </div>
+          <div v-else-if="tool==='line'" class="tp-body mono sm">
+            <span v-if="drag">线段：({{ drag.x0 }}, {{ drag.y0 }}) → ({{ drag.x1 }}, {{ drag.y1 }})</span>
+            <span v-else>拖曳确定两端点。</span>
+          </div>
+        </div>
+        <div class="row2">
+          <button type="button" class="btn secondary" @click="saveRegionTemplate">保存全部图层到 localStorage</button>
+        </div>
+
+        <h3 class="h3">音素 → 嘴型 <span class="muted sm">（共 {{ mouthMapRows.length }} 行）</span></h3>
+        <p class="hint">从合成结果一键导入音素行；「应用嘴画布」把当前画布上 <strong>嘴 mouth</strong> 图层图形写入该音素的 JSON。</p>
+        <div class="row2">
+          <button type="button" class="btn secondary" :disabled="!tts" @click="importPhonemesFromTts">从上次合成导入行</button>
+          <button type="button" class="btn secondary" @click="addMapRow">空行</button>
+          <button type="button" class="btn secondary" @click="resetMouthMapDefaults">重置音素嘴型表（矩形默认）</button>
+          <button type="button" class="btn secondary" @click="resetFaceDefaults">重置眼鼻圆</button>
+          <button type="button" class="btn secondary" @click="saveMap">保存映射到 localStorage</button>
+          <button type="button" class="btn secondary" @click="loadMap">重新加载</button>
+        </div>
+        <div class="tbl-wrap map-tbl">
+          <table class="tbl tbl-map">
+            <thead>
+              <tr>
+                <th class="col-idx">序号</th>
+                <th class="col-ph">音素</th>
+                <th class="col-json">嘴型（JSON）</th>
+                <th class="col-act">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row,i) in mouthMapRows" :key="i">
+                <td class="col-idx mono">{{ i + 1 }}</td>
+                <td class="col-ph"><input v-model="row.phoneme" class="inp sm mono" /></td>
+                <td class="col-json"><textarea v-model="row.mouthJson" rows="5" class="ta sm mono ta-json"></textarea></td>
+                <td class="col-act"><button type="button" class="btn sm" @click="applyMouthFromEditor(row)">应用嘴画布</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+  <style>
+    .sub { color: #6e6e73; font-size: 14px; max-width: 60rem; line-height: 1.5; margin-bottom: 12px; }
+    .sim-root { max-width: 1200px; }
+    .sim-split { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+    .sim-left { flex: 1 1 340px; min-width: 280px; }
+    .sim-right { flex: 1 1 420px; min-width: 320px; }
+    .sim-right--wide { flex: 2 1 520px; min-width: 360px; max-width: 100%; }
+    .h2 { font-size: 1.05rem; margin: 0 0 12px; font-weight: 600; }
+    .h3 { font-size: 0.95rem; margin: 16px 0 8px; font-weight: 600; }
+    .ta { width: 100%; padding: 8px 10px; border: 1px solid #c7c7cc; border-radius: 8px; font-size: 14px; }
+    .ta.sm { font-size: 12px; }
+    .row2 { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
+    .lbl { font-size: 13px; color: #6e6e73; }
+    .num { width: 4.5rem; padding: 6px 8px; border-radius: 6px; border: 1px solid #c7c7cc; }
+    .btn { padding: 8px 14px; border-radius: 8px; border: 1px solid #c7c7cc; background: #fff; cursor: pointer; font-size: 14px; }
+    .btn.primary { background: #0a84ff; color: #fff; border-color: #0a84ff; }
+    .btn.secondary { background: #f5f5f7; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn.sm { padding: 4px 8px; font-size: 12px; }
+    .err { color: #b42318; font-size: 14px; }
+    .box { margin-top: 12px; border: 1px solid #d2d2d7; border-radius: 8px; padding: 10px; background: #fafafa; }
+    .pre { font-size: 11px; overflow: auto; max-height: 220px; background: #fff; border: 1px solid #e5e5ea; padding: 8px; border-radius: 6px; }
+    .tbl-wrap { overflow-x: auto; margin-top: 8px; }
+    .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .tbl th, .tbl td { border: 1px solid #d2d2d7; padding: 6px 8px; text-align: left; }
+    .tbl th { background: #f0f0f2; }
+    .mono { font-family: ui-monospace, monospace; }
+    .sm { font-size: 12px; }
+    .preview-wrap { margin-top: 14px; }
+    .canvas-wrap {
+      display: inline-block;
+      border: 2px solid #3a3a3c;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #111;
+      line-height: 0;
+    }
+    .canvas-wrap canvas {
+      display: block;
+      width: 284px;
+      max-width: 100%;
+      height: auto;
+      aspect-ratio: 284 / 240;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    .canvas-wrap--sm canvas { width: 284px; height: 240px; max-width: 100%; aspect-ratio: 284 / 240; }
+    .edit-canvas { cursor: crosshair; }
+    .edit-canvas.tool-pointer { cursor: grab; }
+    .layer-row { margin-bottom: 6px; }
+    .sel { padding: 6px 10px; border-radius: 6px; border: 1px solid #c7c7cc; font-size: 14px; min-width: 8rem; }
+    .tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; align-items: center; }
+    .tbtn { padding: 4px 10px; border-radius: 6px; border: 1px solid #c7c7cc; background: #fff; cursor: pointer; font-size: 12px; }
+    .tbtn.on { background: #34c759; color: #fff; border-color: #34c759; }
+    .tbtn.danger { color: #b42318; border-color: #f5a8a0; }
+    .card-inset {
+      margin-top: 10px;
+      padding: 10px 12px;
+      background: #f5f5f7;
+      border: 1px solid #d2d2d7;
+      border-radius: 8px;
+      min-height: 3.2rem;
+    }
+    .tp-title { font-size: 12px; font-weight: 600; color: #3a3a3c; margin-bottom: 6px; }
+    .tp-body { color: #1d1d1f; line-height: 1.45; word-break: break-all; }
+    .hint { font-size: 12px; color: #6e6e73; margin: 6px 0; }
+    .muted { color: #6e6e73; font-weight: normal; }
+    .inp.sm { width: 5rem; }
+    .map-tbl { max-height: min(72vh, 900px); overflow: auto; margin-top: 10px; }
+    .tbl-map { table-layout: fixed; width: 100%; min-width: 560px; }
+    .tbl-map .col-idx { width: 3.2rem; text-align: center; }
+    .tbl-map .col-ph { width: 6.5rem; }
+    .tbl-map .col-json { width: auto; min-width: 320px; }
+    .tbl-map .col-act { width: 7.5rem; vertical-align: top; }
+    .tbl-map .ta-json { min-height: 7.5rem; resize: vertical; width: 100%; box-sizing: border-box; }
+  </style>
+  {% endraw %}
+  <script>
+(function () {
+  const LS_MAP = "sim_phoneme_mouth_map_v1";
+  const LS_PARTS = "sim_region_templates_v1";
+
+  /** 与 FastSpeech2 中文前端常见集合对齐：静音、停顿、声母、韵母+声调 */
+  function enumerateZhPhonemes() {
+    const tones = ["1", "2", "3", "4", "5"];
+    const finals = [
+      "a", "o", "e", "i", "u", "v",
+      "ai", "ei", "ao", "ou", "an", "en", "ang", "eng", "ong", "er",
+      "ia", "ie", "iao", "iu", "ian", "in", "iang", "ing", "iong",
+      "ua", "uo", "uai", "ui", "uan", "un", "uang", "ve",
+      "iou", "uei", "uen",
+    ];
+    const initials = [
+      "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h",
+      "zh", "ch", "sh", "r", "z", "c", "s", "j", "q", "x", "y", "w",
+    ];
+    const s = new Set(["_", "sil", "sp", "spl", "spn", "sp1", "sp2", "sp3", "sp4"]);
+    for (const f of finals) {
+      for (const t of tones) s.add(f + t);
+    }
+    for (const ini of initials) s.add(ini);
+    return Array.from(s).sort((a, b) => {
+      if (a === "_") return -1;
+      if (b === "_") return 1;
+      return a.localeCompare(b, "zh");
+    });
+  }
+
+  const sim = window.__SIM__ || { defaultSpk: 0, sampleRate: 24000, faceLcdW: 284, faceLcdH: 240 };
+  const FACE_LCD_W = sim.faceLcdW || 284;
+  const FACE_LCD_H = sim.faceLcdH || 240;
+  const FACE_SCALE = Math.min(FACE_LCD_W / 128, FACE_LCD_H / 64);
+  const FACE_OFF_X = Math.round((FACE_LCD_W - 128 * FACE_SCALE) / 2);
+  const FACE_OFF_Y = Math.round((FACE_LCD_H - 64 * FACE_SCALE) / 2);
+
+  /** 128×64 图元 → 当前 LCD：等比缩放 + 居中，避免拉伸变形 */
+  function scalePrim(p) {
+    const out = JSON.parse(JSON.stringify(p));
+    const mapX = (v) => Math.round(v * FACE_SCALE + FACE_OFF_X);
+    const mapY = (v) => Math.round(v * FACE_SCALE + FACE_OFF_Y);
+    const mapS = (v) => Math.round(v * FACE_SCALE);
+    for (const k of ["x", "x0", "x1", "x2"]) {
+      if (out[k] != null) out[k] = mapX(out[k]);
+    }
+    for (const k of ["y", "y0", "y1", "y2"]) {
+      if (out[k] != null) out[k] = mapY(out[k]);
+    }
+    for (const k of ["w", "rw"]) {
+      if (out[k] != null) out[k] = mapS(out[k]);
+    }
+    for (const k of ["h", "rh"]) {
+      if (out[k] != null) out[k] = mapS(out[k]);
+    }
+    for (const k of ["r", "radius"]) {
+      if (out[k] != null) out[k] = Math.max(1, mapS(out[k]));
+    }
+    return out;
+  }
+
+  /** 嘴型统一用单个矩形；开度随韵母+声调略变，静音/停顿更扁 */
+
+  function defaultMouthRectForPhoneme(ph) {
+    const cx = 64;
+    const y0 = 44;
+    const closedH = 4;
+    const openH = 15;
+    const midH = 9;
+    let raw;
+    if (ph === "_" || ph === "sil" || ph === "spl" || ph === "spn" || ph === "sp" || /^sp[1-4]$/.test(ph)) {
+      const w = 30;
+      const h = closedH;
+      raw = [{ shape: "rect", x: Math.round(cx - w / 2), y: 52, w, h }];
+    } else if (/[1-5]$/.test(ph)) {
+      const tone = ph.slice(-1);
+      const body = ph.slice(0, -1);
+      let h = midH;
+      if (tone === "1" || tone === "2") h = openH;
+      else if (tone === "3") h = openH + 3;
+      else if (tone === "4") h = openH - 2;
+      else h = midH - 1;
+      let w = 32;
+      if (/^(a|o|e|ai|ei|ao|ou|er)/.test(body)) w = 40;
+      if (/^(i|u|v)/.test(body)) w = 26;
+      raw = [{ shape: "rect", x: Math.round(cx - w / 2), y: y0, w, h: Math.max(4, Math.round(h)) }];
+    } else {
+      const w = 14;
+      const h = midH;
+      raw = [{ shape: "rect", x: Math.round(cx - w / 2), y: y0, w, h }];
+    }
+    return raw.map(scalePrim);
+  }
+
+  function buildDefaultMouthMapRows() {
+    return enumerateZhPhonemes().map((phoneme) => ({
+      phoneme,
+      mouthJson: JSON.stringify(defaultMouthRectForPhoneme(phoneme)),
+    }));
+  }
+
+  function defaultFaceCircles() {
+    const fromServer = sim.defaultFaceCircles;
+    if (fromServer && typeof fromServer === "object") return JSON.parse(JSON.stringify(fromServer));
+    return {
+      nose: [scalePrim({ shape: "circle", x: 64, y: 34, r: 5 })],
+      eye_l: [scalePrim({ shape: "circle", x: 42, y: 26, r: 7 })],
+      eye_r: [scalePrim({ shape: "circle", x: 86, y: 26, r: 7 })],
+    };
+  }
+
+  /**
+   * 根据 PaddleSpeech 返回的音素序列，查表生成每片的 anim.elements（含嘴+默认眼鼻）。
+   * @param segments  [{ phoneme, ms }, ...]
+   * @param mouthByPhoneme  音素字符串 -> mouth 图形数组；键 "_" 为默认嘴型
+   * @param defaults  可选：nose、eye_l、eye_r、extra 图形数组（与协议 anim.elements 一致）
+   * @returns [{ idx, chunk_ms, phoneme, anim }, ...]
+   */
+  function phonemeSeqToAnimSeq(segments, mouthByPhoneme, defaults) {
+    const d = defaults || {};
+    const nose = d.nose || [];
+    const eye_l = d.eye_l || [];
+    const eye_r = d.eye_r || [];
+    const extra = d.extra || [];
+    const fb = mouthByPhoneme["_"] || [scalePrim({ shape: "rect", x: 46, y: 46, w: 36, h: 9 })];
+    return (segments || []).map((seg, idx) => {
+      const ph = String(seg.phoneme || "").trim();
+      const mouth = Object.prototype.hasOwnProperty.call(mouthByPhoneme, ph)
+        ? mouthByPhoneme[ph]
+        : fb;
+      return {
+        idx,
+        chunk_ms: Number(seg.ms) || 0,
+        anim: [
+          {
+            elements: {
+              mouth: JSON.parse(JSON.stringify(mouth)),
+              nose: JSON.parse(JSON.stringify(nose)),
+              eye_l: JSON.parse(JSON.stringify(eye_l)),
+              eye_r: JSON.parse(JSON.stringify(eye_r)),
+              extra: JSON.parse(JSON.stringify(extra)),
+            },
+            ms: Number(seg.ms) || 0,
+            ...(ph ? { phoneme: ph } : {}),
+          },
+        ],
+      };
+    });
+  }
+
+  function parseWavToChannelData(arrayBuffer) {
+    const dv = new DataView(arrayBuffer);
+    if (dv.byteLength < 44) throw new Error("WAV 过短");
+    if (dv.getUint32(0, false) !== 0x52494646) throw new Error("非 RIFF");
+    let off = 12;
+    let fmtChunk = null;
+    let dataOffset = 0;
+    let dataSize = 0;
+    while (off + 8 <= dv.byteLength) {
+      const id = String.fromCharCode(dv.getUint8(off), dv.getUint8(off + 1), dv.getUint8(off + 2), dv.getUint8(off + 3));
+      const sz = dv.getUint32(off + 4, true);
+      const start = off + 8;
+      if (id === "fmt ") fmtChunk = { start, size: sz };
+      if (id === "data") {
+        dataOffset = start;
+        dataSize = sz;
+        break;
+      }
+      off = start + sz + (sz % 2);
+    }
+    if (!fmtChunk || !dataSize) throw new Error("缺少 fmt/data");
+    const audioFormat = dv.getUint16(fmtChunk.start, true);
+    const numChannels = dv.getUint16(fmtChunk.start + 2, true);
+    const sampleRate = dv.getUint32(fmtChunk.start + 4, true);
+    const bitsPerSample = dv.getUint16(fmtChunk.start + 14, true);
+    if (audioFormat !== 1 || bitsPerSample !== 16) throw new Error("仅支持 PCM s16le WAV");
+    const samples = dataSize / (numChannels * 2);
+    const f32 = new Float32Array(samples);
+    let p = dataOffset;
+    for (let i = 0; i < samples; i++) {
+      let acc = 0;
+      for (let c = 0; c < numChannels; c++) {
+        acc += dv.getInt16(p, true) / 32768;
+        p += 2;
+      }
+      f32[i] = acc / numChannels;
+    }
+    return { sampleRate, channels: numChannels, data: f32 };
+  }
+
+  function rgb565ToCss(c) {
+    if (typeof c !== "number") return null;
+    const r = Math.round(((c >> 11) & 0x1f) * 255 / 31);
+    const g = Math.round(((c >> 5) & 0x3f) * 255 / 63);
+    const b = Math.round((c & 0x1f) * 255 / 31);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function resolveShapeColor(s, fallback) {
+    const from565 = rgb565ToCss(s.c);
+    if (from565) return from565;
+    if (s.color) return s.color;
+    return fallback || "#FFFFFF";
+  }
+
+  function mergePbSubchunks(rows, maxChunkMs) {
+    maxChunkMs = maxChunkMs || 2000;
+    const merged = [];
+    let batch = null;
+    let batchMs = 0;
+    function flush() {
+      if (batch) merged.push(batch);
+      batch = null;
+      batchMs = 0;
+    }
+    for (const row of rows || []) {
+      const ms = Number(row.chunk_ms) || 0;
+      const anim = JSON.parse(JSON.stringify(row.anim || []));
+      if (ms > maxChunkMs) {
+        flush();
+        merged.push({ chunk_ms: ms, anim });
+        continue;
+      }
+      if (batchMs && batchMs + ms > maxChunkMs) flush();
+      if (!batch) batch = { chunk_ms: 0, anim: [] };
+      batch.anim.push(...anim);
+      batchMs += ms;
+      batch.chunk_ms = batchMs;
+    }
+    flush();
+    return merged;
+  }
+
+  function shallowReq() {
+    const a = new Uint8Array(8);
+    crypto.getRandomValues(a);
+    return Array.from(a, (x) => x.toString(16).padStart(2, "0")).join("");
+  }
+
+  const { createApp } = Vue;
+  createApp({
+    data() {
+      return {
+        draft: "你好，仿真测试。",
+        spkId: sim.defaultSpk,
+        busy: false,
+        errL: "",
+        tts: null,
+        animSeq: [],
+        pbPreview: [],
+        playing: false,
+        _audioCtx: null,
+        _sources: [],
+        _raf: 0,
+        _timeline: [],
+        layerOptions: [
+          { id: "mouth", label: "嘴 mouth" },
+          { id: "nose", label: "鼻 nose" },
+          { id: "eye_l", label: "左眼 eye_l" },
+          { id: "eye_r", label: "右眼 eye_r" },
+          { id: "extra", label: "附加 extra" },
+        ],
+        activeLayer: "mouth",
+        tool: "pointer",
+        parts: (function () {
+          const f = defaultFaceCircles();
+          return { mouth: [], nose: f.nose, eye_l: f.eye_l, eye_r: f.eye_r, extra: [] };
+        })(),
+        drag: null,
+        grab: null,
+        selectedRef: null,
+        mouthMapRows: buildDefaultMouthMapRows(),
+      };
+    },
+    computed: {
+      animSeqJson() {
+        return JSON.stringify(this.animSeq, null, 2);
+      },
+      pbPreviewJson() {
+        return JSON.stringify(this.pbPreview, null, 2);
+      },
+      canvasCursorClass() {
+        return this.tool === "pointer" ? "tool-pointer" : "";
+      },
+      circleDraftR() {
+        if (!this.drag || this.tool !== "circle") return 0;
+        return Math.max(1, Math.round(Math.hypot(this.drag.x1 - this.drag.x0, this.drag.y1 - this.drag.y0)));
+      },
+      rectDraft() {
+        if (!this.drag || this.tool !== "rect") {
+          return { x: 0, y: 0, w: 0, h: 0 };
+        }
+        const x0 = this.drag.x0,
+          y0 = this.drag.y0,
+          x1 = this.drag.x1,
+          y1 = this.drag.y1;
+        return {
+          x: Math.min(x0, x1),
+          y: Math.min(y0, y1),
+          w: Math.max(1, Math.abs(x1 - x0)),
+          h: Math.max(1, Math.abs(y1 - y0)),
+        };
+      },
+      selectedShapeDesc() {
+        const ref = this.selectedRef;
+        if (!ref || !this.parts[ref.layer]) return "";
+        const s = this.parts[ref.layer][ref.index];
+        if (!s) return "";
+        if (s.shape === "circle") return `circle x=${s.x} y=${s.y} r=${s.r}`;
+        if (s.shape === "rect") return `rect x=${s.x} y=${s.y} w=${s.w} h=${s.h}`;
+        if (s.shape === "line") return `line (${s.x1},${s.y1})→(${s.x2},${s.y2})`;
+        return JSON.stringify(s);
+      },
+    },
+    mounted() {
+      this.loadParts();
+      this.loadMap();
+      this.redrawEditor();
+    },
+    methods: {
+      loadParts() {
+        try {
+          const raw = localStorage.getItem(LS_PARTS);
+          if (raw) {
+            const o = JSON.parse(raw);
+            for (const k of ["mouth", "nose", "eye_l", "eye_r", "extra"]) {
+              if (Array.isArray(o[k])) this.parts[k] = o[k];
+            }
+          }
+        } catch (e) {}
+        this.ensureDefaultFaceParts();
+      },
+      ensureDefaultFaceParts() {
+        const f = defaultFaceCircles();
+        for (const k of ["nose", "eye_l", "eye_r"]) {
+          if (!this.parts[k] || this.parts[k].length === 0) {
+            this.parts[k] = JSON.parse(JSON.stringify(f[k]));
+          }
+        }
+        if (!this.parts.extra || !Array.isArray(this.parts.extra)) {
+          this.parts.extra = [];
+        }
+      },
+      resetFaceDefaults() {
+        const f = defaultFaceCircles();
+        this.parts.nose = JSON.parse(JSON.stringify(f.nose));
+        this.parts.eye_l = JSON.parse(JSON.stringify(f.eye_l));
+        this.parts.eye_r = JSON.parse(JSON.stringify(f.eye_r));
+        this.saveParts();
+        this.redrawEditor();
+      },
+      resetMouthMapDefaults() {
+        if (!confirm("用内置矩形嘴型覆盖整张音素表？未保存的表格修改将丢失。")) return;
+        this.mouthMapRows = buildDefaultMouthMapRows();
+      },
+      saveParts() {
+        localStorage.setItem(LS_PARTS, JSON.stringify(this.parts));
+      },
+      loadMap() {
+        try {
+          const raw = localStorage.getItem(LS_MAP);
+          if (!raw) return;
+          const o = JSON.parse(raw);
+          if (Array.isArray(o.rows) && o.rows.length) this.mouthMapRows = o.rows;
+        } catch (e) {}
+      },
+      saveMap() {
+        localStorage.setItem(LS_MAP, JSON.stringify({ rows: this.mouthMapRows }));
+        alert("已保存音素→嘴型映射");
+      },
+      mouthByPhoneme() {
+        const m = {};
+        for (const row of this.mouthMapRows) {
+          const k = String(row.phoneme || "").trim();
+          if (!k) continue;
+          try {
+            m[k] = JSON.parse(row.mouthJson || "[]");
+          } catch (e) {
+            m[k] = [];
+          }
+        }
+        return m;
+      },
+      async fetchTts() {
+        this.errL = "";
+        this.tts = null;
+        this.animSeq = [];
+        this.pbPreview = [];
+        this.busy = true;
+        try {
+          const res = await fetch("/api/paddlespeech/phoneme_tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: this.draft.trim(), spk_id: this.spkId }),
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            this.errL = data.error || "HTTP " + res.status;
+            return;
+          }
+          this.tts = data;
+        } catch (e) {
+          this.errL = String(e.message || e);
+        } finally {
+          this.busy = false;
+        }
+      },
+      buildAnimAndProtocol() {
+        if (!this.tts) return;
+        const mb = this.mouthByPhoneme();
+        const defaults = {
+          nose: this.parts.nose || [],
+          eye_l: this.parts.eye_l || [],
+          eye_r: this.parts.eye_r || [],
+          extra: this.parts.extra || [],
+        };
+        this.animSeq = phonemeSeqToAnimSeq(this.tts.segments, mb, defaults);
+        const merged = mergePbSubchunks(this.animSeq);
+        const req = shallowReq();
+        const sr = this.tts.sample_rate;
+        const fmt = "s16le";
+        const ch = 1;
+        const pb = [];
+        const segs = this.tts.segments;
+        const n = merged.length;
+        for (let i = 0; i < n; i++) {
+          const a = merged[i];
+          const isFirst = i === 0;
+          const isLast = i === n - 1;
+          let typ;
+          if (n === 1) typ = "pb_single";
+          else if (isFirst) typ = "pb_start";
+          else if (isLast) typ = "pb_end";
+          else typ = "pb_chunk";
+          const base = {
+            type: typ,
+            req,
+            idx: i,
+            chunk_ms: a.chunk_ms,
+            anim: a.anim,
+            action: "replace",
+          };
+          if (isFirst || n === 1) {
+            base.sr = sr;
+            base.fmt = fmt;
+            base.ch = ch;
+          }
+          const pcmBytes = (a.anim || []).reduce((acc, it) => {
+            const cms = Number(it.ms) || 0;
+            return acc + cms * sr * 2 / 1000;
+          }, 0);
+          if (pcmBytes > 0) {
+            base.audio = { next_bin_len: Math.round(pcmBytes) };
+          }
+          pb.push(base);
+        }
+        this.pbPreview = pb;
+      },
+      importPhonemesFromTts() {
+        if (!this.tts) return;
+        const seen = new Set(this.mouthMapRows.map((r) => r.phoneme));
+        for (const s of this.tts.segments) {
+          const ph = String(s.phoneme || "").trim();
+          if (!ph || seen.has(ph)) continue;
+          seen.add(ph);
+          this.mouthMapRows.push({
+            phoneme: ph,
+            mouthJson: JSON.stringify(
+              this.parts.mouth.length ? this.parts.mouth : [scalePrim({ shape: "rect", x: 46, y: 46, w: 36, h: 9 })]
+            ),
+          });
+        }
+      },
+      addMapRow() {
+        this.mouthMapRows.push({ phoneme: "", mouthJson: "[]" });
+      },
+      applyMouthFromEditor(row) {
+        row.mouthJson = JSON.stringify(this.parts.mouth || [], null, 2);
+      },
+      saveRegionTemplate() {
+        this.saveParts();
+        alert("已将嘴/鼻/眼全部图层写入 localStorage（与音素表独立）");
+      },
+      clearCanvas() {
+        this.parts.mouth = [];
+        this.parts.nose = [];
+        this.parts.eye_l = [];
+        this.parts.eye_r = [];
+        this.parts.extra = [];
+        this.selectedRef = null;
+        this.grab = null;
+        this.drag = null;
+        this.redrawEditor();
+      },
+      canvasXY(e) {
+        const c = this.$refs.editCanvas;
+        const r = c.getBoundingClientRect();
+        let x = ((e.clientX - r.left) / r.width) * c.width;
+        let y = ((e.clientY - r.top) / r.height) * c.height;
+        x = Math.max(0, Math.min(FACE_LCD_W - 1, Math.round(x)));
+        y = Math.max(0, Math.min(FACE_LCD_H - 1, Math.round(y)));
+        return { x, y };
+      },
+      _distToSeg(px, py, x1, y1, x2, y2) {
+        const dx = x2 - x1,
+          dy = y2 - y1;
+        const len2 = dx * dx + dy * dy || 1;
+        let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const nx = x1 + t * dx,
+          ny = y1 + t * dy;
+        return Math.hypot(px - nx, py - ny);
+      },
+      _hitShape(s, px, py, tol) {
+        const t = tol == null ? 3 : tol;
+        if (s.shape === "circle") {
+          return Math.hypot(px - s.x, py - s.y) <= s.r + t;
+        }
+        if (s.shape === "rect") {
+          return px >= s.x - t && px <= s.x + s.w + t && py >= s.y - t && py <= s.y + s.h + t;
+        }
+        if (s.shape === "line") {
+          return this._distToSeg(px, py, s.x1, s.y1, s.x2, s.y2) <= t + 2;
+        }
+        return false;
+      },
+      hitTest(px, py) {
+        const order = ["extra", "eye_r", "eye_l", "mouth", "nose"];
+        for (const layer of order) {
+          const arr = this.parts[layer] || [];
+          for (let i = arr.length - 1; i >= 0; i--) {
+            if (this._hitShape(arr[i], px, py)) return { layer, index: i };
+          }
+        }
+        return null;
+      },
+      _moveShapeBy(s, dx, dy) {
+        if (s.shape === "circle" || s.shape === "rect") {
+          s.x += dx;
+          s.y += dy;
+        } else if (s.shape === "line") {
+          s.x1 += dx;
+          s.y1 += dy;
+          s.x2 += dx;
+          s.y2 += dy;
+        }
+      },
+      onCanvasDown(e) {
+        const { x, y } = this.canvasXY(e);
+        if (this.tool === "pointer") {
+          const h = this.hitTest(x, y);
+          if (h) {
+            this.selectedRef = { layer: h.layer, index: h.index };
+            this.grab = { layer: h.layer, index: h.index, lastPx: x, lastPy: y };
+          } else {
+            this.selectedRef = null;
+            this.grab = null;
+          }
+          this.drag = null;
+          this.redrawEditor();
+          return;
+        }
+        this.grab = null;
+        this.selectedRef = null;
+        this.drag = { x0: x, y0: y, x1: x, y1: y };
+      },
+      onCanvasMove(e) {
+        const { x, y } = this.canvasXY(e);
+        if (this.grab) {
+          const dx = x - this.grab.lastPx;
+          const dy = y - this.grab.lastPy;
+          this.grab.lastPx = x;
+          this.grab.lastPy = y;
+          const sh = this.parts[this.grab.layer][this.grab.index];
+          this._moveShapeBy(sh, dx, dy);
+          this.redrawEditor();
+          return;
+        }
+        if (!this.drag) return;
+        this.drag.x1 = x;
+        this.drag.y1 = y;
+        this.redrawEditor();
+      },
+      onCanvasUp() {
+        if (this.grab) {
+          this.grab = null;
+          this.redrawEditor();
+          return;
+        }
+        if (!this.drag) return;
+        const { x0, y0, x1, y1 } = this.drag;
+        this.drag = null;
+        const layer = this.activeLayer;
+        if (!this.parts[layer]) this.parts[layer] = [];
+        const arr = this.parts[layer];
+        if (this.tool === "circle") {
+          const d = Math.hypot(x1 - x0, y1 - y0);
+          const r = Math.max(2, Math.round(d < 2 ? 8 : d));
+          arr.push({ shape: "circle", x: x0, y: y0, r });
+        } else if (this.tool === "rect") {
+          const x = Math.min(x0, x1),
+            y = Math.min(y0, y1);
+          const w = Math.max(1, Math.abs(x1 - x0)),
+            h = Math.max(1, Math.abs(y1 - y0));
+          arr.push({ shape: "rect", x, y, w, h });
+        } else if (this.tool === "line") {
+          arr.push({ shape: "line", x1: x0, y1: y0, x2: x1, y2: y1 });
+        }
+        this.redrawEditor();
+      },
+      redrawEditor() {
+        const c = this.$refs.editCanvas;
+        if (!c) return;
+        const ctx = c.getContext("2d");
+        ctx.fillStyle = "#1a1a1c";
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(0.5, 0.5, c.width - 1, c.height - 1);
+        const drawOrder = ["nose", "mouth", "eye_l", "eye_r", "extra"];
+        const colors = {
+          mouth: "#f66",
+          nose: "#fc6",
+          eye_l: "#6cf",
+          eye_r: "#9cf",
+          extra: "#c9f",
+        };
+        for (const layer of drawOrder) {
+          const list = this.parts[layer] || [];
+          for (let i = 0; i < list.length; i++) {
+            const sel =
+              this.selectedRef &&
+              this.selectedRef.layer === layer &&
+              this.selectedRef.index === i;
+            this._drawShape(ctx, list[i], colors[layer] || "#8f8", sel);
+          }
+        }
+        if (this.drag && this.tool !== "pointer") {
+          ctx.strokeStyle = "#0af";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          if (this.tool === "circle") {
+            const rr = Math.max(1, Math.hypot(this.drag.x1 - this.drag.x0, this.drag.y1 - this.drag.y0));
+            ctx.arc(this.drag.x0, this.drag.y0, rr, 0, Math.PI * 2);
+            ctx.stroke();
+          } else if (this.tool === "rect") {
+            const rd = this.rectDraft;
+            ctx.strokeRect(rd.x, rd.y, rd.w, rd.h);
+          } else if (this.tool === "line") {
+            ctx.moveTo(this.drag.x0, this.drag.y0);
+            ctx.lineTo(this.drag.x1, this.drag.y1);
+            ctx.stroke();
+          }
+        }
+      },
+      _drawShape(ctx, s, stroke, selected) {
+        const fillColor = resolveShapeColor(s, stroke);
+        const strokeColor = selected ? "#ffcc00" : fillColor;
+        ctx.strokeStyle = strokeColor;
+        ctx.fillStyle = selected ? "rgba(255,200,0,0.2)" : fillColor;
+        ctx.lineWidth = selected ? 2 : 1;
+        const sh = String(s.shape || "").toLowerCase();
+        if (sh === "circle" || sh === "circle_outline") {
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+          if (sh === "circle") ctx.fill();
+          ctx.stroke();
+        } else if (sh === "rect" || sh === "rect_outline") {
+          if (sh === "rect") ctx.fillRect(s.x, s.y, s.w, s.h);
+          ctx.strokeRect(s.x, s.y, s.w, s.h);
+        } else if (sh === "line") {
+          ctx.beginPath();
+          ctx.moveTo(s.x1, s.y1);
+          ctx.lineTo(s.x2, s.y2);
+          ctx.stroke();
+        } else if (sh === "ellipse_fill" || sh === "ellipse") {
+          const rw = s.rw != null ? s.rw : s.w;
+          const rh = s.rh != null ? s.rh : s.h;
+          ctx.beginPath();
+          ctx.ellipse(s.x, s.y, rw, rh, 0, 0, Math.PI * 2);
+          if (sh === "ellipse_fill") ctx.fill();
+          ctx.stroke();
+        }
+      },
+      drawAnimOnCanvas(canvas, anim) {
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#111";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const el =
+          (Array.isArray(anim) && anim.length && anim[0].elements) ||
+          (anim && anim.elements) ||
+          {};
+        const colors = {
+          mouth: "#f66",
+          nose: "#fc6",
+          eye_l: "#6cf",
+          eye_r: "#9cf",
+          extra: "#c9f",
+        };
+        for (const key of ["nose", "mouth", "eye_l", "eye_r", "extra"]) {
+          const layerFallback = colors[key] || "#FFFFFF";
+          for (const s of el[key] || []) {
+            this._drawShape(ctx, s, layerFallback, false);
+          }
+        }
+      },
+      async playSim() {
+        if (!this.tts || !this.animSeq.length) this.buildAnimAndProtocol();
+        if (!this.tts || !this.animSeq.length) return;
+        this.stopSim();
+        const ab = Uint8Array.from(atob(this.tts.wav_base64), (c) => c.charCodeAt(0)).buffer;
+        let wav;
+        try {
+          wav = parseWavToChannelData(ab);
+        } catch (e) {
+          this.errL = "WAV 解析失败: " + e.message;
+          return;
+        }
+        const ctxA = new (window.AudioContext || window.webkitAudioContext)();
+        this._audioCtx = ctxA;
+        const buf = ctxA.createBuffer(1, wav.data.length, wav.sampleRate);
+        buf.copyToChannel(wav.data, 0);
+        const src = ctxA.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctxA.destination);
+        const t0 = ctxA.currentTime + 0.08;
+        src.start(t0);
+        this._sources.push(src);
+        let acc = 0;
+        this._timeline = this.animSeq.map((a) => {
+          const start = acc / 1000;
+          acc += a.chunk_ms;
+          const animItem = Array.isArray(a.anim) && a.anim.length ? a.anim[0] : a.anim;
+          return { start, anim: animItem, ms: a.chunk_ms };
+        });
+        this.playing = true;
+        const loop = () => {
+          if (!this.playing) return;
+          const t = ctxA.currentTime - t0;
+          let cur = this._timeline[0] && this._timeline[0].anim;
+          for (let i = this._timeline.length - 1; i >= 0; i--) {
+            if (t >= this._timeline[i].start) {
+              cur = this._timeline[i].anim;
+              break;
+            }
+          }
+          this.drawAnimOnCanvas(this.$refs.pvCanvas, cur);
+          if (t < buf.duration + 0.05) this._raf = requestAnimationFrame(loop);
+          else this.playing = false;
+        };
+        this._raf = requestAnimationFrame(loop);
+      },
+      stopSim() {
+        this.playing = false;
+        if (this._raf) cancelAnimationFrame(this._raf);
+        this._raf = 0;
+        if (this._audioCtx) {
+          try {
+            this._sources.forEach((s) => {
+              try {
+                s.stop();
+              } catch (e) {}
+            });
+            this._audioCtx.close();
+          } catch (e) {}
+        }
+        this._audioCtx = null;
+        this._sources = [];
+      },
+    },
+    watch: {
+      activeLayer() {
+        this.$nextTick(() => this.redrawEditor());
+      },
+      parts: {
+        deep: true,
+        handler() {
+          this.$nextTick(() => this.redrawEditor());
+        },
+      },
+    },
+    beforeUnmount() {
+      this.stopSim();
+    },
+  }).mount("#app");
+  window.phonemeSeqToAnimSeq = phonemeSeqToAnimSeq;
+  window.buildDefaultMouthMapRows = buildDefaultMouthMapRows;
+  window.enumerateZhPhonemes = enumerateZhPhonemes;
+})();
+  </script>
+{% endblock %}

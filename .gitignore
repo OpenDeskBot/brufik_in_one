@@ -1,0 +1,76 @@
+# --- Python ---
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# --- PlatformIO / embedded ---
+.pio/
+.pioenvs/
+.piolibdeps/
+sdkconfig.*
+!**/sdkconfig.defaults
+platformio.local.ini
+
+# --- Logs & runtime ---
+*.log
+app.log
+backup/
+*.pid
+out.wav
+tts_resp*.json
+*.swp
+*.mp3
+*.avi
+*.spec
+.e2e-results/
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.code-workspace
+.cursor/
+.claude/
+.history/
+tmp/
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+credentials.json
+secrets.yaml
+.secrets.yaml
+.config.yaml
+.private_config.yaml
+**/secrets*.json
+**/local*.json
+deskbot-server/data/.free_api_key
+
+# --- Service large / generated ---
+deskbot-server/models/
+paddlespeech-server/PaddleSpeech/
+music/
+uploadfile
+*.tar.gz
+pkg.sh
+
+# --- Hardware generated (regenerate via generate_kicad.py) ---
+hardware/mechanical/pcb/Board1/Board1_kicad.zip
+
+# --- Misc ---
+*.iml
+my_wakeup_words.mp3

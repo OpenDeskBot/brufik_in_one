@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block page_title %}LLM 管理 · OpenDesk{% endblock %}
+{% block content %}
+<header class="page-header">
+  <h1>LLM 管理</h1>
+  <p class="page-lead">为设备配置大模型。未选择自定义模型时，将使用系统默认配置（<code class="mono">{{ system_default.model }}</code>）。后端通过 LiteLLM 适配多种协议。</p>
+</header>
+
+<div class="section-card">
+  <h3>选择设备</h3>
+  {% if devices %}
+  <div class="form-row" style="align-items:flex-end;">
+    <div style="flex:1;">
+      <label>当前设备</label>
+      <select id="deviceSelect" class="agent-input">
+        <option value="">— 请选择 —</option>
+        {% for d in devices %}
+        <option value="{{ d.device_id }}" {% if d.device_id == current_device_id %}selected{% endif %}>
+          {{ d.display_name or d.device_id }} ({{ d.device_id }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="flex:0;">
+      <label>&nbsp;</label>
+      <button type="button" id="selectBtn" class="agent-btn secondary">切换</button>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">尚未绑定设备，请先在 <a href="{{ url_for('app.devices_page') }}">我的设备</a> 页添加。</p>
+  {% endif %}
+</div>
+
+{% if current_device_id %}
+<div class="section-card">
+  <h3>当前生效模型</h3>
+  {% if active_config %}
+  <p>
+    <strong>{{ active_config.display_name }}</strong>
+    <span class="muted">（来源：{% if active_config.source == 'device' %}设备自定义{% else %}系统默认{% endif %}）</span>
+  </p>
+  <p class="muted mono" style="margin:6px 0 0;">模型：{{ active_config.model }}{% if active_config.api_base %} · Base URL：{{ active_config.api_base }}{% endif %}</p>
+  {% else %}
+  <p class="muted">无法解析当前模型配置。</p>
+  {% endif %}
+  {% if active_model_id %}
+  <button type="button" id="useSystemBtn" class="agent-btn ghost sm" style="margin-top:10px;">切换为系统默认</button>
+  {% endif %}
+</div>
+
+<div class="section-card">
+  <h3>添加大模型</h3>
+  <form id="addForm" class="form-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;">
+    <div>
+      <label>显示名称</label>
+      <input id="addName" class="agent-input" placeholder="例如：通义 Qwen" required />
+    </div>
+    <div>
+      <label>模型 ID</label>
+      <input id="addModelName" class="agent-input" placeholder="例如：qwen-flash" required />
+    </div>
+    <div>
+      <label>协议</label>
+      <select id="addProtocol" class="agent-input">
+        {% for p in protocols %}
+        <option value="{{ p }}" {% if p == 'openai' %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Base URL</label>
+      <input id="addBaseUrl" class="agent-input" placeholder="https://..." />
+    </div>
+    <div>
+      <label>API Key</label>
+      <input id="addApiKey" class="agent-input" type="password" placeholder="sk-..." autocomplete="off" />
+    </div>
+    <div style="align-self:end;">
+      <button type="submit" class="agent-btn">添加</button>
+    </div>
+  </form>
+  <p id="addMsg" class="muted" style="margin-top:10px;"></p>
+</div>
+
+<div class="section-card">
+  <h3>模型列表 <span class="muted" style="font-weight:400;font-size:13px;">{{ current_device_id }}</span></h3>
+  <table class="agent-table" id="modelTable">
+    <thead>
+      <tr>
+        <th>名称</th>
+        <th>模型 ID</th>
+        <th>协议</th>
+        <th>Base URL</th>
+        <th>API Key</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in models %}
+      <tr data-id="{{ m.id }}">
+        <td>{{ m.name }}</td>
+        <td class="mono">{{ m.model_name }}</td>
+        <td class="mono">{{ m.protocol }}</td>
+        <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">{{ m.base_url or '—' }}</td>
+        <td class="mono">{{ m.api_key or ('—' if not m.api_key_set else '****') }}</td>
+        <td>{% if m.id == active_model_id %}<span class="agent-badge green">当前</span>{% else %}—{% endif %}</td>
+        <td>
+          {% if m.id != active_model_id %}
+          <button type="button" class="agent-btn secondary sm activate-btn" data-id="{{ m.id }}">设为当前</button>
+          {% endif %}
+          <button type="button" class="agent-btn secondary sm edit-btn"
+            data-id="{{ m.id }}"
+            data-name="{{ m.name }}"
+            data-model-name="{{ m.model_name }}"
+            data-protocol="{{ m.protocol }}"
+            data-base-url="{{ m.base_url }}"
+          >编辑</button>
+          <button type="button" class="agent-btn ghost sm del-btn" data-id="{{ m.id }}">删除</button>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">暂无自定义模型，将使用系统默认（{{ system_default.display_name }}）</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif devices %}
+<div class="section-card">
+  <p class="muted">请先在上方选择设备，再管理该设备的 LLM 配置。</p>
+</div>
+{% endif %}
+
+<script>
+  const deviceId = "{{ current_device_id or '' }}";
+  const deviceSelect = document.getElementById("deviceSelect");
+  document.getElementById("selectBtn")?.addEventListener("click", async () => {
+    const device_id = deviceSelect?.value?.trim() || "";
+    const res = await fetch("{{ url_for('app.api_select_device') }}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: device_id || null }),
+    });
+    const data = await res.json();
+    if (data.ok) location.reload();
+  });
+
+  document.getElementById("useSystemBtn")?.addEventListener("click", async () => {
+    if (!confirm("确定切换为系统默认模型？")) return;
+    const res = await fetch(`{{ url_for('app.api_select_llm_model') }}?device_id=${encodeURIComponent(deviceId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_id: null }),
+    });
+    const data = await res.json();
+    if (data.ok) location.reload();
+    else alert(data.error || "操作失败");
+  });
+
+  const addMsg = document.getElementById("addMsg");
+  document.getElementById("addForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const payload = {
+      name: document.getElementById("addName")?.value?.trim() || "",
+      model_name: document.getElementById("addModelName")?.value?.trim() || "",
+      protocol: document.getElementById("addProtocol")?.value || "openai",
+      base_url: document.getElementById("addBaseUrl")?.value?.trim() || "",
+      api_key: document.getElementById("addApiKey")?.value?.trim() || "",
+    };
+    const res = await fetch(`{{ url_for('app.api_create_llm_model') }}?device_id=${encodeURIComponent(deviceId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      location.reload();
+    } else {
+      addMsg.textContent = data.error || "添加失败";
+    }
+  });
+
+  document.querySelectorAll(".activate-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      const res = await fetch(`{{ url_for('app.api_select_llm_model') }}?device_id=${encodeURIComponent(deviceId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model_id: id }),
+      });
+      const data = await res.json();
+      if (data.ok) location.reload();
+      else alert(data.error || "操作失败");
+    });
+  });
+
+  document.querySelectorAll(".edit-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      const name = prompt("显示名称：", btn.dataset.name || "");
+      if (name === null) return;
+      const model_name = prompt("模型 ID：", btn.dataset.modelName || "");
+      if (model_name === null) return;
+      const protocol = prompt("协议（openai/anthropic/azure/gemini/ollama）：", btn.dataset.protocol || "openai");
+      if (protocol === null) return;
+      const base_url = prompt("Base URL（可留空）：", btn.dataset.baseUrl || "");
+      if (base_url === null) return;
+      const api_key = prompt("API Key（留空则不修改）：", "");
+      if (api_key === null) return;
+      const payload = { name: name.trim(), model_name: model_name.trim(), protocol: protocol.trim(), base_url: base_url.trim() };
+      if (api_key.trim()) payload.api_key = api_key.trim();
+      const res = await fetch(
+        `{{ url_for('app.api_update_llm_model', model_id='__ID__') }}`.replace("__ID__", id)
+          + `?device_id=${encodeURIComponent(deviceId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      const data = await res.json();
+      if (data.ok) location.reload();
+      else alert(data.error || "更新失败");
+    });
+  });
+
+  document.querySelectorAll(".del-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("确定删除该模型？")) return;
+      const id = btn.dataset.id;
+      const res = await fetch(
+        `{{ url_for('app.api_delete_llm_model', model_id='__ID__') }}`.replace("__ID__", id)
+          + `?device_id=${encodeURIComponent(deviceId)}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json();
+      if (data.ok) location.reload();
+      else alert(data.error || "删除失败");
+    });
+  });
+</script>
+{% endblock %}

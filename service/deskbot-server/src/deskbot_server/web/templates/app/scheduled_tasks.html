@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block page_title %}定时任务 · OpenDesk{% endblock %}
+{% block content %}
+<header class="page-header">
+  <h1>定时任务</h1>
+  <p class="page-lead">Cron 定时任务（北京时间）。由对话 LLM 创建与管理，到点自动执行并播报。一次性任务执行后结束；周期性任务按 cron 重复。</p>
+</header>
+
+<div class="section-card">
+  <h3>选择设备</h3>
+  {% if devices %}
+  <div class="form-row" style="align-items:flex-end;">
+    <div style="flex:1;">
+      <label>当前设备</label>
+      <select id="deviceSelect" class="agent-input">
+        <option value="">— 请选择 —</option>
+        {% for d in devices %}
+        <option value="{{ d.device_id }}" {% if d.device_id == current_device_id %}selected{% endif %}>
+          {{ d.display_name or d.device_id }} ({{ d.device_id }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="flex:0;">
+      <label>&nbsp;</label>
+      <button type="button" id="selectBtn" class="agent-btn secondary">切换</button>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">尚未绑定设备，请先在 <a href="{{ url_for('app.devices_page') }}">我的设备</a> 页添加。</p>
+  {% endif %}
+</div>
+
+{% if current_device_id %}
+<div class="section-card">
+  <h3>任务列表 <span class="muted" style="font-weight:400;font-size:13px;">{{ current_device_id }}</span></h3>
+  <table class="agent-table" id="taskTable">
+    <thead>
+      <tr>
+        <th>任务</th>
+        <th>Cron</th>
+        <th>类型</th>
+        <th>下次执行</th>
+        <th>Session</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tasks %}
+      <tr data-id="{{ t.id }}">
+        <td>{{ t.description }}</td>
+        <td class="mono">{{ t.cron_expr }}</td>
+        <td>{% if t.task_kind == 'recurring' %}周期{% else %}一次{% endif %}</td>
+        <td class="mono">{{ t.next_run_at }}</td>
+        <td class="mono muted">{% if t.session_id %}{{ t.session_id }}{% else %}—{% endif %}</td>
+        <td>
+          {% if t.status == 'active' and t.enabled %}
+          <span class="agent-badge">待执行</span>
+          {% elif t.status == 'running' %}
+          <span class="agent-badge">执行中</span>
+          {% elif t.status == 'completed' %}
+          <span class="agent-badge green">已完成</span>
+          {% elif t.status == 'failed' %}
+          <span class="agent-badge red">失败</span>
+          {% else %}
+          <span class="agent-badge">{{ t.status }}</span>
+          {% endif %}
+          {% if t.result_summary %}
+          <br><span class="muted" style="font-size:12px;">{{ t.result_summary[:80] }}{% if t.result_summary|length > 80 %}…{% endif %}</span>
+          {% endif %}
+        </td>
+        <td>
+          <button type="button" class="agent-btn ghost sm del-btn" data-id="{{ t.id }}"
+                  {% if t.status == 'running' %}title="任务执行中，仍可强制删除"{% endif %}>删除</button>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">暂无定时任务</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif devices %}
+<div class="section-card">
+  <p class="muted">请先在上方选择设备，再查看该设备的定时任务。</p>
+</div>
+{% endif %}
+
+<script>
+  const deviceSelect = document.getElementById("deviceSelect");
+  document.getElementById("selectBtn")?.addEventListener("click", async () => {
+    const device_id = deviceSelect?.value?.trim() || "";
+    const res = await fetch("{{ url_for('app.api_select_device') }}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: device_id || null }),
+    });
+    const data = await res.json();
+    if (data.ok) location.reload();
+  });
+
+  document.querySelectorAll(".del-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("确定删除该定时任务？")) return;
+      const taskId = btn.dataset.id;
+      const deviceId = "{{ current_device_id or '' }}";
+      const res = await fetch(
+        `{{ url_for('app.api_delete_scheduled_task', task_id='__ID__') }}`.replace("__ID__", taskId)
+          + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""),
+        { method: "DELETE" }
+      );
+      const data = await res.json();
+      if (data.ok) {
+        btn.closest("tr")?.remove();
+      } else {
+        alert(data.error || "删除失败");
+      }
+    });
+  });
+</script>
+{% endblock %}

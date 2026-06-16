@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23c2703e'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='14' fill='%23fff'%3EO%3C/text%3E%3C/svg%3E" />
+  <title>{% block page_title %}OpenDesk{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}" />
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="agent-theme">
+  <div class="app-shell">
+    <header class="app-topbar">
+      <a class="app-brand" href="{{ url_for('app.dashboard') }}">
+        <span class="app-brand-mark">O</span>
+        <span>OpenDesk<small>Agent Cloud</small></span>
+      </a>
+      {% if nav_user_email %}
+      <div class="app-topbar-right">
+        <span class="app-user-pill">{{ nav_display_name or nav_user_email }}</span>
+        <form method="post" action="{{ url_for('auth.logout') }}" style="margin:0;">
+          <button type="submit" class="agent-btn ghost sm">退出</button>
+        </form>
+      </div>
+      {% endif %}
+    </header>
+
+    <div class="app-body">
+      <aside class="app-sidebar">
+        <nav class="app-nav">
+          <div class="nav-group">
+            <div class="nav-group-label">工作台</div>
+            <a href="{{ url_for('app.dashboard') }}" class="{% if active_nav == 'app' %}active{% endif %}">控制台</a>
+            <a href="{{ url_for('app.devices_page') }}" class="{% if active_nav == 'devices_mgr' %}active{% endif %}">我的设备</a>
+            <a href="{{ url_for('app.scheduled_tasks_page') }}" class="{% if active_nav == 'scheduled_tasks' %}active{% endif %}">定时任务</a>
+            <a href="{{ url_for('app.face_profiles_page') }}" class="{% if active_nav == 'face_profiles' %}active{% endif %}">人脸识别</a>
+            <a href="{{ url_for('app.memories_page') }}" class="{% if active_nav == 'memories' %}active{% endif %}">记忆</a>
+            <a href="{{ url_for('app.llm_models_page') }}" class="{% if active_nav == 'llm_models' %}active{% endif %}">LLM 管理</a>
+            <a href="{{ url_for('app.usage_page') }}" class="{% if active_nav == 'usage' %}active{% endif %}">用量看板</a>
+          </div>
+          <div class="nav-group">
+            <div class="nav-group-label">调试</div>
+            <a href="{{ url_for('debug.debug_devices') }}" class="{% if active_nav == 'devices' %}active{% endif %}">设备调试</a>
+            <a href="{{ url_for('debug.debug_llm') }}" class="{% if active_nav == 'llm' %}active{% endif %}">LLM 调试</a>
+          </div>
+          <div class="nav-group">
+            <div class="nav-group-label">账户</div>
+            <a href="{{ url_for('app.settings_page') }}" class="{% if active_nav == 'account' %}active{% endif %}">账号设置</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="app-main">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="flash-msg {% if category == 'error' %}error{% else %}success{% endif %}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

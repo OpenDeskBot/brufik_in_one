@@ -1,0 +1,51 @@
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+Pipfile*
+# PlatformIO / embedded
+.pio/
+.pioenvs/
+.piolibdeps/
+sdkconfig.*
+!sdkconfig.defaults
+platformio.local.ini
+
+# Logs & local runtime
+*.log
+app.log
+backup/
+
+# Debug / media artifacts (do not commit)
+out.wav
+tts_resp.json
+tts_resp*.json
+*.swp
+*.mp3
+*.spec
+*.zip
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.code-workspace
+
+# Secrets
+.env
+.env.*
+*.pem
+credentials.json
+secrets.yaml
+
+# Tools runtime artifacts
+tools/sent_images/
+sent_images/
+*.avi
