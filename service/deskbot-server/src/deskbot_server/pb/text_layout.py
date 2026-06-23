@@ -21,6 +21,10 @@ def _char_display_width(ch: str, *, size: int) -> int:
     return max(6, 8 * size)
 
 
+def _line_width_px(line: str, *, size: int) -> int:
+    return sum(_char_display_width(ch, size=size) for ch in line)
+
+
 def wrap_text_lines(
     text: str,
     *,
@@ -60,29 +64,39 @@ def text_primitives_from_block(
     max_width_px: int | None = None,
     max_height_px: int | None = None,
 ) -> list[dict[str, Any]]:
-    """长文本 → ``extra`` 层多行 ``text`` 图元，避免超出 284×240。"""
+    """长文本 → ``extra`` 层多行 ``text`` 图元（底部居中，避免超出 284×240）。"""
     if not str(text or "").strip():
         return []
     margin_x = _DEFAULT_MARGIN_X if x is None else int(x)
-    margin_y = _DEFAULT_MARGIN_Y if y is None else int(y)
+    margin_bottom = _DEFAULT_MARGIN_Y if y is None else int(y)
     max_w = (
         FACE_LCD_WIDTH - margin_x * 2
         if max_width_px is None
         else int(max_width_px)
     )
     line_h = max(8, _LINE_HEIGHT_MUL * max(1, int(size)))
-    max_h = FACE_LCD_HEIGHT - margin_y if max_height_px is None else int(max_height_px)
+    top_safe = _DEFAULT_MARGIN_X
+    max_h = (
+        FACE_LCD_HEIGHT - margin_bottom - top_safe
+        if max_height_px is None
+        else int(max_height_px)
+    )
     max_lines = max(1, max_h // line_h)
 
-    lines = wrap_text_lines(text, max_width_px=max_w, size=size)[:max_lines]
+    lines = [ln for ln in wrap_text_lines(text, max_width_px=max_w, size=size)[:max_lines] if ln]
+    if not lines:
+        return []
+
+    total_h = len(lines) * line_h
+    y_start = FACE_LCD_HEIGHT - margin_bottom - total_h
     prims: list[dict[str, Any]] = []
     for i, ln in enumerate(lines):
-        if not ln:
-            continue
+        line_w = _line_width_px(ln, size=size)
+        x_pos = max(0, (FACE_LCD_WIDTH - line_w) // 2)
         prim: dict[str, Any] = {
             "shape": "text",
-            "x": margin_x,
-            "y": margin_y + i * line_h,
+            "x": x_pos,
+            "y": y_start + i * line_h,
             "text": ln,
             "size": max(1, int(size)),
         }

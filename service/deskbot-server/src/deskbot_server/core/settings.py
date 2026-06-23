@@ -71,6 +71,7 @@ class LlmSettings:
 
 @dataclass(frozen=True)
 class TtsSettings:
+    provider: str = "paddle"
     ws_url: str = ""
     lang: str = "zh"
     spk_id: int = 0
@@ -125,6 +126,8 @@ class AppSettings:
             else bool(srv.get("send_face_info_to_asr_chat", False))
         )
 
+        if os.environ.get("TTS_PROVIDER"):
+            tts["provider"] = os.environ["TTS_PROVIDER"]
         if os.environ.get("TTS_WS_URL"):
             tts["ws_url"] = os.environ["TTS_WS_URL"]
         if os.environ.get("TTS_SPK_ID"):
@@ -137,6 +140,7 @@ class AppSettings:
             for k, v in tts.items()
             if k
             not in (
+                "provider",
                 "ws_url",
                 "lang",
                 "spk_id",
@@ -216,6 +220,7 @@ class AppSettings:
                 system_prompt=str(llm.get("system_prompt", "")),
             ),
             tts=TtsSettings(
+                provider=str(tts.get("provider") or "paddle").strip().lower(),
                 ws_url=str(tts.get("ws_url", "")),
                 lang=str(tts.get("lang", "zh")),
                 spk_id=int(tts.get("spk_id", 0)),
@@ -247,6 +252,7 @@ class AppSettings:
     def tts_cfg(self) -> dict[str, Any]:
         """兼容旧代码对 dict 形式 tts 配置的访问。"""
         base = {
+            "provider": self.tts.provider,
             "ws_url": self.tts.ws_url,
             "lang": self.tts.lang,
             "spk_id": self.tts.spk_id,

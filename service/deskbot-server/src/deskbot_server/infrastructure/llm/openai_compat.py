@@ -17,6 +17,7 @@ from deskbot_server.llm.utils import (
     llm_device_screen_appendix,
     llm_pb_scenes_prompt_appendix,
     llm_static_context_prompt_appendix,
+    parse_llm_reply,
 )
 
 logger = logging.getLogger("deskbot-server")
@@ -84,8 +85,50 @@ class OpenAiLlmAdapter:
         if extra_messages:
             messages.extend(extra_messages)
 
-        def _chat() -> str:
-            content, _meta = litellm_completion(messages, device_id=device_id, temperature=0.7)
+        def _chat(msgs: list[dict[str, str]], *, json_mode: bool = True) -> str:
+            content, _meta = litellm_completion(
+                msgs, device_id=device_id, temperature=0.7, json_mode=json_mode
+            )
             return content
 
-        return await asyncio.to_thread(_chat)
+        answer = await asyncio.to_thread(_chat, messages)
+        parsed = parse_llm_reply(answer)
+        if not parsed.get("json_ok"):
+            logger.warning(
+                "[LLM] 首轮输出非 JSON，重试 device_id=%s preview=%r",
+                device_id,
+                (answer or "")[:120],
+            )
+            retry_messages = list(messages)
+            retry_messages.append({"role": "assistant", "content": answer})
+            retry_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "上轮输出不是合法 JSON。请仅输出一个 JSON 对象（不要 markdown 代码围栏、不要解释），"
+                        '格式含 need_reply、tts、moves、anims、tools 等字段。'
+                    ),
+                }
+            )
+            answer = await asyncio.to_thread(_chat, retry_messages)
+            parsed = parse_llm_reply(answer)
+        elif parsed.get("tools") and not (parsed.get("reply") or "").strip():
+            logger.warning(
+                "[LLM] 仅有 tools 无 tts，重试 device_id=%s tools=%s",
+                device_id,
+                parsed.get("tools"),
+            )
+            retry_messages = list(messages)
+            retry_messages.append({"role": "assistant", "content": answer})
+            retry_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "上轮只返回了 tools，缺少完整 JSON 对象与 tts。"
+                        "若摄像头跟随已开启，不要重复 set_camera_follow。"
+                        "请输出完整 JSON：tools 写 []，tts 写要对用户说的口语。"
+                    ),
+                }
+            )
+            answer = await asyncio.to_thread(_chat, retry_messages)
+        return answer

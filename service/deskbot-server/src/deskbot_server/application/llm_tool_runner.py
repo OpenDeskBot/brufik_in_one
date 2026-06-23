@@ -7,7 +7,7 @@ from typing import Any, Optional
 from deskbot_server.application.face_registration import register_face_for_device
 from deskbot_server.device_camera_frame_store import capture_camera_for_device
 from deskbot_server.device_tmp_store import read_device_tmp_file, write_device_tmp_file
-from deskbot_server.debug_prefs_store import persist_camera_servo_auto_mode
+from deskbot_server.debug_prefs_store import get_camera_servo_auto_mode, persist_camera_servo_auto_mode
 from deskbot_server.memory_store import add_memory, delete_memory
 from deskbot_server.scheduled_task_service import execute_schedule_task_tool
 from deskbot_server.session_store import execute_session_tool
@@ -80,8 +80,17 @@ def execute_llm_tools(
                 mode = _normalize_follow_mode(raw.get("mode") or raw.get("value"))
                 if mode not in ("", "follow", "follow_frontal", "gaze"):
                     raise ValueError(f"未知跟随模式: {mode!r}")
+                before = get_camera_servo_auto_mode()
                 norm = persist_camera_servo_auto_mode(mode)
-                results.append({"tool": tool, "ok": True, "mode": norm})
+                already = before == norm
+                row: dict[str, Any] = {"tool": tool, "ok": True, "mode": norm}
+                if already:
+                    row["already_active"] = True
+                    row["hint"] = (
+                        f"摄像头跟随已是 {norm or '关闭'}，无需再次调用。"
+                        "请返回完整 JSON（tools:[] + tts 回答用户）。"
+                    )
+                results.append(row)
             elif tool == "memory_add":
                 text = str(raw.get("text") or raw.get("value") or "").strip()
                 if not text:

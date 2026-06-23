@@ -196,3 +196,19 @@ def test_text_primitives_wrap():
     prims = text_primitives_from_block("你好世界" * 20, max_width_px=80, size=1)
     assert len(prims) >= 2
     assert all(p["shape"] == "text" for p in prims)
+
+
+def test_text_primitives_bottom_center():
+    from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
+    from deskbot_server.pb.text_layout import _line_width_px, text_primitives_from_block
+
+    prims = text_primitives_from_block("你好", size=1)
+    assert len(prims) == 1
+    line_w = _line_width_px("你好", size=1)
+    assert prims[0]["x"] == (FACE_LCD_WIDTH - line_w) // 2
+    assert prims[0]["y"] == FACE_LCD_HEIGHT - 8 - 9
+
+    prims2 = text_primitives_from_block("第一行\n第二行", size=1)
+    assert len(prims2) == 2
+    assert prims2[0]["y"] < prims2[1]["y"]
+    assert prims2[1]["y"] == FACE_LCD_HEIGHT - 8 - 9

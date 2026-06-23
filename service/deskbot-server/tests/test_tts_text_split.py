@@ -10,8 +10,9 @@ def test_split_single_sentence():
 
 
 def test_split_by_commas_and_periods():
-    assert split_tts_by_punctuation("你好，我是小歪。") == ["你好，", "我是小歪。"]
+    assert split_tts_by_punctuation("你好，我是小歪。") == ["你好，我是小歪。"]
     assert split_tts_by_punctuation("好的！今天不错？") == ["好的！", "今天不错？"]
+    assert split_tts_by_punctuation("画面里没人，我看不到你啦。") == ["画面里没人，我看不到你啦。"]
 
 
 def test_split_empty():

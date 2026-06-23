@@ -6,7 +6,7 @@ from deskbot_server.application.chat_service import ChatService
 from deskbot_server.core.settings import AppSettings
 from deskbot_server.infrastructure.asr.funasr import FunAsrAdapter
 from deskbot_server.infrastructure.llm.openai_compat import OpenAiLlmAdapter
-from deskbot_server.infrastructure.tts.paddle_phoneme import PaddlePhonemeTtsAdapter
+from deskbot_server.infrastructure.tts.factory import build_tts_adapter
 
 
 def build_chat_service(config: dict) -> ChatService:
@@ -15,5 +15,5 @@ def build_chat_service(config: dict) -> ChatService:
         settings,
         asr=FunAsrAdapter(settings),
         llm=OpenAiLlmAdapter(settings),
-        tts=PaddlePhonemeTtsAdapter(settings),
+        tts=build_tts_adapter(settings),
     )

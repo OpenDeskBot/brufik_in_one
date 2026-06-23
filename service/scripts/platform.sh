@@ -225,11 +225,19 @@ platform_install_cpu_torch() {
   if [[ -f "$torch_wheel_path" ]]; then
     echo "检测到本地 torch wheel: $torch_wheel_path"
     "$py" -m pip install "$torch_wheel_path" "${pip_extra[@]}" || return 1
+    _install_torch_pip_cpu || {
+      echo "torchaudio 安装失败：请确认 Python >= ${req_mm} 且为 linux x86_64。" >&2
+      return 1
+    }
   elif [[ "${TORCH_USE_ARIA2:-0}" == "1" ]] && command -v aria2c >/dev/null 2>&1; then
     echo "使用 aria2 下载 torch wheel（URL 已编码 + → %2B）..."
     if aria2c -x 16 -s 16 -k 1M -d "$torch_wheel_dir" -o "$torch_wheel_name" "$torch_wheel_url" \
       && [[ -f "$torch_wheel_path" ]]; then
       "$py" -m pip install "$torch_wheel_path" "${pip_extra[@]}" || return 1
+      _install_torch_pip_cpu || {
+        echo "torchaudio 安装失败：请确认 Python >= ${req_mm} 且为 linux x86_64。" >&2
+        return 1
+      }
     else
       echo "aria2 下载失败，改用 pip..." >&2
       rm -f "$torch_wheel_path"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -543,6 +544,7 @@ async def _run_pb_playback(
     pb_aborted = False
     total_pb = 0
     chunk_is_last = True
+    prefetch_tts: asyncio.Task | None = None
 
     async with downlink.pb_serial_chain():
         for chunk_i, chunk_text in enumerate(text_chunks):
@@ -550,11 +552,18 @@ async def _run_pb_playback(
                 segs_local = segs
                 sr_pb = int(chat.tts_cfg.get("sample_rate") or 24000)
             else:
-                sr_pb, segs_local = await chat.tts_phoneme_segments(chunk_text)
+                if prefetch_tts is None:
+                    prefetch_tts = asyncio.create_task(chat.tts_phoneme_segments(chunk_text))
+                sr_pb, segs_local = await prefetch_tts
+                prefetch_tts = None
                 result.t_tts_synth_end = time.monotonic()
                 pcm_ok = any(len(s.get("pcm") or b"") > 0 for s in segs_local)
                 if not segs_local or not pcm_ok:
                     raise RuntimeError(f"phoneme TTS 无分片或无 PCM: {chunk_text!r}")
+                if chunk_i + 1 < len(text_chunks):
+                    prefetch_tts = asyncio.create_task(
+                        chat.tts_phoneme_segments(text_chunks[chunk_i + 1])
+                    )
 
             chunk_is_first = chunk_i == 0
             chunk_is_last = chunk_i == len(text_chunks) - 1
@@ -617,7 +626,12 @@ async def _run_pb_playback(
                 n_pb=n_pb,
             )
             if pb_aborted:
+                if prefetch_tts is not None:
+                    prefetch_tts.cancel()
                 break
+
+        if prefetch_tts is not None:
+            prefetch_tts.cancel()
 
         if not pb_aborted and chunk_is_last:
             for sc_name in llm_scenes:

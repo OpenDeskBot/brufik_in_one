@@ -12,6 +12,14 @@ from deskbot_server.pb.llm_plan import (
 )
 
 
+def test_parse_llm_reply_tool_only_array():
+    raw = '[{"tool":"set_camera_follow","mode":"follow"}]'
+    parsed = parse_llm_reply(raw)
+    assert parsed["json_ok"] is True
+    assert parsed["tools"] == [{"tool": "set_camera_follow", "mode": "follow"}]
+    assert parsed["reply"] == ""
+
+
 def test_parse_llm_reply_moves_anims():
     raw = (
         '{"need_reply": true, "tts": "你好", '

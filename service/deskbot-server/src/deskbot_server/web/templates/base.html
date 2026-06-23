@@ -42,6 +42,7 @@
             <div class="nav-group-label">调试</div>
             <a href="{{ url_for('debug.debug_devices') }}" class="{% if active_nav == 'devices' %}active{% endif %}">设备调试</a>
             <a href="{{ url_for('debug.debug_llm') }}" class="{% if active_nav == 'llm' %}active{% endif %}">LLM 调试</a>
+            <a href="{{ url_for('debug.debug_tts') }}" class="{% if active_nav == 'tts' %}active{% endif %}">TTS 调试</a>
           </div>
           <div class="nav-group">
             <div class="nav-group-label">账户</div>

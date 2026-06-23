@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% block page_title %}TTS 调试 · Deskbot Server{% endblock %}
+{% block extra_head %}
+  <script>
+    window.__DOUBAO_TTS__ = {{ initial_config|tojson }};
+    window.__DOUBAO_TTS_SPEAKERS__ = {{ speaker_presets|tojson }};
+  </script>
+  <script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+{% endblock %}
+{% block content %}
+  <h1>TTS 调试</h1>
+  <p class="sub">
+    调试豆包语音 2.0 双向 WebSocket TTS（<code>wss://openspeech.bytedance.com/api/v3/tts/bidirection</code>）。
+    新版控制台只需配置 <code>API Key</code>（<code>X-Api-Key</code>）与 <code>speaker</code> 音色，保存后写入 <code>.env</code>。
+  </p>
+  {% raw %}
+  <div id="app" class="tts-debug">
+    <div class="card">
+      <h2 class="h2">密钥与音色</h2>
+      <div class="form-grid">
+        <label class="field wide">
+          <span class="lbl">API Key</span>
+          <input v-model="cfg.api_key" class="inp mono" type="password" :placeholder="cfg.api_key_set ? '已配置，留空不修改' : 'Seed Speech API Key'" :disabled="savingCfg" />
+        </label>
+        <label class="field wide">
+          <span class="lbl">Speaker（音色）<span class="muted sm" v-if="speakers.length">（{{ filteredSpeakers.length }}/{{ speakers.length }}）</span></span>
+          <input
+            v-model="speakerFilter"
+            class="inp"
+            placeholder="搜索音色名称或 ID…"
+            :disabled="savingCfg"
+          />
+          <select v-model="speakerPreset" class="inp speaker-select" :disabled="savingCfg" @change="applySpeakerPreset" size="8">
+            <option value="">从预设选择…</option>
+            <option v-for="item in filteredSpeakers" :key="item.id" :value="item.id">
+              {{ item.scene ? '[' + item.scene + '] ' : '' }}{{ item.label }} — {{ item.id }}
+            </option>
+          </select>
+          <input
+            v-model="cfg.speaker"
+            class="inp mono speaker-id-inp"
+            placeholder="或自定义填写 speaker ID，如 zh_female_vv_uranus_bigtts"
+            :disabled="savingCfg"
+            @input="syncSpeakerPreset"
+          />
+          <span class="muted sm" v-if="speakerHint">{{ speakerHint }}</span>
+        </label>
+        <label class="field">
+          <span class="lbl">Resource ID</span>
+          <input v-model="cfg.resource_id" class="inp mono" :disabled="savingCfg" />
+        </label>
+        <label class="field">
+          <span class="lbl">Model</span>
+          <input v-model="cfg.model" class="inp mono" :disabled="savingCfg" />
+        </label>
+        <label class="field wide">
+          <span class="lbl">WebSocket URL</span>
+          <input v-model="cfg.ws_url" class="inp mono" :disabled="savingCfg" />
+        </label>
+        <label class="field">
+          <span class="lbl">采样率</span>
+          <input v-model.number="cfg.sample_rate" type="number" class="inp num" :disabled="savingCfg" />
+        </label>
+        <label class="field">
+          <span class="lbl">音频格式</span>
+          <select v-model="cfg.audio_format" class="inp" :disabled="savingCfg">
+            <option value="pcm">pcm</option>
+            <option value="mp3">mp3</option>
+            <option value="wav">wav</option>
+            <option value="ogg_opus">ogg_opus</option>
+          </select>
+        </label>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="btn-primary" :disabled="savingCfg" @click="saveConfig">
+          {{ savingCfg ? "保存中…" : "保存到 .env" }}
+        </button>
+        <span class="muted sm" v-if="saveMsg">{{ saveMsg }}</span>
+      </div>
+      <p v-if="cfgErr" class="err">{{ cfgErr }}</p>
+    </div>
+
+    <div class="card">
+      <h2 class="h2">试合成</h2>
+      <textarea v-model="draft" rows="3" class="ta" placeholder="输入要合成的文本" :disabled="pending"></textarea>
+      <div class="row-actions">
+        <button type="button" class="btn-primary" :disabled="pending || !draft.trim()" @click="run">
+          {{ pending ? "合成中…" : "合成并播放" }}
+        </button>
+      </div>
+      <p v-if="err" class="err">{{ err }}</p>
+    </div>
+
+    <div v-if="result" class="card">
+      <h2 class="h2">结果</h2>
+      <div class="meta-row sm">
+        <span class="lbl">API 耗时</span>
+        <span class="val">{{ result.elapsed_ms }} ms</span>
+      </div>
+      <div class="meta-row sm">
+        <span class="lbl">PCM 总长</span>
+        <span class="val">{{ result.pcm_total_bytes }} bytes · {{ result.sample_rate }} Hz</span>
+      </div>
+      <div v-if="audioUrl" class="row-audio">
+        <audio :src="audioUrl" controls preload="none" class="audio-ctrl"></audio>
+        <a :href="audioUrl" download="doubao_tts.wav" class="btn-link">下载 WAV</a>
+        <button type="button" class="btn-light" @click="revokeAudio">清除音频缓存</button>
+      </div>
+      <details class="json-block" open>
+        <summary>协议事件（不含音频二进制）</summary>
+        <pre class="json-pre">{{ jsonPretty }}</pre>
+      </details>
+    </div>
+  </div>
+  <style>
+    .sub { color: #6e6e73; font-size: 14px; max-width: 52rem; line-height: 1.5; }
+    .tts-debug { max-width: 52rem; }
+    .h2 { font-size: 1.05rem; margin: 0 0 12px; font-weight: 600; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field.wide { grid-column: 1 / -1; }
+    .lbl { font-size: 13px; color: #6e6e73; }
+    .inp, .ta, .num {
+      width: 100%; padding: 8px 10px; border: 1px solid #c7c7cc;
+      border-radius: 8px; font-size: 14px; box-sizing: border-box;
+    }
+    .mono { font-family: ui-monospace, monospace; }
+    .speaker-id-inp { margin-top: 8px; }
+    .speaker-select { min-height: 180px; }
+    .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 14px; }
+    .btn-primary {
+      padding: 8px 16px; border: none; border-radius: 8px; background: #0a84ff;
+      color: #fff; font-size: 14px; cursor: pointer;
+    }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-light { padding: 6px 12px; border: 1px solid #c7c7cc; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; }
+    .btn-link { font-size: 14px; color: #0a84ff; }
+    .err { color: #b42318; font-size: 14px; margin-top: 10px; }
+    .muted.sm { font-size: 13px; color: #6e6e73; }
+    .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; margin-bottom: 8px; }
+    .meta-row.sm { font-size: 13px; }
+    .row-audio { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
+    .audio-ctrl { max-width: 100%; height: 36px; }
+    .json-block { margin-top: 12px; }
+    .json-pre {
+      background: #f5f5f7; border: 1px solid #d2d2d7; border-radius: 8px; padding: 12px;
+      font-size: 12px; overflow-x: auto; max-height: 280px;
+    }
+    @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
+  </style>
+  {% endraw %}
+  <script>
+    const initial = window.__DOUBAO_TTS__ || {};
+    const speakers = window.__DOUBAO_TTS_SPEAKERS__ || [];
+    const { createApp } = Vue;
+    createApp({
+      data() {
+        return {
+          cfg: { api_key_set: false, ...initial },
+          speakers,
+          speakerPreset: "",
+          speakerFilter: "",
+          draft: "你好，这是豆包语音合成调试。",
+          savingCfg: false,
+          saveMsg: "",
+          cfgErr: "",
+          pending: false,
+          err: "",
+          result: null,
+          audioUrl: "",
+        };
+      },
+      computed: {
+        filteredSpeakers() {
+          const q = (this.speakerFilter || "").trim().toLowerCase();
+          if (!q) return this.speakers;
+          return this.speakers.filter((item) => {
+            const hay = [item.label, item.id, item.scene, item.description].join(" ").toLowerCase();
+            return hay.includes(q);
+          });
+        },
+        jsonPretty() {
+          if (!this.result) return "";
+          const { wav_base64, ...rest } = this.result;
+          return JSON.stringify(rest, null, 2);
+        },
+        speakerHint() {
+          const current = (this.cfg.speaker || "").trim();
+          if (!current) return "可从上方预设选择，或在下方直接填写 speaker ID。";
+          const preset = this.speakers.find((item) => item.id === current);
+          if (!preset) return "当前为自定义 speaker。";
+          const parts = [preset.scene, preset.description].filter(Boolean);
+          const resource = preset.resource_id ? "建议 Resource ID: " + preset.resource_id : "";
+          return [parts.join(" · "), resource].filter(Boolean).join(" · ");
+        },
+      },
+      mounted() {
+        this.syncSpeakerPreset();
+      },
+      methods: {
+        applySpeakerPreset() {
+          const preset = this.speakers.find((item) => item.id === this.speakerPreset);
+          if (!preset) return;
+          this.cfg.speaker = preset.id;
+          if (preset.resource_id) {
+            this.cfg.resource_id = preset.resource_id;
+          }
+        },
+        syncSpeakerPreset() {
+          const current = (this.cfg.speaker || "").trim();
+          const matched = this.speakers.find((item) => item.id === current);
+          this.speakerPreset = matched ? matched.id : "";
+        },
+        revokeAudio() {
+          if (this.audioUrl && this.audioUrl.startsWith("blob:")) {
+            URL.revokeObjectURL(this.audioUrl);
+          }
+          this.audioUrl = "";
+        },
+        async saveConfig() {
+          this.cfgErr = "";
+          this.saveMsg = "";
+          this.savingCfg = true;
+          try {
+            const res = await fetch("/api/doubao_tts/config", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(this.cfg),
+            });
+            const data = await res.json();
+            if (!data.ok) {
+              this.cfgErr = data.error || ("HTTP " + res.status);
+              return;
+            }
+            this.cfg = { ...data.config, api_key: "" };
+            if (data.config && data.config.api_key_set) {
+              this.cfg.api_key_set = true;
+            }
+            this.saveMsg = "已保存到 .env";
+          } catch (e) {
+            this.cfgErr = String(e && e.message ? e.message : e);
+          } finally {
+            this.savingCfg = false;
+          }
+        },
+        async run() {
+          this.err = "";
+          this.revokeAudio();
+          this.result = null;
+          this.pending = true;
+          try {
+            const res = await fetch("/api/doubao_tts/synthesize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: this.draft.trim(), ...this.cfg }),
+            });
+            const data = await res.json();
+            if (!data.ok) {
+              this.err = (data.error || ("HTTP " + res.status))
+                + (data.elapsed_ms != null ? " (" + data.elapsed_ms + " ms)" : "");
+              return;
+            }
+            this.result = data;
+            const bin = Uint8Array.from(atob(data.wav_base64), (c) => c.charCodeAt(0));
+            const blob = new Blob([bin], { type: "audio/wav" });
+            this.audioUrl = URL.createObjectURL(blob);
+          } catch (e) {
+            this.err = String(e && e.message ? e.message : e);
+          } finally {
+            this.pending = false;
+          }
+        },
+      },
+      beforeUnmount() {
+        this.revokeAudio();
+      },
+    }).mount("#app");
+  </script>
+{% endblock %}

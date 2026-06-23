@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import time
 
@@ -72,6 +73,7 @@ from deskbot_server.web.helpers import (
 from deskbot_server.web.session_device import get_current_device_id
 
 bp = Blueprint("debug", __name__)
+logger = logging.getLogger("deskbot-server")
 
 
 def _deny_foreign_device(device_id: str):
@@ -167,6 +169,129 @@ def debug_devices():
         expr_default_anim=expr_default_anim,
         current_device_id=current or "",
         owned_device_rows=owned_device_rows,
+    )
+
+
+@bp.get("/debug/tts")
+def debug_tts():
+    from deskbot_server.tts.doubao import load_doubao_tts_config
+    from deskbot_server.tts.speakers import list_doubao_tts_speaker_presets
+
+    cfg = load_doubao_tts_config()
+    initial = {
+        "api_key": "",
+        "api_key_set": bool(cfg.api_key),
+        "speaker": cfg.speaker,
+        "resource_id": cfg.resource_id,
+        "model": cfg.model,
+        "ws_url": cfg.ws_url,
+        "sample_rate": cfg.sample_rate,
+        "audio_format": cfg.audio_format,
+    }
+    return render_template(
+        "debug_tts.html",
+        active_nav="tts",
+        initial_config=initial,
+        speaker_presets=list_doubao_tts_speaker_presets(),
+    )
+
+
+@bp.get("/api/doubao_tts/speakers")
+def api_doubao_tts_speakers():
+    from deskbot_server.tts.speakers import list_doubao_tts_speaker_presets
+
+    return jsonify({"ok": True, "speakers": list_doubao_tts_speaker_presets(), "t": time.time()})
+
+
+@bp.get("/api/doubao_tts/config")
+def api_doubao_tts_config_get():
+    from deskbot_server.tts.doubao import load_doubao_tts_config
+
+    cfg = load_doubao_tts_config()
+    return jsonify({"ok": True, "config": cfg.masked(), "t": time.time()})
+
+
+@bp.post("/api/doubao_tts/config")
+def api_doubao_tts_config_post():
+    from deskbot_server.tts.doubao import load_doubao_tts_config
+    from deskbot_server.tts.env_store import save_doubao_tts_env
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+
+    from deskbot_server.tts.doubao import load_doubao_tts_config, resolve_optional_secret
+
+    base = load_doubao_tts_config()
+    api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
+    if not api_key:
+        return jsonify({"ok": False, "error": "api_key 不能为空"}), 400
+    try:
+        save_doubao_tts_env(payload)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    cfg = load_doubao_tts_config()
+    return jsonify({"ok": True, "config": cfg.masked(), "t": time.time()})
+
+
+def _doubao_cfg_from_payload(payload: dict):
+    from deskbot_server.tts.doubao import DoubaoTtsConfig, load_doubao_tts_config, resolve_optional_secret
+
+    base = load_doubao_tts_config()
+    api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
+    sample_rate_raw = payload.get("sample_rate", base.sample_rate)
+    try:
+        sample_rate = int(sample_rate_raw)
+    except (TypeError, ValueError):
+        sample_rate = base.sample_rate
+    return DoubaoTtsConfig(
+        api_key=api_key,
+        speaker=str(payload.get("speaker") or base.speaker).strip(),
+        resource_id=str(payload.get("resource_id") or base.resource_id).strip(),
+        model=str(payload.get("model") or base.model).strip(),
+        ws_url=str(payload.get("ws_url") or base.ws_url).strip(),
+        sample_rate=sample_rate,
+        audio_format=str(payload.get("audio_format") or base.audio_format).strip(),
+    )
+
+
+@bp.post("/api/doubao_tts/synthesize")
+def api_doubao_tts_synthesize():
+    from deskbot_server.tts.doubao import synthesize_doubao_tts
+
+    payload = request.get_json(force=True, silent=True) or {}
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "空文本"}), 400
+    cfg = _doubao_cfg_from_payload(payload)
+    t0 = time.monotonic()
+    try:
+        result = asyncio.run(synthesize_doubao_tts(text, cfg))
+    except ValueError as exc:
+        logger.warning("豆包 TTS 参数错误: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.exception(
+            "豆包 TTS 合成失败 text_len=%d speaker=%r resource_id=%s elapsed_ms=%d",
+            len(text),
+            cfg.speaker,
+            cfg.resource_id,
+            elapsed_ms,
+        )
+        return jsonify({"ok": False, "error": str(exc), "elapsed_ms": elapsed_ms}), 502
+    wav = pcm_to_wav_bytes(result.pcm, result.sample_rate)
+    return jsonify(
+        {
+            "ok": True,
+            "sample_rate": result.sample_rate,
+            "pcm_total_bytes": len(result.pcm),
+            "elapsed_ms": result.elapsed_ms,
+            "events": result.events,
+            "speaker": cfg.speaker,
+            "ws_url": cfg.ws_url,
+            "wav_base64": base64.b64encode(wav).decode("ascii"),
+        }
     )
 
 

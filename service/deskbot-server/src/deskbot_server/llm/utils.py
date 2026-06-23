@@ -186,9 +186,9 @@ def llm_tools_prompt_appendix() -> str:
         "若返回无帧，请提示主人确认相机上行已开启（可提高 ``cam_fps``）。\n"
         "  - set_camera_follow: {\"tool\":\"set_camera_follow\",\"mode\":\"follow|follow_frontal|gaze|off\"}\n"
         "    开启/关闭人脸舵机跟随（follow=跟随人脸，follow_frontal=跟随正脸，gaze=注视感知，off=关闭）。"
-        "画面有人时**优先**调用以转向对着用户的脸；**只要本轮要说话**（``need_reply: true`` 且 ``tts`` 非空）就必须调用，像真人一样看着对方说话。"
-        "一般对话用 ``follow``，需感知对方是否在看你时用 ``gaze``。"
-        "可与 ``need_reply: false`` 组合，在主人未开口时默默转向看人。\n"
+        "仅当需要**切换**跟随模式时调用；若 user 消息已写明「摄像头跟随模式」为 follow/follow_frontal/gaze，"
+        "**不要**每轮重复调用。"
+        "用户已说话时优先在 ``tts`` 里正常回答；不要只返回 tools 而省略完整 JSON 对象。\n"
         "  - memory_add: {\"tool\":\"memory_add\",\"text\":\"要记住的内容\"}\n"
         "  - memory_delete: {\"tool\":\"memory_delete\",\"id\":\"记忆id\"}\n"
         "  - schedule_task: cron 定时任务增删改查（北京时间东八区）。"
@@ -370,6 +370,40 @@ def _parse_llm_tool_items(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _coerce_llm_reply_object(obj: Any) -> Optional[dict[str, Any]]:
+    """把 LLM 误输出的「仅 tools 数组 / 单条 tool 对象」规范为完整 JSON 对象。"""
+    if isinstance(obj, list):
+        tools = _parse_llm_tool_items(obj)
+        if tools:
+            return {"tools": tools, "tts": "", "need_reply": True}
+        return None
+    if not isinstance(obj, dict):
+        return None
+    if (obj.get("tool") or obj.get("name")) and "tools" not in obj:
+        tools = _parse_llm_tool_items([obj])
+        if tools:
+            out: dict[str, Any] = {"tools": tools}
+            for key in (
+                "need_reply",
+                "tts",
+                "reply",
+                "moves",
+                "anims",
+                "volume",
+                "cam_fps",
+                "screen_text",
+                "screen_text_color",
+                "images",
+                "scenes",
+                "servo",
+            ):
+                if key in obj:
+                    out[key] = obj[key]
+            out.setdefault("tts", "")
+            return out
+    return obj
+
+
 def parse_llm_reply(raw: str) -> dict:
     """把 LLM 输出尝试解析为约定 JSON。
 
@@ -395,13 +429,22 @@ def parse_llm_reply(raw: str) -> dict:
         except ValueError:
             pass
 
+        try:
+            i = text.index("[")
+            j = text.rindex("]")
+            if j > i:
+                candidates.append(text[i : j + 1])
+        except ValueError:
+            pass
+
     for cand in candidates:
         try:
             obj = json.loads(cand)
         except (TypeError, ValueError):
             continue
-        if isinstance(obj, dict):
-            parsed = obj
+        coerced = _coerce_llm_reply_object(obj)
+        if isinstance(coerced, dict):
+            parsed = coerced
             break
 
     servo_out: list[Any] = []

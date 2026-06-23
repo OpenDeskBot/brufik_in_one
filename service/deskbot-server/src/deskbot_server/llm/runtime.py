@@ -77,6 +77,7 @@ def litellm_completion(
     device_id: Optional[str] = None,
     temperature: float = 0.7,
     config: ResolvedLlmConfig | None = None,
+    json_mode: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     """调用 LiteLLM completion，返回 (content, meta)。"""
     try:
@@ -98,6 +99,8 @@ def litellm_completion(
     }
     if cfg.api_base:
         kwargs["api_base"] = cfg.api_base.rstrip("/")
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
 
     response = litellm.completion(**kwargs)
     content = ""

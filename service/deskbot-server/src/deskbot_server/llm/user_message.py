@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from deskbot_server.debug_prefs_store import get_camera_servo_auto_mode
 from deskbot_server.face_snapshot_cache import list_device_faces
 from deskbot_server.llm.face_scene import _nose_xy
 
@@ -80,6 +81,16 @@ def _sorted_faces_for_message(device_id: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _follow_mode_label(mode: str) -> str:
+    labels = {
+        "": "关闭",
+        "follow": "跟随人脸",
+        "follow_frontal": "跟随正脸",
+        "gaze": "注视感知",
+    }
+    return labels.get(mode, mode or "关闭")
+
+
 def build_llm_user_message(
     user_text: str,
     *,
@@ -91,9 +102,12 @@ def build_llm_user_message(
     lines: list[str] = [
         "[机器人传感器信息:",
         f"水平舵机角度: {sx}, 垂直舵机角度: {sy}",
+        f"摄像头跟随模式: {_follow_mode_label(get_camera_servo_auto_mode())}"
+        "（已为 follow/follow_frontal/gaze 时勿重复调用 set_camera_follow）",
         "图像识别:",
     ]
     dev = str(device_id or "").strip()
+    face_rows: list[dict[str, Any]] = []
     if dev:
         face_rows = _sorted_faces_for_message(dev)
         if face_rows:
@@ -107,6 +121,12 @@ def build_llm_user_message(
     body = (user_text or "").strip()
     if not body:
         body = "[未说话]"
+    elif dev and not face_rows:
+        lines.append("")
+        lines.append(
+            "（传感器未检测到人脸；用户已说话时须正常回答用户正文，"
+            "勿编造「正在看你」或仅回复「看不到人」而忽略用户问题。）"
+        )
     lines.append("")
     lines.append(f"用户正文: {body}")
     return "\n".join(lines)
