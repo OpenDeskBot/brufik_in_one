@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Optional
 
 try:
@@ -11,7 +11,7 @@ except ImportError:
     ZoneInfo = None  # type: ignore[misc, assignment]
 
 from deskbot_server.core.settings import AppSettings
-from deskbot_server.llm.runtime import litellm_completion
+from deskbot_server.llm.runtime import litellm_acompletion
 from deskbot_server.llm.user_message import build_llm_user_message
 from deskbot_server.llm.utils import (
     llm_device_screen_appendix,
@@ -69,6 +69,7 @@ class OpenAiLlmAdapter:
         device_id: Optional[str] = None,
         history_messages: Optional[list[dict[str, str]]] = None,
         extra_messages: Optional[list[dict[str, str]]] = None,
+        on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> str:
         system_content = self._build_system_prompt(device_id=device_id)
         user_content = build_llm_user_message(
@@ -85,13 +86,23 @@ class OpenAiLlmAdapter:
         if extra_messages:
             messages.extend(extra_messages)
 
-        def _chat(msgs: list[dict[str, str]], *, json_mode: bool = True) -> str:
-            content, _meta = litellm_completion(
-                msgs, device_id=device_id, temperature=0.7, json_mode=json_mode
+        async def _chat(
+            msgs: list[dict[str, str]],
+            *,
+            json_mode: bool = True,
+            stream_tts: bool = False,
+        ) -> str:
+            content, _meta = await litellm_acompletion(
+                msgs,
+                device_id=device_id,
+                temperature=0.7,
+                json_mode=json_mode,
+                stream=stream_tts,
+                on_tts_ready=on_tts_ready if stream_tts else None,
             )
             return content
 
-        answer = await asyncio.to_thread(_chat, messages)
+        answer = await _chat(messages, stream_tts=on_tts_ready is not None)
         parsed = parse_llm_reply(answer)
         if not parsed.get("json_ok"):
             logger.warning(
@@ -110,7 +121,7 @@ class OpenAiLlmAdapter:
                     ),
                 }
             )
-            answer = await asyncio.to_thread(_chat, retry_messages)
+            answer = await _chat(retry_messages, stream_tts=on_tts_ready is not None)
             parsed = parse_llm_reply(answer)
         elif parsed.get("tools") and not (parsed.get("reply") or "").strip():
             logger.warning(
@@ -125,10 +136,9 @@ class OpenAiLlmAdapter:
                     "role": "user",
                     "content": (
                         "上轮只返回了 tools，缺少完整 JSON 对象与 tts。"
-                        "若摄像头跟随已开启，不要重复 set_camera_follow。"
                         "请输出完整 JSON：tools 写 []，tts 写要对用户说的口语。"
                     ),
                 }
             )
-            answer = await asyncio.to_thread(_chat, retry_messages)
+            answer = await _chat(retry_messages, stream_tts=on_tts_ready is not None)
         return answer

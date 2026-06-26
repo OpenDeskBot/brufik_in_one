@@ -1,6 +1,0 @@
-# paddlespeech-server 本机 venv 依赖（由 start.sh / 根目录 start.sh 安装）
-# 与 pyproject.toml [project.dependencies] 保持同步
-paddlepaddle==3.3.1
-paddlespeech==1.5.0
-# 0.3.0+ 移除了 paddlenlp 仍在使用的 hub.download，需固定到兼容版本
-aistudio-sdk==0.2.6

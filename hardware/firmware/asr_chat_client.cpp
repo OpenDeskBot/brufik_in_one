@@ -731,6 +731,7 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
     /* pb_start：尽早打开半双工，避免首包 BIN 前上行真实 mic。 */
     server_started_reply_ = true;
     tts_active_ = true;
+    deskbot_mic_uplink_set_active(false);
   } else if (!pb_active_ || req != pb_req_) {
     pbProtocolError("pb_chunk/pb_end without active matching req");
     return true;
@@ -1076,6 +1077,7 @@ void AsrChatClient::loop() {
       camera_ws_release_frame();
     }
   }
+  shouldSuppressMicUplink();
 }
 
 bool AsrChatClient::isVisionUplinkPaused() const {
@@ -1143,16 +1145,21 @@ bool AsrChatClient::shouldSuppressMicUplink() {
   const unsigned long now = millis();
   const bool playing =
       audio_play_stream_pcm_active() || (audio_play_input_queue_depth() > 0u);
-  if (playing) {
+  /* 与 camera 暂停一致：pb/TTS 下行窗口内一律视为「不可上行」，指示器显示红圈。 */
+  const bool reply_window = isVisionUplinkPaused();
+  if (playing || reply_window) {
     const unsigned long until = now + (unsigned long)kI2sDmaTailSuppressMs;
     if (until > mic_suppress_until_ms_) {
       mic_suppress_until_ms_ = until;
     }
+    deskbot_mic_uplink_set_active(false);
     return true;
   }
   if (now < mic_suppress_until_ms_) {
+    deskbot_mic_uplink_set_active(false);
     return true;
   }
+  deskbot_mic_uplink_set_active(true);
   return false;
 }
 

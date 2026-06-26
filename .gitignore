@@ -62,7 +62,6 @@ deskbot-server/data/.free_api_key
 
 # --- Service large / generated ---
 deskbot-server/models/
-paddlespeech-server/PaddleSpeech/
 music/
 uploadfile
 *.tar.gz

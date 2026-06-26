@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from typing import Optional
+
 from deskbot_server.core.ports.asr import AsrPort
 from deskbot_server.core.ports.llm import LlmPort
 from deskbot_server.core.ports.tts import TtsPort
@@ -53,6 +56,7 @@ class ChatService:
         device_id: str | None = None,
         history_messages: list[dict[str, str]] | None = None,
         extra_messages: list[dict[str, str]] | None = None,
+        on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> str:
         return await self._llm.complete(
             text,
@@ -60,6 +64,7 @@ class ChatService:
             device_id=device_id,
             history_messages=history_messages,
             extra_messages=extra_messages,
+            on_tts_ready=on_tts_ready,
         )
 
     async def tts_phoneme_segments(self, text: str) -> tuple[int, list[dict]]:

@@ -1,13 +1,9 @@
-"""音素口型配置持久化（``data/face_mouth_by_phoneme.json``，顶层为数组）。"""
+"""音素口型：读写 ``deskbot-face.json`` 的 ``phonemes`` 段（运行时适配层）。"""
 from __future__ import annotations
 
 import copy
-import json
-import os
 from typing import Any, Optional
 
-from deskbot_server.constants import FACE_MOUTH_BY_PHONEME_FILE
-from deskbot_server.device_data import resolve_json_path
 from deskbot_server.pb.shapes import is_mouth_phoneme_group_entry, simplify_phoneme_key
 
 
@@ -53,6 +49,8 @@ def simplify_group_states(states: list[Any]) -> list[str]:
 
 
 def _group_signature(group: dict[str, Any]) -> str:
+    import json
+
     return json.dumps(
         [group["elements"], group["offset"]],
         ensure_ascii=False,
@@ -100,85 +98,35 @@ def normalize_face_mouth_groups(raw: object) -> list[dict[str, Any]]:
     return [_normalize_group(g) for g in groups_raw]
 
 
-def _face_defaults_from_default_expr_scene() -> dict[str, Any]:
-    from deskbot_server.face_expr_scenes_store import (
-        default_speech_blink_scene,
-        find_design_scene_by_name,
-        load_face_expr_scenes_file,
-    )
-
-    rows = load_face_expr_scenes_file(seed_if_missing=False) or []
-    ent = find_design_scene_by_name(rows, "default") or default_speech_blink_scene()
-    frames = ent.get("frames") if isinstance(ent, dict) else []
-    elements: dict[str, Any] = {}
-    if frames and isinstance(frames[0], dict):
-        raw = frames[0].get("elements")
-        elements = raw if isinstance(raw, dict) else {}
-    return {
-        "nose": copy.deepcopy(elements.get("nose") if isinstance(elements.get("nose"), list) else []),
-        "eye_l": copy.deepcopy(elements.get("eye_l") if isinstance(elements.get("eye_l"), list) else []),
-        "eye_r": copy.deepcopy(elements.get("eye_r") if isinstance(elements.get("eye_r"), list) else []),
-    }
-
-
-def _seed_default_mouth_groups() -> list[dict[str, Any]]:
-    from deskbot_server.pb.face_bundle import default_pb_face_bundle
-    from deskbot_server.pb.shapes import _normalize_mouth_entry
-
-    mb = default_pb_face_bundle().get("mouth_by_phoneme") or {}
-    raw_groups: list[dict[str, Any]] = []
-    if isinstance(mb, dict):
-        for ph, val in mb.items():
-            pk = str(ph).strip()
-            if not pk:
-                continue
-            ent = _normalize_mouth_entry(val)
-            raw_groups.append(
-                {
-                    "states": [pk],
-                    "elements": ent.get("elements") or [],
-                    "offset": dict(ent.get("offset") or {"x": 0, "y": 0}),
-                }
-            )
-    return collapse_simplified_groups(raw_groups)
-
-
 def load_face_mouth_cfg_file(
     *, seed_if_missing: bool = True, device_id: Optional[str] = None
 ) -> Optional[list[dict[str, Any]]]:
-    path = resolve_json_path(FACE_MOUTH_BY_PHONEME_FILE, device_id)
-    if not os.path.isfile(path):
-        if not seed_if_missing:
-            return None
-        groups = _seed_default_mouth_groups()
-        save_face_mouth_cfg_file(groups, device_id=device_id)
-        return groups
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
-    groups = normalize_face_mouth_groups(raw)
-    if isinstance(raw, list):
-        return groups
-    # 旧版 keyed JSON 或带声调 states：读入后规范化并回写
-    save_face_mouth_cfg_file(groups, device_id=device_id)
-    return groups
+    from deskbot_server.face_design_store import (
+        _load_face_design_cached,
+        ensure_face_design_file,
+        phonemes_to_mouth_groups,
+    )
+
+    if seed_if_missing:
+        ensure_face_design_file(device_id=device_id)
+    design = _load_face_design_cached(device_id=device_id)
+    if not isinstance(design, dict):
+        return None if not seed_if_missing else []
+    return phonemes_to_mouth_groups(design)
 
 
 def save_face_mouth_cfg_file(
     groups: list[dict[str, Any]], *, device_id: Optional[str] = None
 ) -> None:
-    norm = normalize_face_mouth_groups(groups)
-    path = resolve_json_path(FACE_MOUTH_BY_PHONEME_FILE, device_id)
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(norm, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    from deskbot_server.face_design_store import (
+        apply_mouth_groups_to_design,
+        ensure_face_design_file,
+        save_face_design_file,
+    )
 
-
-def face_mouth_api_payload(groups: list[dict[str, Any]]) -> dict[str, Any]:
-    return {
-        "config": groups,
-        "face_defaults": _face_defaults_from_default_expr_scene(),
-    }
+    design = ensure_face_design_file(device_id=device_id)
+    updated = apply_mouth_groups_to_design(design, groups)
+    save_face_design_file(updated, device_id=device_id)
 
 
 def groups_to_mouth_bundle(groups: list[dict[str, Any]]) -> dict[str, Any]:

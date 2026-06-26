@@ -71,7 +71,7 @@ class LlmSettings:
 
 @dataclass(frozen=True)
 class TtsSettings:
-    provider: str = "paddle"
+    provider: str = "doubao"
     ws_url: str = ""
     lang: str = "zh"
     spk_id: int = 0
@@ -220,7 +220,7 @@ class AppSettings:
                 system_prompt=str(llm.get("system_prompt", "")),
             ),
             tts=TtsSettings(
-                provider=str(tts.get("provider") or "paddle").strip().lower(),
+                provider=str(tts.get("provider") or "doubao").strip().lower(),
                 ws_url=str(tts.get("ws_url", "")),
                 lang=str(tts.get("lang", "zh")),
                 spk_id=int(tts.get("spk_id", 0)),

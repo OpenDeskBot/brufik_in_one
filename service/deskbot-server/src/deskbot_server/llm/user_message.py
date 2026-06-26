@@ -102,8 +102,7 @@ def build_llm_user_message(
     lines: list[str] = [
         "[机器人传感器信息:",
         f"水平舵机角度: {sx}, 垂直舵机角度: {sy}",
-        f"摄像头跟随模式: {_follow_mode_label(get_camera_servo_auto_mode())}"
-        "（已为 follow/follow_frontal/gaze 时勿重复调用 set_camera_follow）",
+        f"摄像头跟随模式: {_follow_mode_label(get_camera_servo_auto_mode())}",
         "图像识别:",
     ]
     dev = str(device_id or "").strip()

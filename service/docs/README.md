@@ -12,17 +12,14 @@
 
 | 文档 | 内容 |
 |------|------|
-| [../deskbot-server/README.md](../deskbot-server/README.md) | 主服务：端口、控制台、LLM 工具、配置 |
+| [../deskbot-server/README.md](../deskbot-server/README.md) | 主服务：端口、控制台、LLM 工具、豆包 TTS 配置 |
 | [../deskbot-server/docs/ARCHITECTURE.md](../deskbot-server/docs/ARCHITECTURE.md) | 代码分层、对话与定时任务链路 |
-| [../paddlespeech-server/README.md](../paddlespeech-server/README.md) | TTS 侧车（:8092） |
-| [../paddlespeech-server/docs/PROTOCOL.md](../paddlespeech-server/docs/PROTOCOL.md) | TTS WebSocket 协议 |
 
 ## 联调工具
 
 | 文档 | 内容 |
 |------|------|
 | [../deskbot-server/tools/README.md](../deskbot-server/tools/README.md) | WAV / 麦克风 / 相机测试客户端 |
-| [../paddlespeech-server/tools/README.md](../paddlespeech-server/tools/README.md) | 音素 TTS 试跑 |
 
 ## 协作与安全
 

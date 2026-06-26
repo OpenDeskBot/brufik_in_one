@@ -14,6 +14,11 @@ from deskbot_server.application.asr_chat_uplink import (
     PendingUplinkBinary,
     coerce_next_bin_len,
 )
+from deskbot_server.application.interaction_feedback import (
+    schedule_listen_feedback,
+    start_llm_wait_nod_feedback,
+    stop_llm_wait_nod_feedback,
+)
 from deskbot_server.application.camera_broker import CameraImageBroker
 from deskbot_server.pipeline.audio import AudioConfig, ConnectionSession
 from deskbot_server.ws.chat_turn import publish_ws_chat_turn, run_ws_chat_turn
@@ -48,6 +53,7 @@ async def _schedule_asr_turn(
     device_id: Optional[str],
     dp_broker: DevicePipelineBroker,
     registry: DeviceRegistry,
+    asr_chat_hub: AsrChatHub,
     turn_task_holder: list,
     api_key_id: Optional[str] = None,
 ) -> None:
@@ -71,6 +77,7 @@ async def _schedule_asr_turn(
                 device_id=device_id,
                 dp_broker=dp_broker,
                 registry=registry,
+                asr_chat_hub=asr_chat_hub,
                 api_key_id=api_key_id,
             )
         except Exception:
@@ -128,6 +135,7 @@ async def _run_asr_turn(
     device_id: Optional[str],
     dp_broker: DevicePipelineBroker,
     registry: DeviceRegistry,
+    asr_chat_hub: Optional[AsrChatHub] = None,
     api_key_id: Optional[str] = None,
 ) -> None:
     request_id = _new_request_id()
@@ -205,6 +213,10 @@ async def _run_asr_turn(
             "source": "asr",
         },
     )
+    nod_done: asyncio.Event | None = None
+    nod_task: asyncio.Task | None = None
+    if asr_chat_hub is not None and device_id:
+        nod_done, nod_task = start_llm_wait_nod_feedback(asr_chat_hub, device_id)
     try:
         flow = await run_ws_chat_turn(
             websocket,
@@ -240,6 +252,9 @@ async def _run_asr_turn(
             request_id=request_id,
         )
         return
+    finally:
+        if nod_done is not None:
+            await stop_llm_wait_nod_feedback(nod_done, nod_task)
     await publish_ws_chat_turn(
         dp_broker,
         registry,
@@ -353,7 +368,9 @@ async def handle_asr_chat(
                         )
                         continue
 
-                    pcm_segment = await session.feed_audio(payload, codec)
+                    pcm_segment, speech_started = await session.feed_audio(payload, codec)
+                    if speech_started:
+                        schedule_listen_feedback(asr_chat_hub, device_id)
                     if pcm_segment is None:
                         continue
                     if device_pb_only:
@@ -366,6 +383,7 @@ async def handle_asr_chat(
                             device_id=device_id,
                             dp_broker=dp_broker,
                             registry=registry,
+                            asr_chat_hub=asr_chat_hub,
                             turn_task_holder=turn_task_holder,
                             api_key_id=api_key_id,
                         )
@@ -379,6 +397,7 @@ async def handle_asr_chat(
                             device_id=device_id,
                             dp_broker=dp_broker,
                             registry=registry,
+                            asr_chat_hub=asr_chat_hub,
                             api_key_id=api_key_id,
                         )
                     continue
@@ -386,7 +405,9 @@ async def handle_asr_chat(
                 # --- 裸 binary：兼容旧固件（仅音频）---
                 if isinstance(message, (bytes, bytearray)):
                     payload = bytes(message)
-                    pcm_segment = await session.feed_audio(payload, None)
+                    pcm_segment, speech_started = await session.feed_audio(payload, None)
+                    if speech_started:
+                        schedule_listen_feedback(asr_chat_hub, device_id)
                     if pcm_segment is None:
                         continue
                     if device_pb_only:
@@ -399,6 +420,7 @@ async def handle_asr_chat(
                             device_id=device_id,
                             dp_broker=dp_broker,
                             registry=registry,
+                            asr_chat_hub=asr_chat_hub,
                             turn_task_holder=turn_task_holder,
                             api_key_id=api_key_id,
                         )
@@ -412,6 +434,7 @@ async def handle_asr_chat(
                             device_id=device_id,
                             dp_broker=dp_broker,
                             registry=registry,
+                            asr_chat_hub=asr_chat_hub,
                             api_key_id=api_key_id,
                         )
                     continue
@@ -483,17 +506,21 @@ async def handle_asr_chat(
                             "source": "text",
                         },
                     )
-                    flow = await run_ws_chat_turn(
-                        websocket,
-                        pipeline,
-                        ut,
-                        request_id=request_id,
-                        dp_broker=dp_broker,
-                        registry=registry,
-                        device_id=device_id,
-                        t_asr_start=t_asr_start,
-                        t_asr_text=t_asr_text,
-                    )
+                    nod_done, nod_task = start_llm_wait_nod_feedback(asr_chat_hub, device_id)
+                    try:
+                        flow = await run_ws_chat_turn(
+                            websocket,
+                            pipeline,
+                            ut,
+                            request_id=request_id,
+                            dp_broker=dp_broker,
+                            registry=registry,
+                            device_id=device_id,
+                            t_asr_start=t_asr_start,
+                            t_asr_text=t_asr_text,
+                        )
+                    finally:
+                        await stop_llm_wait_nod_feedback(nod_done, nod_task)
                     await publish_ws_chat_turn(
                         dp_broker,
                         registry,
@@ -521,6 +548,7 @@ async def handle_asr_chat(
                             device_id=device_id,
                             dp_broker=dp_broker,
                             registry=registry,
+                            asr_chat_hub=asr_chat_hub,
                             turn_task_holder=turn_task_holder,
                             api_key_id=api_key_id,
                         )
@@ -534,6 +562,7 @@ async def handle_asr_chat(
                             device_id=device_id,
                             dp_broker=dp_broker,
                             registry=registry,
+                            asr_chat_hub=asr_chat_hub,
                             api_key_id=api_key_id,
                         )
                     continue
@@ -565,7 +594,9 @@ async def handle_asr_chat(
                     if raw_b64:
                         payload = base64.b64decode(raw_b64)
                         codec = data.get("codec")
-                        pcm_segment = await session.feed_audio(payload, codec)
+                        pcm_segment, speech_started = await session.feed_audio(payload, codec)
+                        if speech_started:
+                            schedule_listen_feedback(asr_chat_hub, device_id)
                         if pcm_segment is None:
                             continue
                         if device_pb_only:
@@ -578,6 +609,7 @@ async def handle_asr_chat(
                                 device_id=device_id,
                                 dp_broker=dp_broker,
                                 registry=registry,
+                                asr_chat_hub=asr_chat_hub,
                                 turn_task_holder=turn_task_holder,
                                 api_key_id=api_key_id,
                             )
@@ -591,6 +623,7 @@ async def handle_asr_chat(
                                 device_id=device_id,
                                 dp_broker=dp_broker,
                                 registry=registry,
+                                asr_chat_hub=asr_chat_hub,
                                 api_key_id=api_key_id,
                             )
                     continue

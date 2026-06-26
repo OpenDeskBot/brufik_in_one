@@ -317,6 +317,8 @@ def build_anim_rows_for_llm_plan(
     segs: list[dict[str, Any]],
     parallel_anim: list[dict[str, Any] | None] | None,
     face_bundle: dict[str, Any],
+    *,
+    device_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    phoneme_rows = phoneme_seq_to_anim_seq(segs, face_bundle)
+    phoneme_rows = phoneme_seq_to_anim_seq(segs, face_bundle, device_id=device_id)
     return merge_llm_plan_anim_rows(segs, phoneme_rows, parallel_anim)

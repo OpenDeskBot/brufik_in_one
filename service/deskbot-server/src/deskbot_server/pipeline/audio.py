@@ -58,7 +58,9 @@ class ConnectionSession:
             return self.decoder.decode(payload, self.audio_cfg.sample_rate // 100)
         raise ValueError(f"unsupported codec: {use_codec}")
 
-    async def feed_audio(self, payload: bytes, codec: Optional[str] = None) -> Optional[bytes]:
+    async def feed_audio(
+        self, payload: bytes, codec: Optional[str] = None
+    ) -> tuple[Optional[bytes], bool]:
         async with self.lock:
             try:
                 pcm = self._decode(payload, codec)
@@ -69,9 +71,10 @@ class ConnectionSession:
                     len(payload),
                     exc,
                 )
-                return None
+                return None, False
             self.pcm_feed.extend(pcm)
             utterance = None
+            speech_started = False
 
             while len(self.pcm_feed) >= self.frame_bytes:
                 frame = bytes(self.pcm_feed[: self.frame_bytes])
@@ -85,6 +88,7 @@ class ConnectionSession:
                     self.speech_frames += 1
                     if not self.in_speech:
                         self.in_speech = True
+                        speech_started = True
                         for old in self.pre_buffer:
                             self.current_utterance.extend(old)
                     self.current_utterance.extend(frame)
@@ -122,7 +126,7 @@ class ConnectionSession:
                         self._reset_state()
                         break
 
-            return utterance
+            return utterance, speech_started
 
     def flush(self) -> Optional[bytes]:
         if self.in_speech and self.speech_frames >= self.min_speech_frames:

@@ -46,7 +46,7 @@ def _pb_scene_entry_by_name(
     *,
     device_id: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
-    """按 **不区分大小写** 匹配 ``face_expr_scenes.json`` 中的场景。"""
+    """按 **不区分大小写** 匹配 ``deskbot-face.json`` 中的表情场景。"""
     _ = doc
     return find_design_scene_by_name(
         _load_design_scenes_rows(device_id=device_id), scene_lower
@@ -69,7 +69,7 @@ def _pb_scene_keys_sorted(doc: dict | None = None) -> list[str]:
 def _prepare_pb_scene_chain_frames(
     scene_name: str, *, runtime_req: str, device_id: Optional[str] = None
 ) -> list[dict]:
-    """从 ``face_expr_scenes.json`` 生成 pb 链，``append`` + 调试 ``level=3``。"""
+    """从 ``deskbot-face.json`` 生成 pb 链，``append`` + 调试 ``level=3``。"""
     ent = find_design_scene_by_name(_load_design_scenes_rows(device_id=device_id), scene_name)
     if ent is None:
         return []

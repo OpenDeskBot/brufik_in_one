@@ -551,233 +551,6 @@
       </div>
     </div>
 
-    <div v-show="activeTab === 'expr_phoneme'" class="dv-tab-panel dv-expr-phoneme-card">
-      <h3 style="margin-top:0;">表情-音素</h3>
-      <p class="doc muted sm">编辑口型组数组：states 为<strong>无声调</strong>音素（如 <code>a</code>、<code>uo</code>、声母 <code>zh</code>）；TTS 返回的 <code>uo3</code> 会自动匹配 <code>uo</code>。<code>sp1</code>–<code>sp4</code> 是 PaddleSpeech 停顿标记（非韵母），已统一归为 <code>_</code> 静音。offset 为鼻/眼偏移。</p>
-      <div class="expr-phoneme-toolbar">
-        <button type="button" class="dv-btn sm"
-                :class="{ secondary: phonemeViewMode !== 'table' }"
-                @click="phonemeSetViewMode('table')">表格视图</button>
-        <button type="button" class="dv-btn sm"
-                :class="{ secondary: phonemeViewMode !== 'json' }"
-                @click="phonemeSetViewMode('json')">JSON 视图</button>
-        <button type="button" class="dv-btn sm" title="新增一行"
-                @click="phonemeAddRow">+</button>
-        <button type="button" class="dv-btn sm"
-                :disabled="phonemeSaveBusy"
-                @click="phonemeSaveToFile">保存到 face_mouth_by_phoneme.json</button>
-        <button type="button" class="dv-btn sm secondary" @click="phonemeLoadFromFile">重新载入</button>
-        <span class="muted sm mono">{{ phonemeFileLabel }}</span>
-      </div>
-      <p v-if="phonemeLoadError" class="dv-err sm">{{ phonemeLoadError }}</p>
-      <p v-if="phonemeSaveStatus" class="sm" :class="{ 'dv-err': phonemeSaveStatusErr }">{{ phonemeSaveStatus }}</p>
-      <p v-if="!selected" class="dv-err sm">请先选择具体设备（执行下发需要）</p>
-      <p v-else-if="!selectedHasAsrChat" class="dv-err sm">
-        设备未连接 <code>/asr_chat</code>（当前通道：{{ formatChannels(selectedDeviceDetail && selectedDeviceDetail.channels) || '无' }}）。
-        pb 口型下发需要 ESP32 登录 asr_chat；仅 camera 在线时只能预览，不能下发。
-      </p>
-
-      <div class="expr-phoneme-split">
-        <section class="expr-phoneme-col expr-phoneme-col-table">
-          <h4 class="expr-phoneme-col-title">配置表格</h4>
-          <div v-if="phonemeViewMode === 'json'" class="expr-phoneme-json-wrap">
-            <textarea v-model="phonemeJsonDraft" class="expr-phoneme-json-ta mono sm"
-                      spellcheck="false" @change="phonemeApplyJsonDraft"></textarea>
-          </div>
-          <div v-else class="table-wrap expr-phoneme-tbl-wrap">
-            <table class="expr-phoneme-tbl sm">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>states</th>
-                  <th>elements</th>
-                  <th>offset</th>
-                  <th></th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!phonemeGroups.length">
-                  <td colspan="6" class="expr-phoneme-empty">暂无条目，点 + 新增或重新载入</td>
-                </tr>
-                <tr v-for="(row, idx) in phonemeGroups" :key="idx"
-                    :class="['expr-phoneme-row', { sel: phonemeSelectedIdx === idx }]"
-                    @click="phonemeSelectRow(idx)"
-                    @dblclick.stop="phonemeOpenEditDialog(idx)">
-                  <td class="mono">{{ idx + 1 }}</td>
-                  <td class="expr-phoneme-cell">
-                    <div class="expr-phoneme-preview mono">{{ phonemeStatesLabel(row) }}</div>
-                  </td>
-                  <td class="expr-phoneme-cell">
-                    <div class="expr-phoneme-preview mono">{{ phonemeJsonBrief(row.elements) }}</div>
-                  </td>
-                  <td class="expr-phoneme-cell">
-                    <div class="expr-phoneme-preview mono">{{ phonemeOffsetLabel(row) }}</div>
-                  </td>
-                  <td class="expr-phoneme-act">
-                    <button type="button" class="dv-btn sm danger" title="删除"
-                            @click.stop="phonemeDeleteRow(idx)">×</button>
-                  </td>
-                  <td class="expr-phoneme-act">
-                    <button type="button" class="dv-btn sm"
-                            :disabled="!phonemeCanSend || phonemeExecBusy"
-                            @click.stop="phonemeExecRow(idx)">执行</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p class="muted sm" style="margin:8px 0 0;">双击行可编辑 states / elements / offset</p>
-        </section>
-
-        <section class="expr-phoneme-col expr-phoneme-col-preview">
-          <h4 class="expr-phoneme-col-title">表情预览</h4>
-          <div class="expr-preview-row">
-            <canvas ref="exprPhonemeCanvas" width="284" height="240" class="expr-canvas" aria-label="音素口型预览"></canvas>
-            <div class="expr-preview-meta">
-              <div class="fp-meta-row"><span class="k">画布</span><span class="v mono sm">284 × 240</span></div>
-              <div class="fp-meta-row"><span class="k">坐标</span><span class="v mono sm">284×240 逻辑像素，与 pb 下发一致</span></div>
-              <div class="fp-meta-row"><span class="k">当前</span><span class="v sm">{{ exprPreviewLabel || '—' }}</span></div>
-            </div>
-          </div>
-          <p v-if="phonemeExecStatus" class="sm mono" :class="{ 'dv-err': phonemeExecStatusErr }">{{ phonemeExecStatus }}</p>
-        </section>
-      </div>
-
-      <div v-if="phonemeEditDialog" class="expr-design-modal-backdrop" @click.self="phonemeCloseEditDialog">
-        <div class="expr-design-modal" role="dialog" aria-modal="true" aria-labelledby="expr-phoneme-modal-title">
-          <h4 id="expr-phoneme-modal-title" style="margin:0 0 12px;">编辑口型组</h4>
-          <label class="expr-design-field expr-design-field-ta">
-            <span class="expr-design-label">states（每行一个音素）</span>
-            <textarea v-model="phonemeEditDialog.statesDraft" class="expr-design-ta mono sm"
-                      spellcheck="false" rows="5"></textarea>
-          </label>
-          <label class="expr-design-field expr-design-field-ta">
-            <span class="expr-design-label">elements（JSON 数组）</span>
-            <textarea v-model="phonemeEditDialog.elementsDraft" class="expr-design-ta mono sm"
-                      spellcheck="false" rows="10"></textarea>
-          </label>
-          <label class="expr-design-field">
-            <span class="expr-design-label">offset（JSON 对象）</span>
-            <input v-model="phonemeEditDialog.offsetDraft" type="text" class="expr-design-input mono sm"
-                   spellcheck="false" placeholder='{"x":0,"y":0}' />
-          </label>
-          <p v-if="phonemeEditDialog.error" class="dv-err sm">{{ phonemeEditDialog.error }}</p>
-          <div class="expr-design-modal-actions">
-            <button type="button" class="dv-btn sm secondary" @click="phonemeCloseEditDialog">取消</button>
-            <button type="button" class="dv-btn sm"
-                    :disabled="phonemeEditDialog.saving"
-                    @click="phonemeSaveEditDialog">保存</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div v-show="activeTab === 'expr_design'" class="dv-tab-panel dv-expr-design-card">
-      <h3 style="margin-top:0;">表情-设计</h3>
-      <p class="doc muted sm">编辑表情场景数组：每项含 <code>name</code>、<code>title</code>、<code>frames</code>（<code>[{ elements, ms }, ...]</code>）。数据保存在 <code>face_expr_scenes.json</code>；<code>default</code> 为说话时眼/鼻眨眼基准（嘴由音素层填充）。</p>
-      <div class="expr-phoneme-toolbar">
-        <button type="button" class="dv-btn sm" title="新增场景" @click="designAddRow">+</button>
-        <button type="button" class="dv-btn sm"
-                :disabled="designSaveBusy"
-                @click="designSaveToFile">保存到 face_expr_scenes.json</button>
-        <button type="button" class="dv-btn sm secondary" @click="designLoadFromFile">重新载入</button>
-        <span class="muted sm mono">{{ designFileLabel }}</span>
-      </div>
-      <p v-if="designLoadError" class="dv-err sm">{{ designLoadError }}</p>
-      <p v-if="designSaveStatus" class="sm" :class="{ 'dv-err': designSaveStatusErr }">{{ designSaveStatus }}</p>
-      <p v-if="!selected" class="dv-err sm">请先选择具体设备（运行下发需要）</p>
-      <p v-else-if="!selectedHasAsrChat" class="dv-err sm">
-        设备未连接 <code>/asr_chat</code>（当前通道：{{ formatChannels(selectedDeviceDetail && selectedDeviceDetail.channels) || '无' }}）。
-        pb 场景下发需要 ESP32 登录 asr_chat；仅 camera 在线时只能预览，不能运行。
-      </p>
-
-      <div class="expr-phoneme-split">
-        <section class="expr-phoneme-col expr-phoneme-col-table">
-          <h4 class="expr-phoneme-col-title">配置表格</h4>
-          <div class="table-wrap expr-phoneme-tbl-wrap">
-            <table class="expr-phoneme-tbl sm">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>name</th>
-                  <th>title</th>
-                  <th>frames</th>
-                  <th></th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!designScenes.length">
-                  <td colspan="6" class="expr-phoneme-empty">暂无场景，点 + 新增或重新载入</td>
-                </tr>
-                <tr v-for="(row, idx) in designScenes" :key="row.name + '-' + idx"
-                    :class="['expr-phoneme-row', { sel: designSelectedIdx === idx }]"
-                    @click="designSelectRow(idx)"
-                    @dblclick.stop="designOpenEditDialog(idx)">
-                  <td class="mono">{{ idx + 1 }}</td>
-                  <td class="mono expr-phoneme-cell">{{ row.name }}</td>
-                  <td class="expr-phoneme-cell">{{ row.title }}</td>
-                  <td class="expr-phoneme-cell mono">{{ designFramesLabel(row) }}</td>
-                  <td class="expr-phoneme-act">
-                    <button type="button" class="dv-btn sm danger" title="删除"
-                            @click.stop="designDeleteRow(idx)">×</button>
-                  </td>
-                  <td class="expr-phoneme-act">
-                    <button type="button" class="dv-btn sm"
-                            :disabled="!designCanSend || designExecBusy"
-                            @click.stop="designExecRow(idx)">运行</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p class="muted sm" style="margin:8px 0 0;">双击行可编辑 name / title / frames</p>
-        </section>
-
-        <section class="expr-phoneme-col expr-phoneme-col-preview">
-          <h4 class="expr-phoneme-col-title">表情预览</h4>
-          <div class="expr-preview-row">
-            <canvas ref="exprDesignCanvas" width="284" height="240" class="expr-canvas" aria-label="表情场景预览"></canvas>
-            <div class="expr-preview-meta">
-              <div class="fp-meta-row"><span class="k">画布</span><span class="v mono sm">284 × 240</span></div>
-              <div class="fp-meta-row"><span class="k">坐标</span><span class="v mono sm">284×240 逻辑像素，与 pb 下发一致</span></div>
-              <div class="fp-meta-row"><span class="k">当前</span><span class="v sm">{{ designPreviewLabel || '—' }}</span></div>
-              <div class="fp-meta-row"><span class="k">插值</span><span class="v sm">13ms 刷新，帧间渐变</span></div>
-            </div>
-          </div>
-          <p v-if="designExecStatus" class="sm mono" :class="{ 'dv-err': designExecStatusErr }">{{ designExecStatus }}</p>
-        </section>
-      </div>
-
-      <div v-if="designEditDialog" class="expr-design-modal-backdrop" @click.self="designCloseEditDialog">
-        <div class="expr-design-modal" role="dialog" aria-modal="true" aria-labelledby="expr-design-modal-title">
-          <h4 id="expr-design-modal-title" style="margin:0 0 12px;">编辑场景</h4>
-          <label class="expr-design-field">
-            <span class="expr-design-label">name</span>
-            <input v-model="designEditDialog.name" type="text" class="expr-design-input mono sm"
-                   spellcheck="false" placeholder="scene_key" />
-          </label>
-          <label class="expr-design-field">
-            <span class="expr-design-label">title</span>
-            <input v-model="designEditDialog.title" type="text" class="expr-design-input sm"
-                   placeholder="显示标题" />
-          </label>
-          <label class="expr-design-field expr-design-field-ta">
-            <span class="expr-design-label">frames（JSON 数组，每项含 elements 与 ms）</span>
-            <textarea v-model="designEditDialog.framesDraft" class="expr-design-ta mono sm"
-                      spellcheck="false" rows="14"></textarea>
-          </label>
-          <p v-if="designEditDialog.error" class="dv-err sm">{{ designEditDialog.error }}</p>
-          <div class="expr-design-modal-actions">
-            <button type="button" class="dv-btn sm secondary" @click="designCloseEditDialog">取消</button>
-            <button type="button" class="dv-btn sm"
-                    :disabled="designEditDialog.saving"
-                    @click="designSaveEditDialog">保存</button>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <div v-show="activeTab === 'scene'" class="dv-tab-panel sp-playbook-card">
       <h3 style="margin-top:0;">场景</h3>
@@ -1920,8 +1693,6 @@
       { id: "camera", label: "摄像头" },
       { id: "servo", label: "舵机控制" },
       { id: "tts", label: "TTS 下发" },
-      { id: "expr_phoneme", label: "表情-音素" },
-      { id: "expr_design", label: "表情-设计" },
       { id: "scene", label: "场景" },
       { id: "pipeline", label: "流水日志" },
     ];
@@ -2207,34 +1978,7 @@
           cvCfgStatus: "",
           cvCfgStatusErr: false,
 
-          phonemeGroups: [],
-          phonemeFaceDefaults: { nose: [], eye_l: [], eye_r: [] },
-          phonemeViewMode: "table",
-          phonemeJsonDraft: "",
-          phonemeSelectedIdx: -1,
-          phonemeEditDialog: null,
-          phonemeLoadError: "",
-          phonemeSaveStatus: "",
-          phonemeSaveStatusErr: false,
-          phonemeSaveBusy: false,
-          phonemeExecStatus: "",
-          phonemeExecStatusErr: false,
-          phonemeExecBusy: false,
-          phonemeFileName: "face_mouth_by_phoneme.json",
-          exprPreviewLabel: "",
-
-          designScenes: [],
-          designSelectedIdx: -1,
-          designEditDialog: null,
-          designLoadError: "",
-          designSaveStatus: "",
-          designSaveStatusErr: false,
-          designSaveBusy: false,
-          designExecStatus: "",
-          designExecStatusErr: false,
-          designExecBusy: false,
-          designFileName: "face_expr_scenes.json",
-          designPreviewLabel: "",
+          exprScenesCache: [],
 
           spPlaybooks: [],
           spSelectedIdx: -1,
@@ -2279,7 +2023,6 @@
         this._robotAnimId = null;
         this._robotResizeObs = null;
         this._threeLoadPromise = null;
-        this._exprTimelineState = null;
         this._scenePreview3d = null;
         this._scenePreviewAnimId = null;
         this._scenePreviewResizeObs = null;
@@ -2562,12 +2305,6 @@
           if (!d || !d.channels) return false;
           return Number(d.channels.asr_chat || 0) > 0;
         },
-        phonemeCanSend() {
-          return !!this.selected && this.selectedHasAsrChat;
-        },
-        designCanSend() {
-          return !!this.selected && this.selectedHasAsrChat;
-        },
         cvSceneActionBusy() {
           return this.ttsSending || this.cvSceneSending;
         },
@@ -2749,7 +2486,7 @@
           return Number.isFinite(y) ? String(Math.round(y)) : "90";
         },
         spExprSceneOptions() {
-          const names = (this.designScenes || []).map((r) => r.name).filter(Boolean);
+          const names = (this.exprScenesCache || []).map((r) => r.name).filter(Boolean);
           if (names.length) return names;
           return this.pbSceneKeys.slice();
         },
@@ -2757,14 +2494,6 @@
           return (this.pbSceneKeys || []).filter(
             (k) => !EXPR_SCENE_EXCLUDE.has(String(k).trim().toLowerCase()),
           );
-        },
-        phonemeFileLabel() {
-          const n = (this.phonemeGroups || []).length;
-          return `${this.phonemeFileName} · ${n} 组`;
-        },
-        designFileLabel() {
-          const n = (this.designScenes || []).length;
-          return `${this.designFileName} · ${n} 场景`;
         },
       },
       methods: {
@@ -4729,604 +4458,19 @@
           }
           return JSON.parse(JSON.stringify(EXPR_DEFAULT_ANIM.elements || {}));
         },
-        _phonemeApplyOffset(prims, dx, dy) {
-          const ox = Number(dx) || 0;
-          const oy = Number(dy) || 0;
-          if (!ox && !oy) return JSON.parse(JSON.stringify(prims || []));
-          return (prims || []).map((p) => {
-            const q = JSON.parse(JSON.stringify(p));
-            const sh = String(q.shape || "").toLowerCase();
-            if (sh === "line") {
-              if (q.x1 != null) q.x1 += ox;
-              if (q.y1 != null) q.y1 += oy;
-              if (q.x2 != null) q.x2 += ox;
-              if (q.y2 != null) q.y2 += oy;
-            } else if (q.x != null || q.y != null) {
-              if (q.x != null) q.x += ox;
-              if (q.y != null) q.y += oy;
-            }
-            return q;
-          });
-        },
-        phonemeGroupToAnim(group) {
-          const g = group || {};
-          const dx = (g.offset && g.offset.x) || 0;
-          const dy = (g.offset && g.offset.y) || 0;
-          const fd = this.phonemeFaceDefaults || {};
-          const nose = fd.nose && fd.nose.length ? fd.nose : (EXPR_DEFAULT_ANIM.elements.nose || []);
-          const eyeL = fd.eye_l && fd.eye_l.length ? fd.eye_l : (EXPR_DEFAULT_ANIM.elements.eye_l || []);
-          const eyeR = fd.eye_r && fd.eye_r.length ? fd.eye_r : (EXPR_DEFAULT_ANIM.elements.eye_r || []);
-          return {
-            elements: {
-              mouth: JSON.parse(JSON.stringify(g.elements || [])),
-              nose: this._phonemeApplyOffset(nose, dx, dy),
-              eye_l: this._phonemeApplyOffset(eyeL, dx, dy),
-              eye_r: this._phonemeApplyOffset(eyeR, dx, dy),
-              extra: [],
-            },
-          };
-        },
-        phonemeStatesLabel(row) {
-          const st = row && row.states;
-          if (!Array.isArray(st) || !st.length) return "—";
-          if (st.length <= 6) return st.join(", ");
-          return st.slice(0, 6).join(", ") + ` … (+${st.length - 6})`;
-        },
-        phonemeOffsetLabel(row) {
-          const off = row && row.offset;
-          if (!off) return "{x:0,y:0}";
-          return `{x:${off.x || 0}, y:${off.y || 0}}`;
-        },
-        phonemeJsonBrief(val) {
+        async exprScenesLoadForPreview() {
           try {
-            const s = JSON.stringify(val);
-            return s.length > 120 ? s.slice(0, 117) + "…" : s;
-          } catch (e) {
-            return "—";
-          }
-        },
-        phonemeBuildDocument() {
-          return JSON.parse(JSON.stringify(this.phonemeGroups || []));
-        },
-        phonemeSyncJsonDraft() {
-          this.phonemeJsonDraft = JSON.stringify(this.phonemeBuildDocument(), null, 2);
-        },
-        phonemeSetViewMode(mode) {
-          if (mode === "json" && this.phonemeViewMode === "table") {
-            this.phonemeSyncJsonDraft();
-          } else if (mode === "table" && this.phonemeViewMode === "json") {
-            this.phonemeApplyJsonDraft();
-          }
-          this.phonemeViewMode = mode;
-        },
-        phonemeNormalizeGroup(g) {
-          const states = Array.isArray(g.states)
-            ? g.states.map((s) => this.phonemeSimplifyKey(String(s))).filter(Boolean)
-            : [];
-          const uniq = [...new Set(states)];
-          uniq.sort((a, b) => {
-            if (a === "_") return -1;
-            if (b === "_") return 1;
-            return a.localeCompare(b, "zh");
-          });
-          return {
-            states: uniq,
-            elements: Array.isArray(g.elements) ? JSON.parse(JSON.stringify(g.elements)) : [],
-            offset: {
-              x: g.offset && g.offset.x != null ? Number(g.offset.x) : 0,
-              y: g.offset && g.offset.y != null ? Number(g.offset.y) : 0,
-            },
-          };
-        },
-        phonemeSimplifyKey(ph) {
-          let p = String(ph || "").trim();
-          if (!p || p === "_") return "_";
-          const low = p.toLowerCase();
-          if (["sil", "sp", "spl", "spn", "sp1", "sp2", "sp3", "sp4"].includes(low)) return "_";
-          if (p.length >= 2 && "12345".includes(p.slice(-1)) && /[a-zA-Z]/.test(p.charAt(p.length - 2))) {
-            return p.slice(0, -1);
-          }
-          return p;
-        },
-        phonemeApplyJsonDraft() {
-          try {
-            const doc = JSON.parse(this.phonemeJsonDraft || "[]");
-            if (!Array.isArray(doc)) throw new Error("须为 JSON 数组 []");
-            this.phonemeGroups = doc.map((g) => this.phonemeNormalizeGroup(g));
-            this.phonemeLoadError = "";
-            this.phonemeSyncJsonDraft();
-          } catch (e) {
-            this.phonemeLoadError = "JSON 解析失败：" + (e && e.message ? e.message : e);
-          }
-        },
-        phonemeApplyConfig(payload) {
-          const groups = Array.isArray(payload)
-            ? payload
-            : (payload && Array.isArray(payload.config) ? payload.config : []);
-          this.phonemeGroups = groups.map((g) => this.phonemeNormalizeGroup(g));
-          const fd = (payload && payload.face_defaults) || {};
-          this.phonemeFaceDefaults = {
-            nose: Array.isArray(fd.nose) ? JSON.parse(JSON.stringify(fd.nose)) : [],
-            eye_l: Array.isArray(fd.eye_l) ? JSON.parse(JSON.stringify(fd.eye_l)) : [],
-            eye_r: Array.isArray(fd.eye_r) ? JSON.parse(JSON.stringify(fd.eye_r)) : [],
-          };
-          this.phonemeSyncJsonDraft();
-        },
-        async phonemeLoadFromFile() {
-          this.phonemeLoadError = "";
-          try {
-            const res = await fetch("/api/face_mouth_by_phoneme", { cache: "no-store" });
+            const res = await fetch("/api/deskbot_face", { cache: "no-store" });
             const d = await res.json();
             if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
-            if (d.file) this.phonemeFileName = d.file;
-            this.phonemeApplyConfig(d);
+            const rows = Array.isArray(d.emotions) ? d.emotions : [];
+            this.exprScenesCache = rows.map((r) => ({
+              name: String((r && r.name) || "").trim(),
+              title: String((r && r.title) || (r && r.name) || "").trim(),
+              frames: Array.isArray(r && r.frames) ? JSON.parse(JSON.stringify(r.frames)) : [],
+            }));
           } catch (e) {
-            this.phonemeLoadError = "载入失败：" + (e && e.message ? e.message : e);
-          }
-        },
-        async phonemeSaveToFile() {
-          if (this.phonemeViewMode === "json") this.phonemeApplyJsonDraft();
-          this.phonemeSaveBusy = true;
-          this.phonemeSaveStatus = "";
-          this.phonemeSaveStatusErr = false;
-          try {
-            const body = this.phonemeBuildDocument();
-            const res = await fetch("/api/face_mouth_by_phoneme", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            });
-            const d = await res.json();
-            if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
-            if (d.file) this.phonemeFileName = d.file;
-            this.phonemeApplyConfig(d);
-            this.phonemeSaveStatus = "已保存到 " + (d.file || this.phonemeFileName);
-            return true;
-          } catch (e) {
-            this.phonemeSaveStatus = "保存失败：" + (e && e.message ? e.message : e);
-            this.phonemeSaveStatusErr = true;
-            return false;
-          } finally {
-            this.phonemeSaveBusy = false;
-          }
-        },
-        phonemeDefaultGroup() {
-          const mouth = (EXPR_DEFAULT_ANIM.elements && EXPR_DEFAULT_ANIM.elements.mouth) || [];
-          return {
-            states: ["_"],
-            elements: JSON.parse(JSON.stringify(mouth.length ? mouth : [{ shape: "rect", x: 102, y: 151, w: 80, h: 20 }])),
-            offset: { x: 0, y: 0 },
-          };
-        },
-        phonemeAddRow() {
-          this.phonemeGroups.push(this.phonemeDefaultGroup());
-          this.phonemeSyncJsonDraft();
-          this.phonemeOpenEditDialog(this.phonemeGroups.length - 1);
-        },
-        phonemeDeleteRow(idx) {
-          if (idx < 0 || idx >= this.phonemeGroups.length) return;
-          this.phonemeGroups.splice(idx, 1);
-          if (this.phonemeSelectedIdx === idx) this.phonemeSelectedIdx = -1;
-          else if (this.phonemeSelectedIdx > idx) this.phonemeSelectedIdx -= 1;
-          this.phonemeSyncJsonDraft();
-        },
-        phonemeOpenEditDialog(idx) {
-          const row = this.phonemeGroups[idx];
-          if (!row) return;
-          this.phonemeEditDialog = {
-            idx,
-            statesDraft: (row.states || []).join("\n"),
-            elementsDraft: JSON.stringify(row.elements || [], null, 2),
-            offsetDraft: JSON.stringify(row.offset || { x: 0, y: 0 }),
-            error: "",
-            saving: false,
-          };
-        },
-        phonemeCloseEditDialog() {
-          this.phonemeEditDialog = null;
-        },
-        phonemeParseEditDialog() {
-          const dlg = this.phonemeEditDialog;
-          if (!dlg) throw new Error("无编辑会话");
-          const states = String(dlg.statesDraft || "")
-            .split(/[\n,]+/)
-            .map((s) => this.phonemeSimplifyKey(s.trim()))
-            .filter(Boolean);
-          const uniq = [...new Set(states)];
-          if (!uniq.length) throw new Error("states 不能为空");
-          let elements;
-          try {
-            elements = JSON.parse(dlg.elementsDraft || "[]");
-          } catch (e) {
-            throw new Error("elements JSON 无效：" + (e && e.message ? e.message : e));
-          }
-          if (!Array.isArray(elements)) throw new Error("elements 须为数组");
-          let offset;
-          try {
-            offset = JSON.parse(dlg.offsetDraft || '{"x":0,"y":0}');
-          } catch (e) {
-            throw new Error("offset JSON 无效：" + (e && e.message ? e.message : e));
-          }
-          return this.phonemeNormalizeGroup({
-            states: uniq,
-            elements,
-            offset,
-          });
-        },
-        async phonemeSaveEditDialog() {
-          const dlg = this.phonemeEditDialog;
-          if (!dlg) return;
-          dlg.error = "";
-          let parsed;
-          try {
-            parsed = this.phonemeParseEditDialog();
-          } catch (e) {
-            dlg.error = e && e.message ? e.message : String(e);
-            return;
-          }
-          dlg.saving = true;
-          try {
-            this.phonemeGroups.splice(dlg.idx, 1, parsed);
-            this.phonemeSelectedIdx = dlg.idx;
-            this.phonemeSyncJsonDraft();
-            const ok = await this.phonemeSaveToFile();
-            if (!ok) {
-              dlg.error = this.phonemeSaveStatus || "保存失败";
-              return;
-            }
-            this.phonemeCloseEditDialog();
-            this.phonemeSelectRow(dlg.idx);
-          } catch (e) {
-            dlg.error = e && e.message ? e.message : String(e);
-          } finally {
-            if (this.phonemeEditDialog) this.phonemeEditDialog.saving = false;
-          }
-        },
-        _robotSyncExprFromAnim(anim) {
-          const st = this._robot3d;
-          if (!st || !st.faceCanvas) return;
-          this._exprDrawAnimOnCanvas(st.faceCanvas, anim);
-          if (st.faceTexture) st.faceTexture.needsUpdate = true;
-        },
-        phonemePreviewAnim(anim, label) {
-          this.exprPreviewLabel = label || "";
-          this.$nextTick(() => {
-            this._exprDrawAnimOnCanvas(this.$refs.exprPhonemeCanvas, anim);
-            this._robotSyncExprFromAnim(anim);
-          });
-        },
-        async phonemeExecRow(idx) {
-          const row = this.phonemeGroups[idx];
-          if (!row) return;
-          this.phonemeSelectedIdx = idx;
-          const label = this.phonemeStatesLabel(row);
-          const anim = this.phonemeGroupToAnim(row);
-          this.phonemePreviewAnim(anim, label);
-          if (!this.selected) {
-            this.phonemeExecStatus = "未选设备，仅本地预览";
-            this.phonemeExecStatusErr = false;
-            return;
-          }
-          if (!this.selectedHasAsrChat) {
-            this.phonemeExecStatus = "asr_chat 未连接，仅本地预览（见上方提示）";
-            this.phonemeExecStatusErr = true;
-            return;
-          }
-          this.phonemeExecBusy = true;
-          this.phonemeExecStatus = "下发中…";
-          this.phonemeExecStatusErr = false;
-          try {
-            const animJson = JSON.stringify(anim);
-            const animB64 = btoa(unescape(encodeURIComponent(animJson)));
-            const url = deskbotApiUrl(this.httpBase, "/api/device_pb_anim");
-            url.searchParams.set("device_id", this.selected);
-            url.searchParams.set("anim_b64", animB64);
-            url.searchParams.set("chunk_ms", "800");
-            url.searchParams.set("action", "replace");
-            url.searchParams.set("level", "3");
-            const res = await fetch(url.toString(), { cache: "no-store" });
-            const d = await res.json();
-            if (!res.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
-            if (!d.ok || d.delivered === 0) {
-              throw new Error(
-                (d && (d.hint || d.error))
-                || "未发往 WebSocket（/asr_chat 未连接）",
-              );
-            }
-            const n = d.delivered != null ? d.delivered : "?";
-            this.phonemeExecStatus = `已下发 anim req=${d.req || "?"} delivered=${n}`;
-          } catch (e) {
-            this.phonemeExecStatus = "下发失败：" + (e && e.message ? e.message : e);
-            this.phonemeExecStatusErr = true;
-          } finally {
-            this.phonemeExecBusy = false;
-          }
-        },
-        phonemeSelectRow(idx) {
-          const row = this.phonemeGroups[idx];
-          if (!row) return;
-          this.phonemeSelectedIdx = idx;
-          const anim = this.phonemeGroupToAnim(row);
-          this.phonemePreviewAnim(anim, this.phonemeStatesLabel(row));
-        },
-        _designFrameToAnim(fr) {
-          return { elements: this._designFrameToElements(fr) };
-        },
-        _exprStopTimeline() {
-          if (this._exprTimelineTimer) {
-            clearInterval(this._exprTimelineTimer);
-            this._exprTimelineTimer = null;
-          }
-          this._exprTimelineState = null;
-        },
-        _exprTimelineTick() {
-          const st = this._exprTimelineState;
-          if (!st) return;
-          const now = performance.now();
-          let idx = st.frameIdx;
-          let localStart = st.frameStartMs;
-          while (idx < st.durations.length - 1) {
-            const dur = st.durations[idx];
-            const elapsed = now - localStart;
-            if (elapsed < dur) break;
-            localStart += dur;
-            idx += 1;
-          }
-          if (idx !== st.frameIdx) {
-            st.frameIdx = idx;
-            st.frameStartMs = localStart;
-          }
-          const dur = st.durations[idx] || 500;
-          const elapsed = Math.max(0, now - st.frameStartMs);
-          const hasNext = idx < st.elementsList.length - 1;
-          const t = hasNext ? Math.min(1, elapsed / dur) : 0;
-          const currEl = st.elementsList[idx] || {};
-          const nextEl = hasNext ? (st.elementsList[idx + 1] || currEl) : currEl;
-          const interpEl = hasNext
-            ? this._exprInterpolateElements(currEl, nextEl, t)
-            : JSON.parse(JSON.stringify(currEl));
-          const anim = { elements: interpEl };
-          const canvas = this.$refs[st.canvasRefName];
-          this._exprDrawAnimOnCanvas(canvas, anim);
-          this._robotSyncExprFromAnim(anim);
-        },
-        _exprPlayFramesTimeline(frames, canvasRefName, label) {
-          this._exprStopTimeline();
-          const framesArr = Array.isArray(frames) ? frames : [];
-          if (!framesArr.length) return;
-          this.designPreviewLabel = label || "";
-          const elementsList = framesArr.map((fr) => this._designFrameToElements(fr));
-          const durations = framesArr.map((fr) => Math.max(40, Number(fr && fr.ms) || 500));
-          this._exprTimelineState = {
-            canvasRefName,
-            elementsList,
-            durations,
-            frameIdx: 0,
-            frameStartMs: performance.now(),
-          };
-          this._exprTimelineTick();
-          this._exprTimelineTimer = setInterval(() => this._exprTimelineTick(), 13);
-        },
-        designNormalizeScene(raw) {
-          const name = String((raw && raw.name) || "").trim();
-          const title = String((raw && raw.title) || name).trim();
-          const frames = Array.isArray(raw && raw.frames)
-            ? JSON.parse(JSON.stringify(raw.frames))
-            : [];
-          return { name, title, frames };
-        },
-        designApplyConfig(payload) {
-          const rows = Array.isArray(payload)
-            ? payload
-            : (payload && Array.isArray(payload.config) ? payload.config : []);
-          this.designScenes = rows.map((r) => this.designNormalizeScene(r));
-        },
-        designBuildDocument() {
-          return JSON.parse(JSON.stringify(this.designScenes || []));
-        },
-        designFramesLabel(row) {
-          const frames = (row && row.frames) || [];
-          if (!frames.length) return "—";
-          let total = 0;
-          for (const fr of frames) total += Math.max(0, Number(fr && fr.ms) || 0);
-          return `${frames.length} 帧 · ${total} ms`;
-        },
-        async designLoadFromFile() {
-          this.designLoadError = "";
-          try {
-            const res = await fetch("/api/face_expr_scenes", { cache: "no-store" });
-            const d = await res.json();
-            if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
-            if (d.file) this.designFileName = d.file;
-            this.designApplyConfig(d);
-          } catch (e) {
-            this.designLoadError = "载入失败：" + (e && e.message ? e.message : e);
-          }
-        },
-        async designSaveToFile() {
-          this.designSaveBusy = true;
-          this.designSaveStatus = "";
-          this.designSaveStatusErr = false;
-          try {
-            const body = this.designBuildDocument();
-            const res = await fetch("/api/face_expr_scenes", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            });
-            const d = await res.json();
-            if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
-            if (d.file) this.designFileName = d.file;
-            this.designApplyConfig(d);
-            this.designSaveStatus = "已保存到 " + (d.file || this.designFileName);
-            return true;
-          } catch (e) {
-            this.designSaveStatus = "保存失败：" + (e && e.message ? e.message : e);
-            this.designSaveStatusErr = true;
-            return false;
-          } finally {
-            this.designSaveBusy = false;
-          }
-        },
-        designDefaultScene() {
-          const suffix = Date.now().toString(36);
-          return {
-            name: "new_scene_" + suffix,
-            title: "新场景",
-            frames: [{
-              ms: 500,
-              elements: JSON.parse(JSON.stringify(EXPR_DEFAULT_ANIM.elements || {})),
-            }],
-          };
-        },
-        designAddRow() {
-          const row = this.designDefaultScene();
-          this.designScenes.push(row);
-          this.designOpenEditDialog(this.designScenes.length - 1);
-        },
-        designDeleteRow(idx) {
-          if (idx < 0 || idx >= this.designScenes.length) return;
-          this.designScenes.splice(idx, 1);
-          if (this.designSelectedIdx === idx) this.designSelectedIdx = -1;
-          else if (this.designSelectedIdx > idx) this.designSelectedIdx -= 1;
-        },
-        designOpenEditDialog(idx) {
-          const row = this.designScenes[idx];
-          if (!row) return;
-          this.designEditDialog = {
-            idx,
-            name: row.name,
-            title: row.title,
-            framesDraft: JSON.stringify(row.frames || [], null, 2),
-            error: "",
-            saving: false,
-          };
-        },
-        designCloseEditDialog() {
-          this.designEditDialog = null;
-        },
-        designParseEditDialog() {
-          const dlg = this.designEditDialog;
-          if (!dlg) throw new Error("无编辑会话");
-          const name = String(dlg.name || "").trim();
-          if (!name) throw new Error("name 不能为空");
-          if (!/^[a-z][a-z0-9_]*$/i.test(name)) {
-            throw new Error("name 须为字母开头，仅含字母数字下划线");
-          }
-          const title = String(dlg.title || name).trim();
-          let frames;
-          try {
-            frames = JSON.parse(dlg.framesDraft || "[]");
-          } catch (e) {
-            throw new Error("frames JSON 无效：" + (e && e.message ? e.message : e));
-          }
-          if (!Array.isArray(frames) || !frames.length) {
-            throw new Error("frames 须为非空数组");
-          }
-          const normFrames = [];
-          for (let i = 0; i < frames.length; i += 1) {
-            const fr = frames[i];
-            if (!fr || typeof fr !== "object") throw new Error(`frames[${i}] 须为对象`);
-            const ms = Number(fr.ms);
-            if (!Number.isFinite(ms) || ms < 40) throw new Error(`frames[${i}].ms 须 ≥ 40`);
-            const elements = fr.elements || (fr.anim && fr.anim.elements);
-            if (!elements || typeof elements !== "object") {
-              throw new Error(`frames[${i}].elements 必填`);
-            }
-            normFrames.push({
-              ms,
-              elements: JSON.parse(JSON.stringify(elements)),
-            });
-          }
-          return { name, title, frames: normFrames };
-        },
-        async designSaveEditDialog() {
-          const dlg = this.designEditDialog;
-          if (!dlg) return;
-          dlg.error = "";
-          let parsed;
-          try {
-            parsed = this.designParseEditDialog();
-          } catch (e) {
-            dlg.error = e && e.message ? e.message : String(e);
-            return;
-          }
-          const dup = this.designScenes.findIndex(
-            (r, i) => i !== dlg.idx && String(r.name).toLowerCase() === parsed.name.toLowerCase(),
-          );
-          if (dup >= 0) {
-            dlg.error = `name 与第 ${dup + 1} 行重复`;
-            return;
-          }
-          dlg.saving = true;
-          try {
-            this.designScenes.splice(dlg.idx, 1, parsed);
-            this.designSelectedIdx = dlg.idx;
-            const ok = await this.designSaveToFile();
-            if (!ok) {
-              dlg.error = this.designSaveStatus || "保存失败";
-              return;
-            }
-            this.designCloseEditDialog();
-            this.designPreviewScene(dlg.idx);
-          } catch (e) {
-            dlg.error = e && e.message ? e.message : String(e);
-          } finally {
-            if (this.designEditDialog) this.designEditDialog.saving = false;
-          }
-        },
-        designPreviewScene(idx) {
-          const row = this.designScenes[idx];
-          if (!row) return;
-          this.designSelectedIdx = idx;
-          const label = `${row.title || row.name} (${this.designFramesLabel(row)})`;
-          this._exprPlayFramesTimeline(row.frames, "exprDesignCanvas", label);
-        },
-        designSelectRow(idx) {
-          this.designPreviewScene(idx);
-        },
-        async designExecRow(idx) {
-          const row = this.designScenes[idx];
-          if (!row) return;
-          this.designSelectedIdx = idx;
-          this.designPreviewScene(idx);
-          if (!this.selected) {
-            this.designExecStatus = "未选设备，仅本地预览";
-            this.designExecStatusErr = false;
-            return;
-          }
-          if (!this.selectedHasAsrChat) {
-            this.designExecStatus = "asr_chat 未连接，仅本地预览（见上方提示）";
-            this.designExecStatusErr = true;
-            return;
-          }
-          this.designExecBusy = true;
-          this.designExecStatus = "下发中…";
-          this.designExecStatusErr = false;
-          try {
-            const url = deskbotApiUrl(this.httpBase, "/api/device_pb_scene");
-            url.searchParams.set("device_id", this.selected);
-            url.searchParams.set("scene", row.name);
-            const res = await fetch(url.toString(), { cache: "no-store" });
-            const d = await res.json();
-            if (!res.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
-            const delivered = d.delivered != null ? d.delivered : (d.ok ? 1 : 0);
-            if (!d.ok && delivered === 0 && d.error) {
-              throw new Error(d.error);
-            }
-            if (delivered === 0) {
-              throw new Error(
-                (d && (d.hint || d.error))
-                || "未发往 WebSocket（/asr_chat 未连接）",
-              );
-            }
-            const n = delivered != null ? delivered : "?";
-            this.designExecStatus = `已运行 ${row.name} req=${d.req || "?"} delivered=${n}`;
-          } catch (e) {
-            this.designExecStatus = "运行失败：" + (e && e.message ? e.message : e);
-            this.designExecStatusErr = true;
-          } finally {
-            this.designExecBusy = false;
+            this.exprScenesCache = [];
           }
         },
 
@@ -5694,7 +4838,7 @@
         _spResolveExprScene(name) {
           const want = String(name || "").trim().toLowerCase();
           if (!want) return null;
-          return (this.designScenes || []).find(
+          return (this.exprScenesCache || []).find(
             (s) => String(s.name || "").trim().toLowerCase() === want,
           ) || null;
         },
@@ -5849,12 +4993,6 @@
               this.spExecStatus = "预览完成（仅本地模拟）";
             }
           });
-        },
-
-        exprDrawDefaultFace() {
-          const canvas = this.$refs.exprDesignCanvas;
-          if (!canvas) return;
-          this._exprDrawAnimOnCanvas(canvas, EXPR_DEFAULT_ANIM);
         },
 
         _robotMakeForwardArrow(THREE) {
@@ -6240,6 +5378,7 @@
           this._cvFollowLastSendMs = 0;
           this._cvFollowLastSmileMs = 0;
           this._syncPbAckFromSelectedDevice();
+          void this.exprScenesLoadForPreview();
           this.reconnect();
         },
         pbAckServo: {
@@ -6256,28 +5395,6 @@
         activeTab(tab) {
           if (tab === "scene") {
             this.$nextTick(() => { void this.scenePreviewInit3d(); });
-          }
-          if (tab === "expr_design") {
-            this.$nextTick(() => {
-              if (this.designSelectedIdx >= 0 && this.designScenes[this.designSelectedIdx]) {
-                this.designPreviewScene(this.designSelectedIdx);
-              } else {
-                this._exprStopTimeline();
-                this.designPreviewLabel = "";
-                this.exprDrawDefaultFace();
-                this._robotSyncExprFromAnim(EXPR_DEFAULT_ANIM);
-              }
-            });
-          }
-          if (tab === "expr_phoneme") {
-            this.$nextTick(() => {
-              let anim = EXPR_DEFAULT_ANIM;
-              if (this.phonemeSelectedIdx >= 0 && this.phonemeGroups[this.phonemeSelectedIdx]) {
-                anim = this.phonemeGroupToAnim(this.phonemeGroups[this.phonemeSelectedIdx]);
-              }
-              this._exprDrawAnimOnCanvas(this.$refs.exprPhonemeCanvas, anim);
-              this._robotSyncExprFromAnim(anim);
-            });
           }
         },
       },
@@ -6320,8 +5437,7 @@
         this.servoLoadPresets();
         await this.servoLoadCfgFromFile();
         this.servoLoadHistory();
-        await this.phonemeLoadFromFile();
-        await this.designLoadFromFile();
+        await this.exprScenesLoadForPreview();
         await this.spLoadFromFile();
         this._syncAbsFromPbAck();
         void this.cvFetchSavedProfiles();
@@ -6335,16 +5451,12 @@
         } catch (e) {
           this.robot3dError = "Three.js 加载失败";
         }
-        this.$nextTick(() => {
-          if (this.activeTab === "expr_design") this.exprDrawDefaultFace();
-        });
       },
       unmounted() {
         if (this._onPageHide) window.removeEventListener("pagehide", this._onPageHide);
         if (this._onVisibilityChange) document.removeEventListener("visibilitychange", this._onVisibilityChange);
         this.dpStopReconnectForever();
         this.cvStopReconnectForever();
-        this._exprStopTimeline();
         this._spStopPlayback();
         if (this._cvFpsTimer) clearInterval(this._cvFpsTimer);
         if (this._cvFollowTickTimer) clearInterval(this._cvFollowTickTimer);

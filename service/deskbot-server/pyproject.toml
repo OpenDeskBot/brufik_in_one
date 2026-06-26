@@ -28,6 +28,7 @@ dependencies = [
     "onnxruntime>=1.17.0",
     "croniter==2.0.7",
     "pypinyin>=0.53.0",
+    "g2p-en>=2.1.0",
 ]
 
 [project.optional-dependencies]

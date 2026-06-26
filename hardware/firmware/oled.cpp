@@ -31,11 +31,90 @@ public:
 static PsramCanvas16* s_canvas   = nullptr;
 static Adafruit_GFX*  s_draw_gfx = &oled;   /* 渲染目标：canvas 或直写 oled */
 
+static constexpr int16_t kMicUplinkIndicatorMargin = 6;
+static constexpr int16_t kMicIconW                 = 22;
+static constexpr int16_t kMicIconH                 = 22;
+static volatile bool     s_mic_uplink_active       = false;
+
+static void oled_mic_icon_origin(int16_t& left_x, int16_t& top_y) {
+  top_y = kMicUplinkIndicatorMargin + (int16_t)DESKBOT_LCD_TOP_SAFE_PX;
+  left_x = ((int16_t)DESKBOT_PB_COORD_W - kMicIconW) / 2;
+}
+
+static uint16_t oled_mic_shade_color(uint16_t col) {
+  const uint8_t r = (uint8_t)(((col >> 11) & 0x1F) * 55 / 100);
+  const uint8_t g = (uint8_t)(((col >> 5) & 0x3F) * 55 / 100);
+  const uint8_t b = (uint8_t)((col & 0x1F) * 55 / 100);
+  return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+/** 麦头 + 底弧条（无侧柱、无底座；绿=开麦，红=关麦）。 */
+static void oled_mic_icon_draw(Adafruit_GFX* gfx, int16_t ox, int16_t oy, uint16_t col) {
+  const int16_t cx = ox + kMicIconW / 2;
+  const uint16_t shade = oled_mic_shade_color(col);
+  const uint16_t ink = DESKBOT_LCD_COLOR_BLACK;
+
+  /* 底弧：仅横条 + 两端圆角 */
+  constexpr int16_t uw = 16;
+  const int16_t ux = cx - uw / 2;
+  const int16_t uy = oy + kMicIconH - 4;
+  gfx->fillRect(ux + 2, uy, uw - 4, 2, col);
+  gfx->fillCircle(ux + 2, uy + 1, 2, col);
+  gfx->fillCircle(ux + uw - 2, uy + 1, 2, col);
+
+  /* 麦头胶囊 */
+  constexpr int16_t bw = 10;
+  constexpr int16_t bh = 14;
+  const int16_t bx = cx - bw / 2;
+  const int16_t by = oy + 1;
+  gfx->fillRoundRect(bx - 1, by - 1, bw + 2, bh + 2, 6, ink);
+  gfx->fillRoundRect(bx, by, bw, bh, 5, col);
+  for (int16_t i = 0; i < 3; ++i) {
+    gfx->drawFastHLine(bx + 2, by + 4 + i * 3, bw - 4, shade);
+  }
+  gfx->drawFastHLine(bx + 3, by + 2, bw - 6, DESKBOT_LCD_COLOR_WHITE);
+
+  /* 连接柱：麦头 → 底弧 */
+  const int16_t stem_top = by + bh - 2;
+  if (uy > stem_top) {
+    gfx->fillRect(cx - 1, stem_top, 3, uy - stem_top, col);
+  }
+}
+
+static void oled_mic_indicator_draw_on_gfx(Adafruit_GFX* gfx, int16_t x_offset) {
+  if (!gfx) {
+    return;
+  }
+  int16_t left_x, top_y;
+  oled_mic_icon_origin(left_x, top_y);
+  left_x += x_offset;
+  const uint16_t col =
+      deskbot_mic_uplink_active() ? DESKBOT_LCD_COLOR_GREEN : DESKBOT_LCD_COLOR_RED;
+  oled_mic_icon_draw(gfx, left_x, top_y, col);
+}
+
+bool deskbot_mic_uplink_active(void) { return s_mic_uplink_active; }
+
+void deskbot_mic_uplink_set_active(bool active) {
+  if (active == s_mic_uplink_active) {
+    return;
+  }
+  s_mic_uplink_active = active;
+  int16_t left_x, top_y;
+  oled_mic_icon_origin(left_x, top_y);
+  left_x += (int16_t)DESKBOT_LCD_CANVAS_X0;
+  const uint16_t col = active ? DESKBOT_LCD_COLOR_GREEN : DESKBOT_LCD_COLOR_RED;
+  oled_mic_icon_draw(&oled, left_x, top_y, col);
+}
+
 /** canvas 整帧单次 SPI 推送（横屏 canvas 在 x=CANVAS_X0 对齐）。 */
 static inline void pb_canvas_push() {
   if (s_canvas && s_canvas->getBuffer()) {
+    oled_mic_indicator_draw_on_gfx(s_draw_gfx, 0);
     oled.drawRGBBitmap(DESKBOT_LCD_CANVAS_X0, 0, s_canvas->getBuffer(),
                        DESKBOT_PB_COORD_W, DESKBOT_PB_COORD_H);
+  } else if (s_draw_gfx == &oled) {
+    oled_mic_indicator_draw_on_gfx(&oled, (int16_t)DESKBOT_LCD_CANVAS_X0);
   }
 }
 

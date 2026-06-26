@@ -20,20 +20,12 @@ from deskbot_server.debug_prefs_store import (
     persist_pb_idle_auto_dispatch,
     persist_camera_servo_auto_mode,
 )
-from deskbot_server.constants import FACE_EXPR_SCENES_FILE, FACE_MOUTH_BY_PHONEME_FILE, SERVO_CFG_FILE
+from deskbot_server.constants import FACE_DESIGN_FILE, SERVO_CFG_FILE
 from deskbot_server.device_data import resolve_json_path
 from deskbot_server.face_expr_scenes_store import (
     design_frames_to_pb_chain,
     find_design_scene_by_name,
     load_face_expr_scenes_file,
-    normalize_face_expr_scenes,
-    save_face_expr_scenes_file,
-)
-from deskbot_server.face_mouth_config_store import (
-    face_mouth_api_payload,
-    load_face_mouth_cfg_file,
-    normalize_face_mouth_groups,
-    save_face_mouth_cfg_file,
 )
 from deskbot_server.servo_config_store import (
     load_servo_cfg_file,
@@ -98,8 +90,8 @@ def _build_http_request_handler(
       的 ``pb_start``→…→``pb_end``（与 ``/api/device_pb_scene`` 同源 JSON，无 PCM），
       用于注视/跟随舵机与 ``happy_smile`` 同批入队。下位机约定：仅一帧时用
       ``pb_single``；多帧须以 ``pb_start`` 开头、``pb_end`` 收尾，勿单发 ``pb_end`` 冒充单片。
-    - GET /api/device_pb_scenes：列出 ``data/face_expr_scenes.json`` 中的场景 name。
-    - GET /api/device_pb_scene?device_id=…&scene=<id>：按 ``face_expr_scenes.json`` 向该设备
+    - GET /api/device_pb_scenes：列出 ``data/deskbot-face.json`` 中 ``emotions`` 的场景 name。
+    - GET /api/device_pb_scene?device_id=…&scene=<id>：按 ``deskbot-face.json`` 向该设备
       ``/asr_chat`` **顺序**下发 ``pb_start`` → ``pb_chunk``* → ``pb_end``（含 ``anim``+``servo``，无音频）。
       ``scene`` 与文件中的 key **不区分大小写**。
     - GET /api/asr_auto_reply：返回 ``{"ok", "enabled"}`` 是否对 ``/asr_chat`` 执行 LLM+TTS；
@@ -109,7 +101,6 @@ def _build_http_request_handler(
     - GET/POST /api/scene_playbook/run：``device_id`` + ``playbook``（或 ``name`` 查表），
       TTS/表情/舵机三轨在**同一条 pb 链**内与音素分片交错下发（非 TTS 结束后再播）。
     - GET/POST /api/servo_config：读取/写入 ``data/servo.json`` 舵机限位/反向与 ``presets`` 动作预设。
-    - GET/POST /api/face_mouth_by_phoneme：读取/写入 ``data/face_mouth_by_phoneme.json`` 音素口型组表。
     - POST /api/device_pb_anim：向设备下发仅含 ``anim`` 的单片 ``pb_single``（调试口型预览）。
     - GET /health：存活探针
     - 其它 /api/* 返回 404；非 WS 升级请求才会进入该分支。
@@ -560,7 +551,7 @@ def _build_http_request_handler(
                 {
                     "ok": True,
                     "scenes": keys,
-                    "file": os.path.basename(FACE_EXPR_SCENES_FILE),
+                    "file": os.path.basename(FACE_DESIGN_FILE),
                     "t": time.time(),
                 },
             )
@@ -1000,92 +991,6 @@ def _build_http_request_handler(
                 {"ok": False, "error": "method not allowed", "t": time.time()},
             )
 
-        if path_only == "/api/face_mouth_by_phoneme":
-            cfg_dev = _config_device_id(qargs)
-            cfg_path = resolve_json_path(FACE_MOUTH_BY_PHONEME_FILE, cfg_dev)
-            if method == "GET":
-                try:
-                    cfg = load_face_mouth_cfg_file(seed_if_missing=True, device_id=cfg_dev)
-                except (OSError, json.JSONDecodeError, ValueError) as exc:
-                    logger.warning(
-                        "[HTTP] GET /api/face_mouth_by_phoneme read failed peer=%s err=%s",
-                        peer,
-                        exc,
-                    )
-                    return _json_resp(
-                        500,
-                        {"ok": False, "error": str(exc), "t": time.time()},
-                    )
-                payload = face_mouth_api_payload(cfg or [])
-                logger.info(
-                    "[HTTP] GET /api/face_mouth_by_phoneme peer=%s groups=%d",
-                    peer,
-                    len(payload.get("config") or []),
-                )
-                return _json_resp(
-                    200,
-                    {
-                        "ok": True,
-                        "exists": os.path.isfile(cfg_path),
-                        **payload,
-                        "file": os.path.basename(cfg_path),
-                        "device_id": cfg_dev,
-                        "t": time.time(),
-                    },
-                )
-            if method == "POST":
-                try:
-                    raw_body = (getattr(request, "body", None) or b"").decode("utf-8")
-                    body = json.loads(raw_body) if raw_body.strip() else []
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    return _json_resp(
-                        400,
-                        {"ok": False, "error": "invalid JSON body", "t": time.time()},
-                    )
-                cfg_dev = _config_device_id(
-                    qargs, body if isinstance(body, dict) else None
-                )
-                cfg_path = resolve_json_path(FACE_MOUTH_BY_PHONEME_FILE, cfg_dev)
-                try:
-                    groups = normalize_face_mouth_groups(body)
-                    save_face_mouth_cfg_file(groups, device_id=cfg_dev)
-                    payload = face_mouth_api_payload(groups)
-                except ValueError as exc:
-                    return _json_resp(
-                        400,
-                        {"ok": False, "error": str(exc), "t": time.time()},
-                    )
-                except OSError as exc:
-                    logger.warning(
-                        "[HTTP] POST /api/face_mouth_by_phoneme write failed peer=%s err=%s",
-                        peer,
-                        exc,
-                    )
-                    return _json_resp(
-                        500,
-                        {"ok": False, "error": str(exc), "t": time.time()},
-                    )
-                logger.info(
-                    "[HTTP] POST /api/face_mouth_by_phoneme peer=%s device_id=%s -> %s",
-                    peer,
-                    cfg_dev,
-                    cfg_path,
-                )
-                return _json_resp(
-                    200,
-                    {
-                        "ok": True,
-                        **payload,
-                        "file": os.path.basename(cfg_path),
-                        "device_id": cfg_dev,
-                        "t": time.time(),
-                    },
-                )
-            return _json_resp(
-                405,
-                {"ok": False, "error": "method not allowed", "t": time.time()},
-            )
-
         if path_only == "/api/device_pb_anim":
             anim: Optional[dict[str, Any]] = None
             dev = ""
@@ -1267,74 +1172,6 @@ def _build_http_request_handler(
                     "channels": channels if n == 0 else None,
                     "t": time.time(),
                 },
-            )
-
-        if path_only == "/api/face_expr_scenes":
-            cfg_dev = _config_device_id(qargs)
-            cfg_path = resolve_json_path(FACE_EXPR_SCENES_FILE, cfg_dev)
-            if method == "GET":
-                try:
-                    rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=cfg_dev)
-                except (OSError, json.JSONDecodeError, ValueError) as exc:
-                    return _json_resp(
-                        500,
-                        {"ok": False, "error": str(exc), "t": time.time()},
-                    )
-                logger.info(
-                    "[HTTP] GET /api/face_expr_scenes peer=%s scenes=%d",
-                    peer,
-                    len(rows or []),
-                )
-                return _json_resp(
-                    200,
-                    {
-                        "ok": True,
-                        "config": rows or [],
-                        "exists": os.path.isfile(cfg_path),
-                        "file": os.path.basename(cfg_path),
-                        "device_id": cfg_dev,
-                        "t": time.time(),
-                    },
-                )
-            if method == "POST":
-                try:
-                    raw_body = (getattr(request, "body", None) or b"").decode("utf-8")
-                    body = json.loads(raw_body) if raw_body.strip() else []
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    return _json_resp(
-                        400,
-                        {"ok": False, "error": "invalid JSON body", "t": time.time()},
-                    )
-                cfg_dev = _config_device_id(
-                    qargs, body if isinstance(body, dict) else None
-                )
-                cfg_path = resolve_json_path(FACE_EXPR_SCENES_FILE, cfg_dev)
-                try:
-                    rows = normalize_face_expr_scenes(body)
-                    saved = save_face_expr_scenes_file(rows, device_id=cfg_dev)
-                except ValueError as exc:
-                    return _json_resp(
-                        400,
-                        {"ok": False, "error": str(exc), "t": time.time()},
-                    )
-                except OSError as exc:
-                    return _json_resp(
-                        500,
-                        {"ok": False, "error": str(exc), "t": time.time()},
-                    )
-                return _json_resp(
-                    200,
-                    {
-                        "ok": True,
-                        "config": saved,
-                        "file": os.path.basename(cfg_path),
-                        "device_id": cfg_dev,
-                        "t": time.time(),
-                    },
-                )
-            return _json_resp(
-                405,
-                {"ok": False, "error": "method not allowed", "t": time.time()},
             )
 
         if path_only == "/api/device_pb_expr_scene":

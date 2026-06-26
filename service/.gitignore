@@ -166,9 +166,6 @@ tmp
 # 大模型文件：deskbot-server 通过 download_model.py 本地下载，不入仓库
 deskbot-server/models/
 
-# paddlespeech-server 下的 PaddleSpeech 源码（需要时自行 git clone 或 pip 安装）
-paddlespeech-server/PaddleSpeech/
-
 # ---------------------- 其他通用忽略 ----------------------
 my_wakeup_words.mp3
 uploadfile

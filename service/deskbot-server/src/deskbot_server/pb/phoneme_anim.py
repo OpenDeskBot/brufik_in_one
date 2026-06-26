@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any
+from typing import Any, Optional
 
 from deskbot_server.pb.shapes import (
     _blink_eye_phase,
@@ -17,9 +17,56 @@ from deskbot_server.pb.shapes import (
     simplify_phoneme_key,
 )
 
+
+def _anim_row_from_elements(elements: dict[str, Any], *, chunk_ms: int, phoneme: str = "") -> dict[str, Any]:
+    el = elements if isinstance(elements, dict) else {}
+    row: dict[str, Any] = {
+        "elements": {
+            "mouth": copy.deepcopy(el.get("mouth") if isinstance(el.get("mouth"), list) else []),
+            "nose": copy.deepcopy(el.get("nose") if isinstance(el.get("nose"), list) else []),
+            "eye_l": copy.deepcopy(el.get("eye_l") if isinstance(el.get("eye_l"), list) else []),
+            "eye_r": copy.deepcopy(el.get("eye_r") if isinstance(el.get("eye_r"), list) else []),
+            "extra": copy.deepcopy(el.get("extra") if isinstance(el.get("extra"), list) else []),
+        },
+        "ms": chunk_ms,
+    }
+    if phoneme:
+        row["phoneme"] = phoneme
+    return row
+
+
+def _phoneme_seq_from_design(
+    segments: list[dict[str, Any]],
+    design: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """``deskbot-face.json`` 音素表达式：每片直接使用匹配帧的完整 ``elements``。"""
+    out: list[dict[str, Any]] = []
+    for idx, seg in enumerate(segments or []):
+        ph = str(seg.get("phoneme") or "").strip()
+        chunk_ms = int(seg.get("ms") or 0)
+        from deskbot_server.face_design_store import find_phoneme_expression, pick_expression_elements
+
+        expr = find_phoneme_expression(design, ph)
+        if expr is None and ph:
+            expr = find_phoneme_expression(design, "_") or find_phoneme_expression(design, "sil")
+        elements = pick_expression_elements(expr, at_ms=0)
+        if not elements:
+            elements = pick_expression_elements(find_phoneme_expression(design, "sil"), at_ms=0)
+        out.append(
+            {
+                "idx": idx,
+                "chunk_ms": chunk_ms,
+                "anim": [_anim_row_from_elements(elements, chunk_ms=chunk_ms, phoneme=ph)],
+            }
+        )
+    return out
+
+
 def phoneme_seq_to_anim_seq(
     segments: list[dict[str, Any]],
     face_bundle: dict[str, Any],
+    *,
+    device_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """返回每片 ``idx, chunk_ms, phoneme, anim``（与仿真页 / pb 一致）。
 
@@ -36,6 +83,12 @@ def phoneme_seq_to_anim_seq(
 
     每片动画相位取 **该片开始时刻** 的累计毫秒（从首片起算）。
     """
+    from deskbot_server.face_design_store import _load_face_design_cached
+
+    design = _load_face_design_cached(device_id=device_id)
+    if isinstance(design, dict) and design.get("phonemes"):
+        return _phoneme_seq_from_design(segments, design)
+
     work = copy.deepcopy(face_bundle) if isinstance(face_bundle, dict) else {}
     _normalize_face_bundle_eyes_nose(work)
     _normalize_face_bundle_extra(work)

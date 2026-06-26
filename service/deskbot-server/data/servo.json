@@ -4,7 +4,7 @@
   "yMin": 70,
   "yMax": 110,
   "xReverse": 1,
-  "yReverse": 1,
+  "yReverse": 0,
   "presets": [
     {
       "id": "center",

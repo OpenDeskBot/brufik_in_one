@@ -123,9 +123,11 @@ def build_pb_wire_pairs(
         )
 
     if parallel_anim is not None:
-        anim_rows = build_anim_rows_for_llm_plan(segs, parallel_anim, face_bundle)
+        anim_rows = build_anim_rows_for_llm_plan(
+            segs, parallel_anim, face_bundle, device_id=device_id
+        )
     else:
-        anim_rows = phoneme_seq_to_anim_seq(segs, face_bundle)
+        anim_rows = phoneme_seq_to_anim_seq(segs, face_bundle, device_id=device_id)
     pcm_list: list[bytes] = []
     for i, s in enumerate(segs):
         raw = bytes(s.get("pcm") or b"")

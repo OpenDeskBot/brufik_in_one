@@ -7,42 +7,14 @@
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any
 
 from deskbot_server.core.ports.tts import PhonemeSegment
 from deskbot_server.pb.shapes import simplify_phoneme_key
+from deskbot_server.tts.doubao_words_phoneme import align_doubao_words, mouth_units_for_text
 
 logger = logging.getLogger("deskbot-server")
-
-_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
-_PUNCT_PAUSE = frozenset("，。！？!?、；;：:…")
-_INITIALS = (
-    "zh",
-    "ch",
-    "sh",
-    "b",
-    "p",
-    "m",
-    "f",
-    "d",
-    "t",
-    "n",
-    "l",
-    "g",
-    "k",
-    "h",
-    "r",
-    "z",
-    "c",
-    "s",
-    "j",
-    "q",
-    "x",
-    "y",
-    "w",
-)
 
 
 @dataclass(frozen=True)
@@ -95,39 +67,19 @@ def _parse_api_phoneme_list(items: list[Any]) -> list[TimedPhoneme]:
 
 
 def _parse_api_word_list(items: list[Any], *, text: str) -> list[TimedPhoneme]:
-    """字级时间戳 → 按拼音拆成多个口型片。"""
-    out: list[TimedPhoneme] = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        word = str(it.get("word") or it.get("text") or "").strip()
-        start = _ms_from_api_time(it.get("start_time", it.get("start", 0)))
-        end = _ms_from_api_time(it.get("end_time", it.get("end", 0)))
-        if end <= start:
-            end = start + 80
-        if not word:
-            continue
-        if len(word) == 1 and word in _PUNCT_PAUSE:
-            out.append(TimedPhoneme("_", start, end))
-            continue
-        weighted = _pinyin_weighted_units(word)
-        if not weighted:
-            out.append(TimedPhoneme("_", start, end))
-            continue
-        total_w = sum(w for _, w in weighted) or 1.0
-        dur = max(1, end - start)
-        cursor = start
-        for i, (ph, w) in enumerate(weighted):
-            if i == len(weighted) - 1:
-                seg_end = end
-            else:
-                seg_end = start + int(dur * (sum(x[1] for x in weighted[: i + 1]) / total_w))
-            seg_end = max(seg_end, cursor + 20)
-            out.append(TimedPhoneme(ph, cursor, min(seg_end, end)))
-            cursor = seg_end
-    if out:
-        return out
-    return []
+    """字/词级时间戳 → 口型音素片（英文 G2P + 中文拼音，见 ``doubao_words_phoneme``）。"""
+    del text
+    timings = align_doubao_words(items)
+    if not timings:
+        return []
+    return [
+        TimedPhoneme(
+            phoneme=t.phoneme if t.phoneme else "_",
+            start_ms=t.start_ms,
+            end_ms=t.end_ms,
+        )
+        for t in timings
+    ]
 
 
 def extract_timed_phonemes_from_sentence_end(payload: dict[str, Any] | None, *, text: str) -> list[TimedPhoneme]:
@@ -147,71 +99,38 @@ def extract_timed_phonemes_from_sentence_end(payload: dict[str, Any] | None, *, 
 
 
 def extract_timed_phonemes_from_subtitles(subtitles: list[Any]) -> list[TimedPhoneme]:
-    out: list[TimedPhoneme] = []
-    for item in subtitles:
+    """豆包 ``TTSSubtitle`` 常为增量推送；只取**最后一条**含时间戳的 payload，避免口型/PCM 切分重复。"""
+    for item in reversed(subtitles or []):
         if not isinstance(item, dict):
             continue
         if isinstance(item.get("phonemes"), list):
-            out.extend(_parse_api_phoneme_list(item["phonemes"]))
-        elif isinstance(item.get("words"), list):
-            out.extend(_parse_api_word_list(item["words"], text=str(item.get("text") or "")))
+            parsed = _parse_api_phoneme_list(item["phonemes"])
+            if parsed:
+                return parsed
+        if isinstance(item.get("words"), list):
+            parsed = _parse_api_word_list(item["words"], text=str(item.get("text") or ""))
+            if parsed:
+                return parsed
+    return []
+
+
+def _dedupe_timed_phonemes(units: list[TimedPhoneme]) -> list[TimedPhoneme]:
+    """去掉相同起止时间的重复片（增量 subtitle 合并后偶发）。"""
+    if not units:
+        return []
+    seen: set[tuple[int, int, str]] = set()
+    out: list[TimedPhoneme] = []
+    for u in sorted(units, key=lambda x: (x.start_ms, x.end_ms, x.phoneme)):
+        key = (u.start_ms, u.end_ms, u.phoneme)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(u)
     return out
 
 
-def _split_pinyin_syllable(syllable: str) -> tuple[str, str]:
-    """带声调拼音 → (声母, 韵母) 口型键。"""
-    s = str(syllable or "").strip().lower()
-    if not s:
-        return "_", "_"
-    if s[0].isdigit():
-        s = s[1:]
-    while s and s[-1].isdigit():
-        s = s[:-1]
-    if not s or s in ("sil", "sp"):
-        return "_", "_"
-    ini = ""
-    for cand in sorted(_INITIALS, key=len, reverse=True):
-        if s.startswith(cand):
-            ini = cand
-            s = s[len(cand) :]
-            break
-    fin = s or ini or "_"
-    if ini == fin:
-        ini = ""
-    return simplify_phoneme_key(ini or "_"), simplify_phoneme_key(fin)
-
-
-def _pinyin_for_char(ch: str) -> list[tuple[str, float]]:
-    try:
-        from pypinyin import Style, pinyin
-    except ImportError:
-        return [("_", 1.0)]
-    rows = pinyin(ch, style=Style.TONE3, errors="ignore")
-    if not rows or not rows[0] or not rows[0][0]:
-        return [("_", 1.0)]
-    ini, fin = _split_pinyin_syllable(rows[0][0])
-    units: list[tuple[str, float]] = []
-    if ini and ini != "_":
-        units.append((ini, 0.35))
-    if fin and fin != "_":
-        units.append((fin, 0.65))
-    return units or [("_", 1.0)]
-
-
-def _pinyin_weighted_units(text: str) -> list[tuple[str, float]]:
-    units: list[tuple[str, float]] = []
-    for ch in str(text or ""):
-        if ch in _PUNCT_PAUSE:
-            units.append(("_", 0.25))
-        elif _CJK_RE.match(ch):
-            units.extend(_pinyin_for_char(ch))
-        elif ch.isalpha():
-            units.append((simplify_phoneme_key(ch), 0.5))
-    return units
-
-
 def _pinyin_timed_units_proportional(text: str, *, total_ms: int) -> list[TimedPhoneme]:
-    weighted = _pinyin_weighted_units(text)
+    weighted = mouth_units_for_text(text)
     if not weighted:
         return [TimedPhoneme("_", 0, max(1, total_ms))]
     total_w = sum(w for _, w in weighted) or 1.0
@@ -240,7 +159,7 @@ def split_pcm_by_timed_phonemes(
     sample_rate: int,
     timed: list[TimedPhoneme],
 ) -> list[PhonemeSegment]:
-    """按时间戳切 s16le mono PCM；时间轴与整段音频对齐。"""
+    """按时间戳切 s16le mono PCM；保证每段 PCM **不重叠** 且合计覆盖整段音频。"""
     if not pcm:
         return []
     total_ms = pcm_duration_ms(pcm, sample_rate)
@@ -254,12 +173,21 @@ def split_pcm_by_timed_phonemes(
     api_end = max(u.end_ms for u in units)
     scale = (total_ms / api_end) if api_end > 0 and abs(api_end - total_ms) > 30 else 1.0
 
+    n = len(units)
+    cuts_ms = [0]
+    for i, u in enumerate(units[:-1]):
+        end_ms = int(round(u.end_ms * scale))
+        end_ms = max(end_ms, cuts_ms[-1] + 15)
+        end_ms = min(end_ms, total_ms)
+        cuts_ms.append(end_ms)
+    cuts_ms.append(total_ms)
+
     segs: list[PhonemeSegment] = []
     for i, u in enumerate(units):
-        start_ms = int(round(u.start_ms * scale))
-        end_ms = int(round(u.end_ms * scale)) if i < len(units) - 1 else total_ms
-        end_ms = max(end_ms, start_ms + 15)
-        end_ms = min(end_ms, total_ms)
+        start_ms = cuts_ms[i]
+        end_ms = cuts_ms[i + 1]
+        if end_ms <= start_ms:
+            continue
         start_b = start_ms * sample_rate * 2 // 1000
         end_b = end_ms * sample_rate * 2 // 1000
         chunk = pcm[start_b:end_b]
@@ -276,16 +204,24 @@ def split_pcm_by_timed_phonemes(
     if not segs:
         return [PhonemeSegment(phoneme="", ms=total_ms, pcm=pcm)]
 
-    # 补齐末尾采样（舍入误差）
+    # 舍入误差：仅补末尾未覆盖的采样，不叠加到已有 PCM 上造成重复
     used = sum(len(s.pcm) for s in segs)
     if used < len(pcm):
         tail = pcm[used:]
-        if tail:
+        if tail and len(segs) == 1:
             last = segs[-1]
             segs[-1] = PhonemeSegment(
                 phoneme=last.phoneme,
                 ms=last.ms + pcm_duration_ms(tail, sample_rate),
                 pcm=last.pcm + tail,
+            )
+        elif tail:
+            segs.append(
+                PhonemeSegment(
+                    phoneme=segs[-1].phoneme,
+                    ms=pcm_duration_ms(tail, sample_rate),
+                    pcm=tail,
+                )
             )
     return segs
 
@@ -299,9 +235,12 @@ def build_phoneme_segments(
     subtitles: list[Any] | None = None,
 ) -> list[PhonemeSegment]:
     """API 时间戳优先，否则拼音均分 fallback。"""
-    timed = extract_timed_phonemes_from_subtitles(subtitles or [])
-    if not timed and sentence_end:
+    timed: list[TimedPhoneme] = []
+    if sentence_end:
         timed = extract_timed_phonemes_from_sentence_end(sentence_end, text=text)
+    if not timed:
+        timed = extract_timed_phonemes_from_subtitles(subtitles or [])
+    timed = _dedupe_timed_phonemes(timed)
     if timed:
         segs = split_pcm_by_timed_phonemes(pcm, sample_rate, timed)
         if segs and any(s.phoneme for s in segs):

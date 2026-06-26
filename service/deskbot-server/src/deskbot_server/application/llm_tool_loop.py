@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 from deskbot_server.application.llm_tool_runner import execute_llm_tools
@@ -57,6 +58,7 @@ async def complete_llm_with_tool_loop(
     request_id: Optional[str] = None,
     dp_broker: Optional[Any] = None,
     pipeline_source: Optional[str] = None,
+    on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str]:
     """多轮 LLM：有 tools 则执行并继续，无 tools 则返回最终 parsed。
 
@@ -75,6 +77,7 @@ async def complete_llm_with_tool_loop(
             device_id=device_id,
             history_messages=history_messages if round_idx == 0 else None,
             extra_messages=extra_messages or None,
+            on_tts_ready=on_tts_ready,
         )
         parsed = parse_llm_reply(answer)
         tools = list(parsed.get("tools") or [])

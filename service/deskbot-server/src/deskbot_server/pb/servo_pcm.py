@@ -204,7 +204,7 @@ def interleave_tts_phoneme_segs_with_servo_plan(
     servo_plan: list[dict[str, Any]] | None,
     sample_rate: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, int] | None]]:
-    """把 ``servo`` 计划（hold + 位移）与 PaddleSpeech 音素分片按播放顺序交错。
+    """把 ``servo`` 计划（hold + 位移）与 TTS 音素分片按播放顺序交错。
 
     - ``{"_hold_ms": H}``：插入 H 毫秒静音片，并在对应 ``parallel_servo`` 写入 **hold**
       ``{xm:2, ym:2, x:0, y:0, ms:H}``（本包双轴不驱动，时长 ms 与 chunk 对齐）。

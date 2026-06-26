@@ -47,7 +47,7 @@ def _frame_elements(frames: list[Any], idx: int) -> dict[str, Any]:
 
 
 def expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, Any]:
-    """从 ``face_expr_scenes.json`` 的 ``default`` 场景取眼/鼻图元，口型来自 ``face_mouth_by_phoneme.json``。"""
+    """从 ``deskbot-face.json`` 的 ``idle``/``default`` 取眼/鼻，口型来自 ``phonemes``。"""
     from deskbot_server.face_expr_scenes_store import (
         _DEFAULT_SPEECH_BLINK_CLOSE_MS,
         _DEFAULT_SPEECH_BLINK_OPEN_MS,
@@ -58,7 +58,11 @@ def expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, An
     from deskbot_server.face_mouth_config_store import groups_to_mouth_bundle, load_face_mouth_cfg_file
 
     rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id) or []
-    ent = find_design_scene_by_name(rows, "default") or default_speech_blink_scene()
+    ent = (
+        find_design_scene_by_name(rows, "default")
+        or find_design_scene_by_name(rows, "idle")
+        or default_speech_blink_scene()
+    )
     frames = ent.get("frames") if isinstance(ent, dict) else []
     if not isinstance(frames, list):
         frames = []
@@ -115,30 +119,21 @@ def expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, An
 
 
 def load_expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, Any]:
-    """``default`` 表情脸包；随 ``face_expr_scenes.json`` / ``face_mouth_by_phoneme.json`` mtime 热重载。"""
+    """``default`` 表情脸包；随 ``deskbot-face.json`` mtime 热重载。"""
     global _expr_default_bundle_cache
-    from deskbot_server.constants import FACE_EXPR_SCENES_FILE, FACE_MOUTH_BY_PHONEME_FILE
-    from deskbot_server.device_data import resolve_json_path
+    from deskbot_server.face_design_store import design_file_mtime
 
     dev = str(device_id or "").strip()
-    scene_path = resolve_json_path(FACE_EXPR_SCENES_FILE, dev or None)
-    mouth_path = resolve_json_path(FACE_MOUTH_BY_PHONEME_FILE, dev or None)
-    mtimes: list[float] = []
-    for path in (scene_path, mouth_path):
-        try:
-            mtimes.append(float(os.stat(path).st_mtime))
-        except OSError:
-            mtimes.append(0.0)
-    key = (dev, mtimes[0], mtimes[1])
-    if _expr_default_bundle_cache is not None and _expr_default_bundle_cache[:3] == key:
-        return _expr_default_bundle_cache[3]
+    design_mtime = design_file_mtime(device_id=dev or None)
+    key = (dev, design_mtime)
+    if _expr_default_bundle_cache is not None and _expr_default_bundle_cache[:2] == key:
+        return _expr_default_bundle_cache[2]
     out = expr_default_pb_face_bundle(device_id=dev or None)
-    _expr_default_bundle_cache = (dev, mtimes[0], mtimes[1], out)
+    _expr_default_bundle_cache = (dev, design_mtime, out)
     _logger.info(
-        "[pb_face_bundle] 已从 default 表情场景加载 device_id=%s scenes_mtime=%s mouth_mtime=%s",
+        "[pb_face_bundle] 已从 deskbot-face 加载 device_id=%s design_mtime=%s",
         dev or "(global)",
-        mtimes[0],
-        mtimes[1],
+        design_mtime,
     )
     return out
 
@@ -501,7 +496,7 @@ def resolve_pb_face_bundle(
 ) -> dict[str, Any]:
     """根据 ``tts`` 配置与环境变量选择卡通脸数据包。
 
-    - 默认：``face_expr_scenes.json`` 的 ``default`` 场景 + ``face_mouth_by_phoneme.json``（按 mtime 热重载）。
+    - 默认：``data/deskbot-face.json``（``emotions`` + ``phonemes``，按 mtime 热重载）。
     - ``pb_face_bundle_json`` / ``DESKBOT_PB_FACE_BUNDLE_JSON``：可选外部 JSON/YAML 主配置（高级用法）。
     - ``pb_face_bundle`` / ``DESKBOT_PB_FACE_BUNDLE``：``demo`` 为内置试玩档；否则走 default 表情。
     - ``pb_face_bundle_file`` / ``DESKBOT_PB_FACE_BUNDLE_FILE``：在 base 上再合并一层 overlay。

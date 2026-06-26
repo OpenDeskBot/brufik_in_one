@@ -15,6 +15,8 @@
   </p>
   {% raw %}
   <div id="app" class="tts-debug">
+    <div class="tts-layout">
+    <div class="tts-main">
     <div class="card">
       <h2 class="h2">密钥与音色</h2>
       <div class="form-grid">
@@ -111,10 +113,93 @@
         <pre class="json-pre">{{ jsonPretty }}</pre>
       </details>
     </div>
+    </div>
+
+    <aside class="tts-history card">
+      <div class="hist-head">
+        <h2 class="h2">历史记录</h2>
+        <button type="button" class="btn-light sm" :disabled="!history.length" @click="clearHistory">清空</button>
+      </div>
+      <p class="muted sm hist-hint">点击条目重播缓存音频，无需重新合成。</p>
+      <div class="hist-list">
+        <p v-if="!history.length" class="hist-empty muted sm">暂无记录</p>
+        <div
+          v-for="row in history"
+          :key="row.id"
+          class="hist-row"
+          :class="{ active: selectedHistoryId === row.id, err: row.status === 'error' }"
+          @click="replayHistory(row)"
+        >
+          <div class="hist-row-top">
+            <span class="mono sm hist-time">{{ row.createdAt }}</span>
+            <span v-if="row.status === 'ok' && row.elapsed_ms != null" class="sm hist-ms">{{ row.elapsed_ms }} ms</span>
+            <span v-else-if="row.status === 'error'" class="sm hist-err-badge">失败</span>
+          </div>
+          <div class="hist-text">{{ row.text }}</div>
+          <div v-if="row.speaker" class="mono sm hist-speaker">{{ row.speaker }}</div>
+          <div v-if="row.status === 'error' && row.error" class="sm hist-err">{{ row.error }}</div>
+        </div>
+      </div>
+    </aside>
+    </div>
   </div>
   <style>
-    .sub { color: #6e6e73; font-size: 14px; max-width: 52rem; line-height: 1.5; }
-    .tts-debug { max-width: 52rem; }
+    .sub { color: #6e6e73; font-size: 14px; max-width: 72rem; line-height: 1.5; }
+    .tts-debug { max-width: 72rem; }
+    .tts-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+      gap: 16px;
+      align-items: start;
+    }
+    .tts-main { min-width: 0; }
+    .tts-history {
+      position: sticky;
+      top: 12px;
+      max-height: calc(100vh - 48px);
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      margin: 0;
+    }
+    .hist-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+    .hist-head .h2 { margin: 0; }
+    .hist-hint { margin: 0 0 10px; }
+    .hist-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      border: 1px solid #e5e5ea;
+      border-radius: 8px;
+      background: #fafafa;
+    }
+    .hist-empty { padding: 16px; text-align: center; margin: 0; }
+    .hist-row {
+      padding: 10px 12px;
+      border-bottom: 1px solid #e5e5ea;
+      cursor: pointer;
+      background: #fff;
+    }
+    .hist-row:last-child { border-bottom: none; }
+    .hist-row:hover { background: #f0f4ff; }
+    .hist-row.active { background: #e8f1ff; border-left: 3px solid #0a84ff; padding-left: 9px; }
+    .hist-row.err { opacity: 0.85; }
+    .hist-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+    .hist-time { color: #6e6e73; white-space: nowrap; }
+    .hist-ms { color: #6e6e73; white-space: nowrap; }
+    .hist-err-badge { color: #b42318; }
+    .hist-text {
+      font-size: 13px;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      word-break: break-word;
+    }
+    .hist-speaker { color: #86868b; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hist-err { color: #b42318; margin-top: 4px; line-height: 1.35; }
+    .btn-light.sm { padding: 4px 10px; font-size: 12px; }
     .h2 { font-size: 1.05rem; margin: 0 0 12px; font-weight: 600; }
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
     .field { display: flex; flex-direction: column; gap: 4px; }
@@ -146,12 +231,19 @@
       background: #f5f5f7; border: 1px solid #d2d2d7; border-radius: 8px; padding: 12px;
       font-size: 12px; overflow-x: auto; max-height: 280px;
     }
+    @media (max-width: 900px) {
+      .tts-layout { grid-template-columns: 1fr; }
+      .tts-history { position: static; max-height: none; }
+      .hist-list { max-height: 280px; }
+    }
     @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
   </style>
   {% endraw %}
   <script>
     const initial = window.__DOUBAO_TTS__ || {};
     const speakers = window.__DOUBAO_TTS_SPEAKERS__ || [];
+    const TTS_DEBUG_HISTORY_LS_KEY = "deskbot_tts_debug_history";
+    const TTS_DEBUG_HISTORY_MAX = 20;
     const { createApp } = Vue;
     createApp({
       data() {
@@ -168,6 +260,8 @@
           err: "",
           result: null,
           audioUrl: "",
+          history: [],
+          selectedHistoryId: "",
         };
       },
       computed: {
@@ -196,6 +290,7 @@
       },
       mounted() {
         this.syncSpeakerPreset();
+        this.loadHistory();
       },
       methods: {
         applySpeakerPreset() {
@@ -216,6 +311,89 @@
             URL.revokeObjectURL(this.audioUrl);
           }
           this.audioUrl = "";
+        },
+        loadHistory() {
+          try {
+            const raw = localStorage.getItem(TTS_DEBUG_HISTORY_LS_KEY);
+            if (!raw) return;
+            const arr = JSON.parse(raw);
+            if (!Array.isArray(arr)) return;
+            this.history = arr
+              .filter((r) => r && typeof r.text === "string")
+              .slice(0, TTS_DEBUG_HISTORY_MAX)
+              .map((r) => ({
+                id: String(r.id || (Date.now() + Math.random())),
+                text: r.text,
+                createdAt: r.createdAt || "—",
+                status: r.status === "error" ? "error" : "ok",
+                error: r.error || "",
+                elapsed_ms: r.elapsed_ms ?? null,
+                pcm_total_bytes: r.pcm_total_bytes ?? null,
+                sample_rate: r.sample_rate ?? null,
+                speaker: r.speaker || "",
+                events: r.events || null,
+                wav_base64: r.wav_base64 || "",
+              }));
+          } catch (e) { /* ignore */ }
+        },
+        persistHistory() {
+          const trim = (n) => {
+            const slice = this.history.slice(0, n);
+            try {
+              localStorage.setItem(TTS_DEBUG_HISTORY_LS_KEY, JSON.stringify(slice));
+              if (slice.length < this.history.length) {
+                this.history.length = slice.length;
+              }
+              return true;
+            } catch (e) {
+              return false;
+            }
+          };
+          if (trim(TTS_DEBUG_HISTORY_MAX)) return;
+          for (let n = Math.floor(TTS_DEBUG_HISTORY_MAX / 2); n >= 1; n -= 1) {
+            if (trim(n)) return;
+          }
+        },
+        pushHistoryEntry(entry) {
+          this.history.unshift(entry);
+          if (this.history.length > TTS_DEBUG_HISTORY_MAX) {
+            this.history.length = TTS_DEBUG_HISTORY_MAX;
+          }
+          this.persistHistory();
+        },
+        clearHistory() {
+          if (!this.history.length) return;
+          if (!window.confirm("确定清空全部 TTS 历史记录？")) return;
+          this.history = [];
+          this.selectedHistoryId = "";
+          try {
+            localStorage.removeItem(TTS_DEBUG_HISTORY_LS_KEY);
+          } catch (e) { /* ignore */ }
+        },
+        audioUrlFromBase64(wavBase64) {
+          const bin = Uint8Array.from(atob(wavBase64), (c) => c.charCodeAt(0));
+          const blob = new Blob([bin], { type: "audio/wav" });
+          return URL.createObjectURL(blob);
+        },
+        replayHistory(row) {
+          if (!row) return;
+          this.selectedHistoryId = row.id;
+          this.draft = row.text;
+          if (row.status !== "ok" || !row.wav_base64) {
+            this.revokeAudio();
+            this.result = null;
+            this.err = row.error || "该条目无缓存音频，请重新合成";
+            return;
+          }
+          this.err = "";
+          this.revokeAudio();
+          this.result = {
+            elapsed_ms: row.elapsed_ms,
+            pcm_total_bytes: row.pcm_total_bytes,
+            sample_rate: row.sample_rate,
+            events: row.events,
+          };
+          this.audioUrl = this.audioUrlFromBase64(row.wav_base64);
         },
         async saveConfig() {
           this.cfgErr = "";
@@ -258,14 +436,54 @@
             if (!data.ok) {
               this.err = (data.error || ("HTTP " + res.status))
                 + (data.elapsed_ms != null ? " (" + data.elapsed_ms + " ms)" : "");
+              this.pushHistoryEntry({
+                id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                text: this.draft.trim(),
+                createdAt: new Date().toLocaleString(),
+                status: "error",
+                error: this.err,
+                elapsed_ms: data.elapsed_ms ?? null,
+                pcm_total_bytes: null,
+                sample_rate: null,
+                speaker: (this.cfg.speaker || "").trim(),
+                events: null,
+                wav_base64: "",
+              });
               return;
             }
             this.result = data;
-            const bin = Uint8Array.from(atob(data.wav_base64), (c) => c.charCodeAt(0));
-            const blob = new Blob([bin], { type: "audio/wav" });
-            this.audioUrl = URL.createObjectURL(blob);
+            this.audioUrl = this.audioUrlFromBase64(data.wav_base64);
+            const entryId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            this.selectedHistoryId = entryId;
+            const { wav_base64, ...meta } = data;
+            this.pushHistoryEntry({
+              id: entryId,
+              text: this.draft.trim(),
+              createdAt: new Date().toLocaleString(),
+              status: "ok",
+              error: "",
+              elapsed_ms: meta.elapsed_ms ?? null,
+              pcm_total_bytes: meta.pcm_total_bytes ?? null,
+              sample_rate: meta.sample_rate ?? null,
+              speaker: (this.cfg.speaker || "").trim(),
+              events: meta.events ?? null,
+              wav_base64: wav_base64 || "",
+            });
           } catch (e) {
             this.err = String(e && e.message ? e.message : e);
+            this.pushHistoryEntry({
+              id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              text: this.draft.trim(),
+              createdAt: new Date().toLocaleString(),
+              status: "error",
+              error: this.err,
+              elapsed_ms: null,
+              pcm_total_bytes: null,
+              sample_rate: null,
+              speaker: (this.cfg.speaker || "").trim(),
+              events: null,
+              wav_base64: "",
+            });
           } finally {
             this.pending = false;
           }

@@ -30,6 +30,27 @@ logger = logging.getLogger("deskbot-server")
 _SCHEDULED_TASK_PREFIX = "[系统定时任务]"
 
 
+class _TtsPrefetch:
+    """LLM 流式输出中 ``tts`` 就绪后提前启动音素 TTS 合成。"""
+
+    def __init__(self, chat: "ChatService") -> None:
+        self._chat = chat
+        self.task: asyncio.Task | None = None
+
+    def cancel(self) -> None:
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
+        self.task = None
+
+    async def on_ready(self, tts: str) -> None:
+        text = (tts or "").strip()
+        if not text:
+            return
+        self.cancel()
+        self.task = asyncio.create_task(self._chat.tts_phoneme_segments(text))
+        logger.info("[LLM] 流式 tts 就绪，提前启动 TTS prefetch text=%r", text[:80])
+
+
 def _is_scheduled_task_user_text(user_text: str) -> bool:
     return str(user_text or "").strip().startswith(_SCHEDULED_TASK_PREFIX)
 
@@ -138,6 +159,7 @@ async def run_chat_turn(
                 if session_id:
                     history_messages = session_history_for_llm(device_id, session_id)
 
+        tts_prefetch = _TtsPrefetch(chat)
         parsed, llm_tools, tool_results, answer = await complete_llm_with_tool_loop(
             chat,
             user_text,
@@ -148,6 +170,7 @@ async def run_chat_turn(
             request_id=request_id,
             dp_broker=pipeline_broker,
             pipeline_source="asr" if t_asr_start is not None else "text",
+            on_tts_ready=tts_prefetch.on_ready,
         )
 
         reply_text = parsed["reply"]
@@ -313,8 +336,10 @@ async def run_chat_turn(
                 device_id=device_id,
                 result=result,
                 t_asr_start=t_asr_start,
+                prefetch_tts=tts_prefetch.task,
             )
         except Exception as tts_exc:
+            tts_prefetch.cancel()
             logger.exception("TTS 流程失败")
             result.status = "error"
             result.error = f"tts: {tts_exc}"
@@ -516,6 +541,7 @@ async def _run_pb_playback(
     result: ChatTurnResult,
     t_asr_start: Optional[float],
     motion_only: bool = False,
+    prefetch_tts: asyncio.Task | None = None,
 ) -> None:
     if motion_only:
         sr_pb = int(chat.tts_cfg.get("sample_rate") or 24000)
@@ -530,7 +556,10 @@ async def _run_pb_playback(
             segs = [_silence_phoneme_seg(total_ms, sr_pb)]
         text_chunks = [""]
     else:
-        text_chunks = split_tts_by_punctuation(reply_text)
+        if prefetch_tts is not None:
+            text_chunks = [reply_text]
+        else:
+            text_chunks = split_tts_by_punctuation(reply_text)
         if len(text_chunks) > 1:
             logger.info(
                 "[TTS] 按标点分 %d 段 device_id=%s req=%s chunks=%s",
@@ -544,7 +573,7 @@ async def _run_pb_playback(
     pb_aborted = False
     total_pb = 0
     chunk_is_last = True
-    prefetch_tts: asyncio.Task | None = None
+    prefetch_tts_task: asyncio.Task | None = prefetch_tts
 
     async with downlink.pb_serial_chain():
         for chunk_i, chunk_text in enumerate(text_chunks):
@@ -552,16 +581,18 @@ async def _run_pb_playback(
                 segs_local = segs
                 sr_pb = int(chat.tts_cfg.get("sample_rate") or 24000)
             else:
-                if prefetch_tts is None:
-                    prefetch_tts = asyncio.create_task(chat.tts_phoneme_segments(chunk_text))
-                sr_pb, segs_local = await prefetch_tts
-                prefetch_tts = None
+                if prefetch_tts_task is None:
+                    prefetch_tts_task = asyncio.create_task(
+                        chat.tts_phoneme_segments(chunk_text)
+                    )
+                sr_pb, segs_local = await prefetch_tts_task
+                prefetch_tts_task = None
                 result.t_tts_synth_end = time.monotonic()
                 pcm_ok = any(len(s.get("pcm") or b"") > 0 for s in segs_local)
                 if not segs_local or not pcm_ok:
                     raise RuntimeError(f"phoneme TTS 无分片或无 PCM: {chunk_text!r}")
                 if chunk_i + 1 < len(text_chunks):
-                    prefetch_tts = asyncio.create_task(
+                    prefetch_tts_task = asyncio.create_task(
                         chat.tts_phoneme_segments(text_chunks[chunk_i + 1])
                     )
 
@@ -626,12 +657,12 @@ async def _run_pb_playback(
                 n_pb=n_pb,
             )
             if pb_aborted:
-                if prefetch_tts is not None:
-                    prefetch_tts.cancel()
+                if prefetch_tts_task is not None:
+                    prefetch_tts_task.cancel()
                 break
 
-        if prefetch_tts is not None:
-            prefetch_tts.cancel()
+        if prefetch_tts_task is not None:
+            prefetch_tts_task.cancel()
 
         if not pb_aborted and chunk_is_last:
             for sc_name in llm_scenes:

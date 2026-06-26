@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 本地一键：校验 Python → 准备两个独立 venv → 启动 Paddle TTS + deskbot-server
+# 本地一键：校验 Python → 准备 deskbot-server venv → 启动主服务（可选 Flask 调试台）
 # 支持 Linux / macOS / Windows Git Bash（不调用 apt/yum，系统依赖请自行安装）
 #
 # 用法（在仓库根目录）:
@@ -18,7 +18,6 @@
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-PS="$ROOT/paddlespeech-server"
 BS="$ROOT/deskbot-server"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/platform.sh"
@@ -72,32 +71,17 @@ setup_deskbot_venv() {
   )
 }
 
-setup_paddle_venv() {
-  echo "[setup] paddlespeech-server venv（paddlepaddle + paddlespeech）..."
-  (
-    cd "$PS"
-    export PYTHON_BIN
-    export SETUP_ONLY=1
-    export FAST_START="${FAST_START:-0}"
-    platform_run_sh "$PS/start.sh"
-  )
-}
-
 venvs_look_ready() {
-  local bs_py ps_py
+  local bs_py
   bs_py="$(platform_venv_python "$BS" 2>/dev/null)" || return 1
-  ps_py="$(platform_venv_python "$PS" 2>/dev/null)" || return 1
   "$bs_py" -c "import numpy, websockets, yaml, webrtcvad, openai, opuslib_next, torch, torchaudio, funasr, croniter, deskbot_server" >/dev/null 2>&1 || return 1
-  "$ps_py" -c "import numpy, paddlespeech, paddlespeech_server" >/dev/null 2>&1 || return 1
 }
 
 ensure_local_scripts() {
-  for script in "$PS/start.sh" "$PS/start-local.sh" "$BS/start.sh"; do
-    if [[ ! -f "$script" ]]; then
-      echo "缺少脚本: $script" >&2
-      exit 1
-    fi
-  done
+  if [[ ! -f "$BS/start.sh" ]]; then
+    echo "缺少脚本: $BS/start.sh" >&2
+    exit 1
+  fi
 }
 
 ASR_MODEL_DIR="$BS/models/SenseVoiceSmall"
@@ -186,16 +170,6 @@ ensure_models() {
 run_services() {
   trap 'trap - INT TERM EXIT; kill 0 2>/dev/null || true' INT TERM EXIT
 
-  echo "[1/2] 启动 PaddleSpeech TTS ($PS) ..."
-  platform_run_sh "$PS/start-local.sh" &
-
-  if ! platform_wait_tcp 127.0.0.1 8092 120; then
-    echo "等待 127.0.0.1:8092 超时，请检查 $PS/start-local.sh 日志。" >&2
-    exit 1
-  fi
-  echo "      TTS 已就绪 0.0.0.0:8092 → ws://127.0.0.1:8092/paddlespeech/tts/streaming（本机）"
-  echo "      音素对齐 WS ws://127.0.0.1:8092/paddlespeech/tts/streaming_phoneme"
-
   if [[ "${DESKBOT_START_WEB:-1}" == "1" ]]; then
     local web_port="${DESKBOT_WEB_PORT:-5050}"
     echo "[web] 启动 Flask 调试台 0.0.0.0:${web_port}（局域网 http://<本机IP>:${web_port}/）"
@@ -210,7 +184,7 @@ run_services() {
     ) &
   fi
 
-  echo "[2/2] 启动 deskbot-server ($BS) ..."
+  echo "[1/1] 启动 deskbot-server ($BS) ..."
   cd "$BS"
   exec env SKIP_SETUP=1 bash "$BS/start.sh"
 }
@@ -228,7 +202,6 @@ if [[ "${SKIP_SETUP:-0}" != "1" ]]; then
     export FAST_START=1
   fi
   setup_deskbot_venv
-  setup_paddle_venv
 else
   echo "SKIP_SETUP=1，跳过 venv/依赖安装。"
 fi

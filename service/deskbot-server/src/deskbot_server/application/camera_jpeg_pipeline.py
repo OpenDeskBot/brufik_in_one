@@ -19,6 +19,7 @@ from deskbot_server.application.face_detector import CameraFaceDetector
 from deskbot_server.application.face_tracker import FaceTracker
 from deskbot_server.core.concurrency import face_infer_slot
 from deskbot_server.face_identity import attach_descriptors_to_faces, deduplicate_overlapping_faces
+from deskbot_server.application.interaction_feedback import clear_face_analysis, note_face_analysis
 from deskbot_server.face_snapshot_cache import update_device_faces
 from deskbot_server.vision.undistort import CameraFaceRuntime
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
@@ -133,6 +134,7 @@ async def process_camera_jpeg_frame(
 
     infer_ms = (time.monotonic() - t0) * 1000.0
     if not detect or not detect.get("points"):
+        clear_face_analysis(device_id)
         _s, _a = await image_broker.publish(device_id, frame_bytes, detected=False)
         _tick_pb_idle_gaze(asr_chat_hub, device_id, False)
         return CameraJpegProcessResult(
@@ -143,6 +145,7 @@ async def process_camera_jpeg_frame(
         )
 
     analysis = detect
+    note_face_analysis(device_id, analysis)
     _tick_pb_idle_gaze(asr_chat_hub, device_id, analysis["is_frontal"])
 
     await dp_broker.broadcast_to_device(

@@ -10,7 +10,7 @@ import uuid
 import weakref
 from typing import Any, Optional
 
-from deskbot_server.constants import FACE_EXPR_SCENES_FILE
+from deskbot_server.constants import FACE_DESIGN_FILE
 from deskbot_server.llm.utils import coerce_pb_v2_downlink_payload
 from deskbot_server.face_expr_scenes_store import (
     design_frames_to_pb_chain,
@@ -446,7 +446,7 @@ class PbIdleSnoreAfterDownlink:
             logger.warning(
                 "[pb_idle_snore] 场景 %r 不在 %s 中，无法下发 device_id=%s",
                 self._scene_lc,
-                os.path.basename(FACE_EXPR_SCENES_FILE),
+                os.path.basename(FACE_DESIGN_FILE),
                 device_id,
             )
             return

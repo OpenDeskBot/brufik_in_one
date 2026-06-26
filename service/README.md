@@ -20,12 +20,12 @@ cd opendesk-service
 cp deskbot-server/.env.example deskbot-server/.env
 # 编辑 deskbot-server/.env，填写 LLM_API_KEY=sk-...
 
-# 3. 一键启动（自动建 venv、下载模型、起 TTS + 主服务 + Web 控制台）
+# 3. 一键启动（自动建 venv、下载模型、起主服务 + Web 控制台）
 chmod +x start.sh
 ./start.sh
 ```
 
-首次启动约需数分钟（ASR 模型约 900MB、PaddleSpeech 依赖较重）。**第二次及以后**若 `.venv` 已完整，直接 `./start.sh` 会自动跳过 pip 安装；也可显式：
+首次启动约需数分钟（ASR 模型约 900MB）。**第二次及以后**若 `.venv` 已完整，直接 `./start.sh` 会自动跳过 pip 安装；也可显式：
 
 ```bash
 SKIP_SETUP=1 ./start.sh
@@ -37,7 +37,6 @@ FAST_START=1 ./start.sh
 |------|------|------|
 | **Web 控制台** | `http://<本机IP>:5050/` | 注册登录、设备与 API Key、定时任务、记忆等 |
 | **设备 WebSocket** | `ws://<本机IP>:9000/asr_chat?device_id=<id>&api_key=<key>` | ESP32 语音对话主链路 |
-| **TTS 侧车** | `ws://127.0.0.1:8092/...` | 由 `start.sh` 自动拉起，一般无需直连 |
 
 启动后终端会打印**免费体验 API Key** 路径：`deskbot-server/data/.free_api_key`（前缀 `odk_free_`，每日 1GB 配额）。
 
@@ -89,7 +88,7 @@ WAV 须 **16 kHz / mono / s16le**。麦克风实时测试见 [deskbot-server/too
 | 记忆 | 按设备管理长期记忆（注入 LLM） |
 | 人脸识别 | 按设备查看人脸档案 |
 | 用量看板 | 按 Key / 设备查看 ASR、人脸、LLM、TTS 字节统计 |
-| 调试台 | 设备在线、LLM 试聊、流水线、PaddleSpeech 等 |
+| 调试台 | 设备在线、LLM 试聊、豆包 TTS、流水线等 |
 
 语音对话中，LLM 可通过工具创建定时提醒（`schedule_task`）、读写设备临时文件、联网搜索等，详见 [deskbot-server/README.md](deskbot-server/README.md)。
 
@@ -103,13 +102,14 @@ WAV 须 **16 kHz / mono / s16le**。麦克风实时测试见 [deskbot-server/too
 ┌──────── ESP32 ────────┐                    ┌──── deskbot-server ────┐
 │ 麦克风 Opus/PCM       │  audio + binary    │ VAD → FunASR → 文本     │
 │ 可选 JPEG             │  camera_frame      │ → DashScope LLM + tools │
-│ flush / pb_ack        │ ─────────────────► │ → paddlespeech TTS      │
+│ flush / pb_ack        │ ─────────────────► │ → 豆包 TTS + 音素口型   │
 │                       │                    │ → 组 pb + PCM           │
 │ 播放 PCM + 画屏       │  pb_* + binary     │                         │
 │ 舵机 / 音量 / 帧率    │ ◄───────────────── │                         │
 └───────────────────────┘                    └─────────────────────────┘
-                              paddlespeech-server :8092（本机 TTS + 音素）
 ```
+
+TTS 使用火山引擎豆包（`tts.provider: doubao`），凭证配置见 `deskbot-server/.env` 与调试台「TTS 调试」。
 
 ### 上行（设备 → 服务端）
 
@@ -153,7 +153,6 @@ WAV 须 **16 kHz / mono / s16le**。麦克风实时测试见 [deskbot-server/too
 | [deskbot-server/README.md](deskbot-server/README.md) | 主服务 API、配置、LLM 工具 |
 | [deskbot-server/docs/ARCHITECTURE.md](deskbot-server/docs/ARCHITECTURE.md) | 代码分层与模块 |
 | [deskbot-server/tools/README.md](deskbot-server/tools/README.md) | 本地联调脚本 |
-| [paddlespeech-server/README.md](paddlespeech-server/README.md) | TTS 侧车 |
 | [docs/README.md](docs/README.md) | 文档目录 |
 
 [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md)

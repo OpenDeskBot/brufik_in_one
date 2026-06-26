@@ -1,14 +1,9 @@
-"""表情场景设计持久化（``data/face_expr_scenes.json``，顶层为数组）。"""
+"""表情场景：读写 ``deskbot-face.json`` 的 ``emotions`` 段。"""
 from __future__ import annotations
 
 import copy
-import json
-import os
 import re
 from typing import Any, Optional
-
-from deskbot_server.constants import FACE_EXPR_SCENES_FILE
-from deskbot_server.device_data import resolve_json_path
 from deskbot_server.pb.display import scale_primitive, scale_primitives
 from deskbot_server.pb.shapes import PB_ACTION_REPLACE, PB_LEVEL_DEBUG, apply_pb_dispatch_fields
 
@@ -119,7 +114,7 @@ def _hold_scene(
 
 
 def builtin_emotion_scenes() -> list[dict[str, Any]]:
-    """常见情绪表情（缺省时自动补入 face_expr_scenes.json）。"""
+    """常见内置情绪表情（供模板或测试）。"""
     e_open_l = [{"shape": "ellipse_fill", "x": 40, "y": 10, "rw": 6, "rh": 6}]
     e_open_r = [{"shape": "ellipse_fill", "x": 80, "y": 10, "rw": 6, "rh": 6}]
     return [
@@ -316,25 +311,6 @@ def builtin_emotion_scenes() -> list[dict[str, Any]]:
     ]
 
 
-def _seed_full_builtin_scenes() -> list[dict[str, Any]]:
-    """仅用于首次创建 ``face_expr_scenes.json``。"""
-    out = list(builtin_emotion_scenes())
-    out.append(default_speech_blink_scene())
-    out.sort(key=lambda r: str(r.get("name") or "").lower())
-    return out
-
-
-def _ensure_default_scene_present(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """保存时若用户删光了 default，补回内置眨眼基准；不覆盖已有 default。"""
-    names = {str(r.get("name") or "").strip().lower() for r in rows}
-    if "default" in names:
-        return list(rows)
-    out = list(rows)
-    out.append(default_speech_blink_scene())
-    out.sort(key=lambda r: str(r.get("name") or "").lower())
-    return out
-
-
 def _extract_frame_elements(raw: dict[str, Any]) -> dict[str, Any]:
     els = raw.get("elements")
     if isinstance(els, dict):
@@ -397,28 +373,35 @@ def normalize_face_expr_scenes(raw: object) -> list[dict[str, Any]]:
 def load_face_expr_scenes_file(
     *, seed_if_missing: bool = True, device_id: Optional[str] = None
 ) -> Optional[list[dict[str, Any]]]:
-    path = resolve_json_path(FACE_EXPR_SCENES_FILE, device_id)
-    if not os.path.isfile(path):
-        if not seed_if_missing:
-            return None
-        rows = _seed_full_builtin_scenes()
-        save_face_expr_scenes_file(rows, device_id=device_id)
-        return rows
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
-    return normalize_face_expr_scenes(raw)
+    from deskbot_server.face_design_store import (
+        _load_face_design_cached,
+        emotions_as_scenes,
+        ensure_face_design_file,
+    )
+
+    if seed_if_missing:
+        ensure_face_design_file(device_id=device_id)
+    design = _load_face_design_cached(device_id=device_id)
+    if not isinstance(design, dict):
+        return None if not seed_if_missing else []
+    return emotions_as_scenes(design)
 
 
 def save_face_expr_scenes_file(
     rows: list[dict[str, Any]], *, device_id: Optional[str] = None
 ) -> list[dict[str, Any]]:
-    norm = _ensure_default_scene_present(normalize_face_expr_scenes(rows))
-    path = resolve_json_path(FACE_EXPR_SCENES_FILE, device_id)
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(norm, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-    return norm
+    from deskbot_server.face_design_store import (
+        apply_emotion_scenes_to_design,
+        emotions_as_scenes,
+        ensure_face_design_file,
+        save_face_design_file,
+    )
+
+    design = ensure_face_design_file(device_id=device_id)
+    norm_rows = normalize_face_expr_scenes(rows)
+    updated = apply_emotion_scenes_to_design(design, norm_rows)
+    saved_doc = save_face_design_file(updated, device_id=device_id)
+    return emotions_as_scenes(saved_doc)
 
 
 def design_frames_to_pb_chain(
@@ -479,4 +462,9 @@ def find_design_scene_by_name(rows: list[dict[str, Any]], name: str) -> Optional
     for row in rows:
         if str(row.get("name") or "").strip().lower() == want:
             return row
+        alias = row.get("alias")
+        if isinstance(alias, list):
+            for raw in alias:
+                if str(raw or "").strip().lower() == want:
+                    return row
     return None

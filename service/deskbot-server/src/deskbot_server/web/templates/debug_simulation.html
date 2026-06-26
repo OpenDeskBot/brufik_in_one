@@ -15,7 +15,7 @@
 {% block content %}
   <h1>仿真调试</h1>
   <p class="sub">
-    左侧：调用 PaddleSpeech 音素+TTS，生成 <code>pb_*</code> 协议预览并与口型表合成表情序列；播放时整段音频与口型时间轴对齐。
+    左侧：调用豆包 TTS + 音素分片，生成 <code>pb_*</code> 协议预览并与口型表合成表情序列；播放时整段音频与口型时间轴对齐。
     右侧：在 **284×240** 彩色 LCD 逻辑画布上编辑；**鼻与双眼默认为圆**；**音素→嘴型表**预置约两百余个中文音素，嘴型均为**矩形**（静音扁、韵母+声调略张大、声母中等）；可「重置」恢复；数据可存 localStorage。
     协议字段约定见仓库 <code>docs/esp32_pb_protocol.md</code>。
   </p>
@@ -32,7 +32,7 @@
         </div>
         <p v-if="errL" class="err">{{ errL }}</p>
         <details v-if="tts" class="box" open>
-          <summary>PaddleSpeech 返回摘要</summary>
+          <summary>TTS 返回摘要</summary>
           <p class="mono sm">sample_rate={{ tts.sample_rate }} · pcm_total={{ tts.pcm_total_bytes }} · segments={{ tts.segments.length }}</p>
           <div class="tbl-wrap">
             <table class="tbl">
@@ -346,7 +346,7 @@
   }
 
   /**
-   * 根据 PaddleSpeech 返回的音素序列，查表生成每片的 anim.elements（含嘴+默认眼鼻）。
+   * 根据 TTS 返回的音素序列，查表生成每片的 anim.elements（含嘴+默认眼鼻）。
    * @param segments  [{ phoneme, ms }, ...]
    * @param mouthByPhoneme  音素字符串 -> mouth 图形数组；键 "_" 为默认嘴型
    * @param defaults  可选：nose、eye_l、eye_r、extra 图形数组（与协议 anim.elements 一致）
@@ -624,7 +624,7 @@
         this.pbPreview = [];
         this.busy = true;
         try {
-          const res = await fetch("/api/paddlespeech/phoneme_tts", {
+          const res = await fetch("/api/tts/phoneme_tts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text: this.draft.trim(), spk_id: this.spkId }),

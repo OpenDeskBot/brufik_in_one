@@ -349,7 +349,7 @@ c  = (R5 << 11) | (G6 << 5) | B5
 
 ## 9. 表情配置（服务端生成 `anim[]`）
 
-口播时服务端从 **`face_bundle`** JSON（`tts.pb_face_bundle_json` 或 `DESKBOT_PB_FACE_BUNDLE_JSON`）按音素查表组帧；保存文件后 **mtime 热重载**。示例：`deskbot-server/data/face_mouth_by_phoneme.json`。
+口播时服务端从 **`face_bundle`** JSON（`tts.pb_face_bundle_json` 或 `DESKBOT_PB_FACE_BUNDLE_JSON`）按音素查表组帧；保存文件后 **mtime 热重载**。示例：`deskbot-server/data/deskbot-face.json`（`phonemes` + `emotions`）。
 
 | 顶层键 | 说明 |
 |--------|------|

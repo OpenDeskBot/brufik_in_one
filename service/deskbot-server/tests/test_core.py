@@ -13,7 +13,7 @@ def test_app_settings_from_config_defaults():
         "vad": {"mode": 3},
         "asr": {"text_filter": {"min_text_len": 2, "min_chinese_ratio": 0.0}},
         "llm": {"base_url": "https://example.com/v1", "model_name": "qwen-flash"},
-        "tts": {"ws_url": "ws://127.0.0.1:8092/paddlespeech/tts/streaming"},
+        "tts": {"provider": "doubao", "sample_rate": 24000},
     }
     s = AppSettings.from_config(cfg)
     assert s.server.port == 9000

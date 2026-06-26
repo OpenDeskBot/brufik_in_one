@@ -21,8 +21,6 @@ from deskbot_server.camera_face_config_store import (
 from deskbot_server.camera_face_tune import apply_camera_face_tune
 from deskbot_server.constants import (
     CAMERA_FACE_CFG_FILE,
-    FACE_EXPR_SCENES_FILE,
-    FACE_MOUTH_BY_PHONEME_FILE,
     FACE_PROFILES_FILE,
     SCENE_PLAYBOOKS_FILE,
     SERVO_CFG_FILE,
@@ -33,21 +31,11 @@ from deskbot_server.device_data import (
     resolve_json_path,
     save_llm_system_prompt,
 )
-from deskbot_server.face_expr_scenes_store import (
-    load_face_expr_scenes_file,
-    normalize_face_expr_scenes,
-    save_face_expr_scenes_file,
-)
+from deskbot_server.face_expr_scenes_store import load_face_expr_scenes_file
 from deskbot_server.scene_playbooks_store import (
     load_scene_playbooks_file,
     normalize_scene_playbooks,
     save_scene_playbooks_file,
-)
-from deskbot_server.face_mouth_config_store import (
-    face_mouth_api_payload,
-    load_face_mouth_cfg_file,
-    normalize_face_mouth_groups,
-    save_face_mouth_cfg_file,
 )
 from deskbot_server.application.face_registration import register_face_for_device
 from deskbot_server.face_profiles_store import load_face_profiles
@@ -66,9 +54,7 @@ from deskbot_server.web.helpers import (
     deskbot_ws_default,
     device_pipeline_ws_base,
     load_config,
-    phoneme_tts_ws_call,
     tcp_alive,
-    tts_phoneme_streaming_url,
 )
 from deskbot_server.web.session_device import get_current_device_id
 
@@ -325,19 +311,6 @@ def debug_llm():
     )
 
 
-@bp.get("/debug/paddlespeech")
-def debug_paddlespeech():
-    cfg = load_config()
-    tts = cfg.get("tts") or {}
-    return render_template(
-        "debug_paddlespeech.html",
-        active_nav="paddle",
-        default_spk=int(tts.get("spk_id", 0)),
-        sample_rate=int(tts.get("sample_rate", 24000)),
-        phoneme_ws_url=tts_phoneme_streaming_url(cfg),
-    )
-
-
 @bp.get("/debug/simulation")
 def debug_simulation():
     from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
@@ -356,26 +329,43 @@ def debug_simulation():
     )
 
 
-@bp.post("/api/paddlespeech/phoneme_tts")
-def api_paddlespeech_phoneme_tts():
-    """服务端代理调用 ``streaming_phoneme``，返回音素表与整段 WAV（base64）供页面播放。"""
+@bp.post("/api/tts/phoneme_tts")
+def api_tts_phoneme_tts():
+    """豆包 TTS + 音素分片，供仿真调试等页面使用。"""
+    from deskbot_server.core.settings import AppSettings
+    from deskbot_server.infrastructure.tts.factory import build_tts_adapter
+
     payload = request.get_json(force=True, silent=True) or {}
     text = str(payload.get("text") or "").strip()
     if not text:
         return jsonify({"ok": False, "error": "空文本"}), 400
-    spk_id = int(payload.get("spk_id", 0))
     cfg = load_config()
-    ws_url = tts_phoneme_streaming_url(cfg)
-    sr = int((cfg.get("tts") or {}).get("sample_rate", 24000))
+    sr_cfg = int((cfg.get("tts") or {}).get("sample_rate", 24000))
     try:
-        pcm, display = asyncio.run(phoneme_tts_ws_call(ws_url, text, spk_id))
+        settings = AppSettings.from_config(cfg)
+        adapter = build_tts_adapter(settings)
+        sr, segs = asyncio.run(adapter.synthesize_phoneme_segments(text))
     except Exception as exc:  # pragma: no cover
         return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 502
-    wav = pcm_to_wav_bytes(pcm, sr)
+    pcm = bytearray()
+    display: list[dict] = []
+    for seg in segs:
+        chunk = bytes(seg.pcm or b"")
+        pcm.extend(chunk)
+        display.append(
+            {
+                "phoneme_id": seg.phoneme_id,
+                "phoneme": seg.phoneme,
+                "ms": seg.ms,
+                "pcm_bytes": len(chunk),
+            }
+        )
+    sr = int(sr or sr_cfg or 24000)
+    wav = pcm_to_wav_bytes(bytes(pcm), sr)
     return jsonify(
         {
             "ok": True,
-            "ws_url_used": ws_url,
+            "provider": "doubao",
             "sample_rate": sr,
             "segments": display,
             "wav_base64": base64.b64encode(wav).decode("ascii"),
@@ -788,61 +778,15 @@ def api_user_memory_delete(entry_id: str):
     return jsonify({"ok": True, "id": entry_id, "t": time.time()})
 
 
-@bp.get("/api/face_mouth_by_phoneme")
-def api_face_mouth_by_phoneme_get():
+@bp.get("/api/deskbot_face")
+def api_deskbot_face_get():
+    """只读：当前设备的 ``deskbot-face.json`` 中 ``emotions``（场景编排预览等）。"""
     device_id, err = _require_device_id()
     if err:
         return err
-    cfg_path = resolve_json_path(FACE_MOUTH_BY_PHONEME_FILE, device_id)
-    try:
-        groups = load_face_mouth_cfg_file(seed_if_missing=True, device_id=device_id)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
-    payload = face_mouth_api_payload(groups or [])
-    return jsonify(
-        {
-            "ok": True,
-            "exists": os.path.isfile(cfg_path),
-            **payload,
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
-    )
+    from deskbot_server.face_design_store import resolve_face_design_path
 
-
-@bp.post("/api/face_mouth_by_phoneme")
-def api_face_mouth_by_phoneme_post():
-    device_id, err = _require_device_id()
-    if err:
-        return err
-    payload = request.get_json(silent=True)
-    cfg_path = resolve_json_path(FACE_MOUTH_BY_PHONEME_FILE, device_id)
-    try:
-        groups = normalize_face_mouth_groups(payload if payload is not None else [])
-        save_face_mouth_cfg_file(groups, device_id=device_id)
-        out = face_mouth_api_payload(groups)
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 400
-    except OSError as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
-    return jsonify(
-        {
-            "ok": True,
-            **out,
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
-    )
-
-
-@bp.get("/api/face_expr_scenes")
-def api_face_expr_scenes_get():
-    device_id, err = _require_device_id()
-    if err:
-        return err
-    cfg_path = resolve_json_path(FACE_EXPR_SCENES_FILE, device_id)
+    cfg_path = resolve_face_design_path(device_id=device_id)
     try:
         rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
@@ -850,33 +794,8 @@ def api_face_expr_scenes_get():
     return jsonify(
         {
             "ok": True,
-            "config": rows or [],
+            "emotions": rows or [],
             "exists": os.path.isfile(cfg_path),
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
-    )
-
-
-@bp.post("/api/face_expr_scenes")
-def api_face_expr_scenes_post():
-    device_id, err = _require_device_id()
-    if err:
-        return err
-    payload = request.get_json(silent=True)
-    cfg_path = resolve_json_path(FACE_EXPR_SCENES_FILE, device_id)
-    try:
-        rows = normalize_face_expr_scenes(payload if payload is not None else [])
-        saved = save_face_expr_scenes_file(rows, device_id=device_id)
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 400
-    except OSError as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
-    return jsonify(
-        {
-            "ok": True,
-            "config": saved,
             "file": os.path.basename(cfg_path),
             "device_id": device_id,
             "t": time.time(),
@@ -939,26 +858,19 @@ def health():
         deskbot_host = "127.0.0.1"
     deskbot_port = int(os.environ.get("DESKBOT_SERVER_PORT") or cfg.get("server", {}).get("port", 9000))
 
-    tts_url = os.environ.get("TTS_WS_URL") or cfg.get(
-        "tts", {}
-    ).get("ws_url", "ws://127.0.0.1:8092/paddlespeech/tts/streaming")
-    # 简单解析 ws://host:port/path
-    tts_host = "127.0.0.1"
-    tts_port = 8092
-    try:
-        remain = tts_url.split("://", 1)[1]
-        host_port = remain.split("/", 1)[0]
-        tts_host = host_port.split(":")[0]
-        tts_port = int(host_port.split(":")[1])
-    except Exception:
-        pass
+    from deskbot_server.tts.doubao import load_doubao_tts_config
+
+    tts_cfg = load_doubao_tts_config()
+    tts_provider = str((cfg.get("tts") or {}).get("provider") or "doubao").strip().lower()
+    tts_configured = bool(str(tts_cfg.api_key or "").strip())
 
     return jsonify(
         {
             "deskbot_server": tcp_alive(deskbot_host, deskbot_port),
-            "tts_server": tcp_alive(tts_host, tts_port),
+            "tts_provider": tts_provider,
+            "tts_configured": tts_configured,
             "deskbot_target": f"{deskbot_host}:{deskbot_port}",
-            "tts_target": f"{tts_host}:{tts_port}",
+            "tts_target": tts_cfg.ws_url,
         }
     )
 

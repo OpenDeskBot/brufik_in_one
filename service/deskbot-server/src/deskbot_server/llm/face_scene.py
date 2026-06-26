@@ -128,11 +128,6 @@ def llm_face_scene_prompt_appendix(device_id: Optional[str] = None) -> str:
     header = f"摄像头人脸跟随模式：{follow}。"
     if not rows:
         return header + "\n当前摄像头画面中未检测到人脸。"
-    if follow == "关闭":
-        header += (
-            " 画面有人时建议优先用 ``set_camera_follow`` 开启 ``follow`` 或 ``gaze``，"
-            "让机器人转向注视对方（礼貌）；主人未开口时可 ``need_reply: false`` 仅执行该工具。"
-        )
     lines: list[str] = []
     for i, row in enumerate(rows, 1):
         fid = row["face_id"]

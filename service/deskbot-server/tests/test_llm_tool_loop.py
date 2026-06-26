@@ -70,6 +70,7 @@ def test_complete_llm_with_tool_loop_single_round():
             device_id=None,
             history_messages=None,
             extra_messages=None,
+            on_tts_ready=None,
         ):
             return answer
 

@@ -11,7 +11,7 @@
 #define WIFI_DEFAULT_SSID "deskbot_wifi"
 #define WIFI_DEFAULT_PASSWORD "hello2026"
 
-#define DESKBOT_WS_HOST "39.107.38.241"
+#define DESKBOT_WS_HOST "10.221.64.74"
 #define DESKBOT_WS_PORT 9000
 
 /* 服务端 WebSocket 鉴权 Key（odk_... 或 odk_free_...）。留空则无法连接 /asr_chat。 */

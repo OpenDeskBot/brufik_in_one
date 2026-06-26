@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Optional, Protocol
 
 
@@ -12,4 +13,5 @@ class LlmPort(Protocol):
         device_id: Optional[str] = None,
         history_messages: Optional[list[dict[str, str]]] = None,
         extra_messages: Optional[list[dict[str, str]]] = None,
+        on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> str: ...

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import base64
 import datetime as _dt
 import json
 import os
@@ -121,68 +119,6 @@ def deskbot_upstream_base() -> str:
         host = "127.0.0.1"
     port = int(os.environ.get("DESKBOT_SERVER_PORT") or srv.get("port", 9000))
     return f"http://{host}:{port}"
-
-
-def tts_phoneme_streaming_url(cfg: dict) -> str:
-    raw = os.environ.get("TTS_WS_URL") or (cfg.get("tts") or {}).get(
-        "ws_url", "ws://127.0.0.1:8092/paddlespeech/tts/streaming"
-    )
-    raw = str(raw).strip()
-    if "://" not in raw:
-        raw = "ws://" + raw
-    scheme, rest = raw.split("://", 1)
-    slash = rest.find("/")
-    if slash == -1:
-        base = f"{scheme}://{rest}"
-    else:
-        base = f"{scheme}://{rest[:slash]}"
-    return f"{base}/paddlespeech/tts/streaming_phoneme"
-
-
-async def phoneme_tts_ws_call(ws_url: str, text: str, spk_id: int) -> tuple[bytes, list[dict]]:
-    import websockets
-
-    async with websockets.connect(ws_url, max_size=None, open_timeout=60) as ws:
-        await ws.send(json.dumps({"task": "tts", "signal": "start"}))
-        r0 = json.loads(await ws.recv())
-        if r0.get("status") != 0:
-            raise RuntimeError(f"PaddleSpeech 握手失败: {r0}")
-        session = r0.get("session")
-        await ws.send(json.dumps({"text": text, "spk_id": spk_id}))
-
-        segments: list[dict] = []
-        while True:
-            pkt = json.loads(await ws.recv())
-            st = pkt.get("status")
-            if st == -1:
-                raise RuntimeError(str(pkt.get("message") or pkt))
-            if st == 1 and isinstance(pkt.get("segments"), list):
-                segments = pkt["segments"]
-                continue
-            if st == 2:
-                break
-
-        await ws.send(json.dumps({"task": "tts", "signal": "end", "session": session}))
-        try:
-            await asyncio.wait_for(ws.recv(), timeout=5.0)
-        except (asyncio.TimeoutError, Exception):
-            pass
-
-    pcm = bytearray()
-    display: list[dict] = []
-    for s in segments:
-        b64 = s.get("audio") or ""
-        chunk = base64.b64decode(b64) if b64 else b""
-        pcm.extend(chunk)
-        display.append(
-            {
-                "phoneme_id": s.get("phoneme_id"),
-                "phoneme": s.get("phoneme"),
-                "ms": s.get("ms"),
-                "pcm_bytes": len(chunk),
-            }
-        )
-    return bytes(pcm), display
 
 
 def beijing_time_str() -> str:

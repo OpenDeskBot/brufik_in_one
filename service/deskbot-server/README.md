@@ -5,10 +5,10 @@
 ## 启动
 
 ```bash
-# 推荐：仓库根目录一键起 TTS + 本服务 + Web 控制台
+# 推荐：仓库根目录一键启动
 ../start.sh
 
-# 仅本服务（需另起 paddlespeech-server 或改 TTS_WS_URL）
+# 仅本服务
 ./start.sh
 SKIP_SETUP=1 ./start.sh
 ```
@@ -39,8 +39,8 @@ cp .env.example .env   # 必填 LLM_API_KEY
 | `/app/settings` | 账号设置：API Key 管理 |
 | `/debug/devices` | 调试：在线设备、流水线 |
 | `/debug/llm` | 调试：LLM 试聊 |
-| `/debug/simulation` | 调试：模拟对话 |
-| `/debug/paddlespeech` | 调试：TTS |
+| `/debug/tts` | 调试：豆包 TTS |
+| `/debug/simulation` | 调试：pb 仿真 |
 
 首次启动自动创建免费体验 API Key，写入 `data/.free_api_key`（每日 1GB 总字节配额）。
 
@@ -110,8 +110,8 @@ cp .env.example .env   # 必填 LLM_API_KEY
 
 ## 配置
 
-- **`.env`**：`LLM_API_KEY`、`ASR_MODEL_DIR`、`TTS_WS_URL`、`DESKBOT_WEB_PUBLIC_HOST`（多网卡时填局域网 IP）、`DESKBOT_WEB_SECRET_KEY`（生产必设）
-- **`config.yaml`**：`audio.input_codec`、`llm.model_name`、`tts.ws_url`、`server.asr_chat_device_pb_only`、`debug.asr_auto_reply`
+- **`.env`**：`LLM_API_KEY`、`DOUBAO_TTS_*`（豆包 TTS）、`ASR_MODEL_DIR`、`DESKBOT_WEB_PUBLIC_HOST`（多网卡时填局域网 IP）、`DESKBOT_WEB_SECRET_KEY`（生产必设）
+- **`config.yaml`**：`audio.input_codec`、`llm.model_name`、`tts.provider`（`doubao`）、`server.asr_chat_device_pb_only`、`debug.asr_auto_reply`
 
 架构概要：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 

@@ -3,11 +3,11 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <WebSocketsClient.h>
 /* 单帧 WS 入站上限：platformio.ini WEBSOCKETS_MAX_DATA_SIZE（默认 1MiB）；须大于 PB PCM chunk。 */
 #if !defined(WEBSOCKETS_MAX_DATA_SIZE) || WEBSOCKETS_MAX_DATA_SIZE < (200 * 1024)
 #error WEBSOCKETS_MAX_DATA_SIZE must be >= 200KiB; set -DWEBSOCKETS_MAX_DATA_SIZE in platformio.ini
 #endif
+#include <WebSocketsClient.h>
 #include "audio_player.h"
 #include "common.h"
 #include "deskbot_config.h"

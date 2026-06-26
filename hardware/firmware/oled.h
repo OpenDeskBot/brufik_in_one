@@ -64,4 +64,8 @@ void oled_render_reset();
 
 unsigned oled_render_input_queue_depth();
 
+/** 麦克风上行是否有效：屏顶麦克风图标，绿=开麦，红=关麦。由 asr_chat 同步，渲染时读取。 */
+bool deskbot_mic_uplink_active(void);
+void deskbot_mic_uplink_set_active(bool active);
+
 #endif

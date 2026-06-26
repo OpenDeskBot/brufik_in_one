@@ -8,8 +8,9 @@ import os
 import re
 from typing import Any, Optional
 
-from deskbot_server.constants import FACE_EXPR_SCENES_FILE, SERVO_CFG_FILE
+from deskbot_server.constants import SERVO_CFG_FILE
 from deskbot_server.device_data import resolve_json_path
+from deskbot_server.face_design_store import resolve_face_design_path
 from deskbot_server.face_expr_scenes_store import load_face_expr_scenes_file
 from deskbot_server.pb.llm_display import parse_llm_images
 from deskbot_server.pb.servo_pcm import parse_pb_cam_fps, parse_pb_volume
@@ -23,16 +24,8 @@ def _face_expr_scene_entries(*, device_id: Optional[str] = None) -> list[dict[st
         rows = load_face_expr_scenes_file(seed_if_missing=False, device_id=device_id)
     except (OSError, ValueError, json.JSONDecodeError):
         rows = None
-    if rows is None:
-        try:
-            path = resolve_json_path(FACE_EXPR_SCENES_FILE, device_id)
-            with open(path, encoding="utf-8") as f:
-                raw = json.load(f)
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            return []
-        if not isinstance(raw, list):
-            return []
-        rows = raw
+    if not rows:
+        return []
     out: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
@@ -111,16 +104,19 @@ def llm_pb_anims_prompt_appendix(*, device_id: Optional[str] = None) -> str:
         body = "\n".join(lines)
         return (
             "  - anims: 数组。每项 ``{\"anim\": \"场景name\", \"ms\": 执行时长, \"bg\"?, \"color\"?}``。"
-            "``anim`` 须与 ``data/face_expr_scenes.json`` 中 ``name`` 一致；"
+            "``anim`` 须与 ``data/deskbot-face.json`` 的 ``emotions[].name``（或 ``alias``）一致；"
             "``ms`` 为该段表情动画整体期望时长，服务端按各帧默认时长比例缩放，"
-            "**ms 越大越慢、越小越快**。未知名会回退 ``default``，仍无则跳过。\n"
+            "**ms 越大越慢、越小越快**。未知名会回退 ``default`` / ``idle``，仍无则跳过。\n"
             "    可选 ``bg``：全屏背景色字符串（``#RGB`` / ``#RRGGBB`` / 命名色）；"
             "可选 ``color``：该段默认前景色（未单独设色的 text 图元会继承）。\n"
             f"    可用表情动画：\n{body}\n"
             "    不需要时写 []。有 TTS 音素时分片口型仍由音素驱动，其它图层用所选 anim。\n"
         )
 
-    mtime_path = resolve_json_path(FACE_EXPR_SCENES_FILE, device_id)
+    def _face_anim_mtime_path() -> str:
+        return resolve_face_design_path(device_id=device_id)
+
+    mtime_path = _face_anim_mtime_path()
     cache_key = f"anims:{device_id or ''}"
     return _cached_appendix(cache_key, mtime_path, _build)
 
@@ -176,7 +172,8 @@ def llm_tools_prompt_appendix() -> str:
     """LLM 可返回的 tools 数组说明。"""
     return (
         "可用工具（可选 ``tools`` 数组；需要工具时 ``tools`` 非空、``tts`` 可留空，"
-        "服务端执行后会再次调用你；最终回复时 ``tools`` 写 [] 并填写 ``tts``）：\n"
+        "服务端执行后会再次调用你；最终回复时 ``tools`` 写 [] 并填写 ``tts``）："
+        "用户已说话时优先在 ``tts`` 里正常回答；不要只返回 tools 而省略完整 JSON 对象。\n"
         "  - register_face: {\"tool\":\"register_face\",\"name\":\"姓名\",\"face_id\":1}\n"
         "    将当前画面 face_id 的人脸注册/更新到档案（embedding 512 维）；"
         "face_id 见每轮 user 消息「图像识别」；仅一张脸时可省略 face_id；多人须指定 face_id 或先向用户澄清。\n"
@@ -184,11 +181,6 @@ def llm_tools_prompt_appendix() -> str:
         "    获取 ESP32 **最近上传**的一帧相机 JPEG（返回 ``jpeg_base64`` 与尺寸）。"
         "用于：给主人「拍照」后在屏幕 ``images`` 展示；或结合画面内容做判断。"
         "若返回无帧，请提示主人确认相机上行已开启（可提高 ``cam_fps``）。\n"
-        "  - set_camera_follow: {\"tool\":\"set_camera_follow\",\"mode\":\"follow|follow_frontal|gaze|off\"}\n"
-        "    开启/关闭人脸舵机跟随（follow=跟随人脸，follow_frontal=跟随正脸，gaze=注视感知，off=关闭）。"
-        "仅当需要**切换**跟随模式时调用；若 user 消息已写明「摄像头跟随模式」为 follow/follow_frontal/gaze，"
-        "**不要**每轮重复调用。"
-        "用户已说话时优先在 ``tts`` 里正常回答；不要只返回 tools 而省略完整 JSON 对象。\n"
         "  - memory_add: {\"tool\":\"memory_add\",\"text\":\"要记住的内容\"}\n"
         "  - memory_delete: {\"tool\":\"memory_delete\",\"id\":\"记忆id\"}\n"
         "  - schedule_task: cron 定时任务增删改查（北京时间东八区）。"
