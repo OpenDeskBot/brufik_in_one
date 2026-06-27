@@ -1,2 +1,64 @@
 {% extends "base_2c.html" %}
-{% block content %}<div class="pagehd"><div><h1>声音</h1></div></div>{% endblock %}
+{% block page_title %}声音 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block content %}
+<div class="pagehd"><div><h1>声音</h1><p>挑一个喜欢的音色，点试听，满意就设为当前。</p></div></div>
+<div id="app">
+  <div v-for="(list, scene) in grouped" :key="scene">
+    <div class="scene-h">[[ scene ]]</div>
+    <div class="vgrid">
+      <div class="vcard" :class="{cur: v.id===current}" v-for="v in list" :key="v.id">
+        <span class="curtag" v-if="v.id===current">当前</span>
+        <b>[[ v.label ]]</b><small>[[ v.scene ]]</small>
+        <div class="vbtns">
+          <button class="vbtn play" @click="preview(v)">[[ playing===v.id ? '播放中…' : '▶ 试听' ]]</button>
+          <button class="vbtn set" @click="setCurrent(v)">[[ v.id===current ? '使用中' : '设为当前' ]]</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slider-card">
+    <div class="t"><span>试听音量</span><span>[[ vol ]]</span></div>
+    <input type="range" min="0" max="100" v-model.number="vol">
+  </div>
+  <p class="lead" v-if="msg">[[ msg ]]</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({
+  delimiters: ['[[', ']]'],
+  data(){ return { speakers:[], current:'', playing:'', vol:80, msg:'' }; },
+  computed:{
+    grouped(){ const g={}; for(const v of this.speakers){ (g[v.scene||'其他'] ||= []).push(v); } return g; }
+  },
+  methods:{
+    async load(){
+      const s = await (await fetch('/api/doubao_tts/speakers')).json();
+      this.speakers = s.speakers || [];
+      const c = await (await fetch('/api/doubao_tts/config')).json();
+      this.current = (c.config && c.config.speaker) || '';
+    },
+    async setCurrent(v){
+      const r = await (await fetch('/api/doubao_tts/config', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({speaker:v.id, resource_id:v.resource_id})})).json();
+      if(r.ok){ this.current = v.id; this.msg = '已设为当前音色：'+v.label; }
+      else { this.msg = '设置失败：'+(r.error||''); }
+    },
+    async preview(v){
+      this.playing = v.id; this.msg='';
+      try{
+        const r = await (await fetch('/api/doubao_tts/synthesize', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({text:'你好，我是你的桌搭子小歪。', speaker:v.id, resource_id:v.resource_id})})).json();
+        if(r.ok && r.wav_base64){ const a=new Audio('data:audio/wav;base64,'+r.wav_base64); a.volume=this.vol/100; a.play(); }
+        else { this.msg='试听失败：'+(r.error||''); }
+      } finally { this.playing=''; }
+    },
+  },
+  mounted(){ this.load(); },
+}).mount('#app');
+</script>
+{% endblock %}
