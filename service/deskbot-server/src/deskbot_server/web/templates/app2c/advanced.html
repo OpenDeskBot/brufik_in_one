@@ -1,2 +1,13 @@
 {% extends "base_2c.html" %}
-{% block content %}<div class="pagehd"><div><h1>高级</h1></div></div>{% endblock %}
+{% block page_title %}高级 · 小歪{% endblock %}
+{% block content %}
+<div class="pagehd"><div><h1>高级</h1><p>开发者与进阶设置，普通使用一般用不到。</p></div></div>
+<a class="adv-item" href="/app/usage"><div class="l">用量与账单</div><span>›</span></a>
+<a class="adv-item" href="/app/llm-models"><div class="l">LLM 模型</div><span>›</span></a>
+<a class="adv-item" href="/app/settings"><div class="l">账号 / API Key</div><span>›</span></a>
+<a class="adv-item" href="/debug/devices"><div class="l">调试 · 设备</div><span>›</span></a>
+<a class="adv-item" href="/debug/tts"><div class="l">调试 · TTS</div><span>›</span></a>
+<a class="adv-item" href="/debug/llm"><div class="l">调试 · LLM</div><span>›</span></a>
+<a class="adv-item" href="/debug/simulation"><div class="l">调试 · 模拟</div><span>›</span></a>
+<p class="lead" style="margin-top:16px">＊ 这些都是既有控制台页面，功能不变，只是默认收起。</p>
+{% endblock %}

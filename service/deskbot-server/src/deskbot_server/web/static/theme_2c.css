@@ -137,3 +137,4 @@
 .navi .navlink:hover{background:#f6f6fc;color:var(--ink)}
 .navi .navlink.on{background:var(--brand-soft);color:var(--brand)}
 .navi .navlink svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+a.adv-item{text-decoration:none}
