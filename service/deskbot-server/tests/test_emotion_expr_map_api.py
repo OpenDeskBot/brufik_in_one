@@ -10,6 +10,7 @@ import pytest
 def temp_db(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         monkeypatch.setenv("DESKBOT_DB_PATH", str(Path(tmp) / "t.db"))
+        monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", Path(tmp) / "device")
         from deskbot_server.db import init_database
         from deskbot_server.db.engine import init_engine, reset_engine
 

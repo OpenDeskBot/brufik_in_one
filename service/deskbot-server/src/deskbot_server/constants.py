@@ -54,6 +54,7 @@ FACE_EXPR_SCENES_FILE = str(DATA_DIR / "face_expr_scenes.json")
 SCENE_PLAYBOOKS_FILE = str(DATA_DIR / "scene_playbooks.json")
 USER_MEMORY_FILE = str(DATA_DIR / "user_memory.json")
 DEVICE_VOLUME_FILE = str(DATA_DIR / "device_volume.json")
+EMOTION_EXPR_MAP_FILE = str(DATA_DIR / "emotion_expr_map.json")
 
 CAMERA_VIEW_PATH = "/camera_view"
 DEVICE_PIPELINE_PATH = "/device_pipeline"
