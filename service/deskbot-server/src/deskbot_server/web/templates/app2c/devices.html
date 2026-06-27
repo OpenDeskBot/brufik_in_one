@@ -1,2 +1,29 @@
 {% extends "base_2c.html" %}
-{% block content %}<div class="pagehd"><div><h1>我的设备</h1></div></div>{% endblock %}
+{% block page_title %}我的设备 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block content %}
+<div class="pagehd"><div><h1>我的设备</h1><p>绑定与切换你的 Brufik 机器人。</p></div></div>
+<div id="app">
+  <div class="dev" v-for="d in devices" :key="d.device_id">
+    <div class="di">🤖</div>
+    <div style="flex:1"><b>[[ d.display_name ]]</b><br><small>[[ d.device_id ]]</small></div>
+    <button class="btn" :class="d.device_id===current?'primary':'ghost'" @click="select(d)">[[ d.device_id===current?'当前':'切换' ]]</button>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:14px;max-width:560px">
+    <input v-model="newId" placeholder="设备 ID" style="flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:12px">
+    <button class="btn primary" @click="bind">绑定</button>
+  </div>
+  <p class="lead" v-if="msg">[[ msg ]]</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({ delimiters:['[[',']]'], data(){return{devices:[],current:'',newId:'',msg:''};},
+  methods:{
+    async load(){ const r=await (await fetch('/app/api/devices')).json(); if(r.ok){ this.devices=r.devices||[]; this.current=r.current_device_id||''; } },
+    async select(d){ const r=await (await fetch('/app/api/devices/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:d.device_id})})).json(); if(r.ok){ this.current=r.current_device_id; } },
+    async bind(){ const id=this.newId.trim(); if(!id) return; const r=await (await fetch('/app/api/devices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:id})})).json(); if(r.ok){ this.newId=''; this.load(); } else this.msg=r.error||'绑定失败'; } },
+  mounted(){ this.load(); } }).mount('#app');
+</script>
+{% endblock %}

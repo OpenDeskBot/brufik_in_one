@@ -1,2 +1,25 @@
 {% extends "base_2c.html" %}
-{% block content %}<div class="pagehd"><div><h1>认识的人</h1></div></div>{% endblock %}
+{% block page_title %}认识的人 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block content %}
+<div class="pagehd"><div><h1>认识的人</h1><p>机器人通过摄像头认识的人。</p></div></div>
+<div id="app">
+  <div class="people">
+    <div class="person" v-for="p in profiles" :key="p.person_id">
+      <div class="pa" style="background:linear-gradient(135deg,#6c5ce7,#a18bff)">[[ (p.name||'?').slice(0,1) ]]</div>
+      <b>[[ p.name || ('#'+p.person_id) ]]</b>
+      <button class="btn ghost" style="margin-top:6px" @click="del(p)">删除</button>
+    </div>
+  </div>
+  <p class="lead" v-if="!profiles.length">还没有认识的人。</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({ delimiters:['[[',']]'], data(){return{profiles:[]};},
+  methods:{ async load(){ const r=await (await fetch('/app/api/face-profiles')).json(); if(r.ok) this.profiles=r.profiles||[]; },
+    async del(p){ const r=await (await fetch('/app/api/face-profiles/'+p.person_id,{method:'DELETE'})).json(); if(r.ok) this.load(); } },
+  mounted(){ this.load(); } }).mount('#app');
+</script>
+{% endblock %}

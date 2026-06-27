@@ -1,2 +1,25 @@
 {% extends "base_2c.html" %}
-{% block content %}<div class="pagehd"><div><h1>提醒</h1></div></div>{% endblock %}
+{% block page_title %}提醒 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block content %}
+<div class="pagehd"><div><h1>提醒</h1><p>它会在这些时间主动叫你。</p></div></div>
+<div id="app">
+  <div class="tl" v-for="t in tasks" :key="t.id">
+    <div class="dot"></div>
+    <div class="body"><b>[[ t.description || t.title || '提醒' ]]</b>
+      <small>[[ (t.cron_expr || t.cron || '') + ' · 下次 ' + (t.next_run_at || '') ]]</small>
+      <button class="btn ghost" style="margin-top:8px" @click="del(t)">删除</button>
+    </div>
+  </div>
+  <p class="lead" v-if="!tasks.length">还没有提醒。</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({ delimiters:['[[',']]'], data(){return{tasks:[]};},
+  methods:{ async load(){ const r=await (await fetch('/app/api/scheduled-tasks')).json(); if(r.ok) this.tasks=r.tasks||[]; },
+    async del(t){ const r=await (await fetch('/app/api/scheduled-tasks/'+t.id,{method:'DELETE'})).json(); if(r.ok) this.load(); } },
+  mounted(){ this.load(); } }).mount('#app');
+</script>
+{% endblock %}
