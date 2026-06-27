@@ -1,2 +1,63 @@
 {% extends "base_2c.html" %}
-{% block content %}<div class="pagehd"><div><h1>表情</h1></div></div>{% endblock %}
+{% block page_title %}表情 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block content %}
+<div class="pagehd"><div><h1>表情</h1><p>挑一个面孔风格，右侧大屏实时预览。</p></div>
+  <button class="btn primary" @click="save" id="saveBtn">保存表情</button></div>
+<div id="app">
+  <div class="exprgrid">
+    <div class="stage" style="min-height:280px">
+      <div class="face" style="width:260px;height:200px">
+        <svg width="220" height="170" viewBox="0 0 120 80" v-html="previewSvg"></svg>
+      </div>
+    </div>
+    <div>
+      <div class="blocktitle" style="margin-top:0">面孔风格（场景）</div>
+      <div class="thumbs">
+        <div class="thumb" :class="{sel: i===selected}" v-for="(s,i) in scenes" :key="s.name"
+             @click="selected=i">[[ s.title || s.name ]]</div>
+      </div>
+    </div>
+  </div>
+  <p class="lead" v-if="msg">[[ msg ]]</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({
+  delimiters:['[[',']]'],
+  data(){ return { scenes:[], selected:0, deviceId:'', msg:'' }; },
+  computed:{
+    previewSvg(){
+      const s=this.scenes[this.selected]; if(!s||!s.frames||!s.frames[0]) return '';
+      const el=s.frames[0].elements||{}; let out='';
+      const draw=(arr,color)=>{ for(const p of (arr||[])){
+        if(p.shape&&p.shape.indexOf('ellipse')===0) out+=`<ellipse cx="${p.x}" cy="${p.y}" rx="${p.rw}" ry="${p.rh}" fill="${color}"/>`;
+        else if(p.shape==='line') out+=`<line x1="${p.x1}" y1="${p.y1}" x2="${p.x2}" y2="${p.y2}" stroke="${color}" stroke-width="2"/>`;
+        else if(p.shape&&p.shape.indexOf('round_rect')===0) out+=`<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="${p.radius||1}" fill="none" stroke="${color}" stroke-width="2"/>`;
+      }};
+      draw(el.eye_l,'#7fe7ff'); draw(el.eye_r,'#7fe7ff'); draw(el.mouth,'#ff9ec4'); draw(el.extra,'#ffd36b');
+      return out;
+    }
+  },
+  methods:{
+    async load(){
+      const d = await (await fetch('/app/api/devices')).json();
+      this.deviceId = d.current_device_id || '';
+      if(!this.deviceId){ this.msg='请先在「我的设备」选择一台设备'; return; }
+      const r = await (await fetch('/api/face_expr_scenes?device_id='+encodeURIComponent(this.deviceId))).json();
+      this.scenes = r.config || [];
+    },
+    async save(){
+      if(!this.deviceId){ this.msg='没有当前设备，无法保存'; return; }
+      const r = await (await fetch('/api/face_expr_scenes', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({device_id:this.deviceId, scenes:this.scenes})})).json();
+      this.msg = r.ok ? '表情已保存到这台设备' : ('保存失败：'+(r.error||''));
+    },
+  },
+  mounted(){ this.load(); },
+}).mount('#app');
+</script>
+{% endblock %}
