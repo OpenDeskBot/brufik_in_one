@@ -1,2 +1,39 @@
 {% extends "base_2c.html" %}
-{% block content %}<div class="pagehd"><div><h1>它记得的事</h1></div></div>{% endblock %}
+{% block page_title %}它记得的事 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block content %}
+<div class="pagehd"><div><h1>它记得的事</h1><p>机器人记住的关于你的小事，随时可改可删。</p></div></div>
+<div id="app">
+  <div style="display:flex;gap:8px;margin-bottom:14px;max-width:560px">
+    <input v-model="draft" placeholder="加一条它该记住的事…" style="flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:12px">
+    <button class="btn primary" @click="add">添加</button>
+  </div>
+  <div class="colwrap">
+    <div class="note" v-for="m in items" :key="m.id">
+      <p>[[ m.text ]]</p>
+      <small>[[ m.created_at_fmt || '' ]]</small>
+      <button class="btn ghost" style="margin-top:8px" @click="del(m)">删除</button>
+    </div>
+  </div>
+  <p class="lead" v-if="msg">[[ msg ]]</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({
+  delimiters:['[[',']]'],
+  data(){ return { items:[], draft:'', msg:'' }; },
+  methods:{
+    async load(){ const r=await (await fetch('/app/api/memories')).json();
+      if(r.ok) this.items=r.memories||[]; else this.msg=r.error||'加载失败'; },
+    async add(){ const t=this.draft.trim(); if(!t) return;
+      const r=await (await fetch('/app/api/memories',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})})).json();
+      if(r.ok){ this.draft=''; this.load(); } else this.msg=r.error||'添加失败'; },
+    async del(m){ const r=await (await fetch('/app/api/memories/'+m.id,{method:'DELETE'})).json();
+      if(r.ok) this.load(); else this.msg=r.error||'删除失败'; },
+  },
+  mounted(){ this.load(); },
+}).mount('#app');
+</script>
+{% endblock %}
