@@ -2,7 +2,7 @@
 {% block page_title %}表情 · 小歪{% endblock %}
 {% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
 {% block content %}
-<div class="pagehd"><div><h1>表情</h1><p>挑一个面孔风格，右侧大屏实时预览。</p></div>
+<div class="pagehd"><div><h1>表情</h1><p>挑一个面孔风格，右侧大屏实时预览；再给情绪配表情。</p></div>
   <button class="btn primary" @click="save" id="saveBtn">保存表情</button></div>
 <div id="app">
   <div class="exprgrid">
@@ -17,6 +17,14 @@
         <div class="thumb" :class="{sel: i===selected}" v-for="(s,i) in scenes" :key="s.name"
              @click="selected=i">[[ s.title || s.name ]]</div>
       </div>
+      <div class="blocktitle">情绪 → 表情</div>
+      <div class="maprow" v-for="[k,label] in emotions" :key="k">
+        <div class="lab">[[ label ]]</div>
+        <select v-model="map[k]">
+          <option value="">（不指定）</option>
+          <option v-for="s in scenes" :key="s.name" :value="s.name">[[ s.title || s.name ]]</option>
+        </select>
+      </div>
     </div>
   </div>
   <p class="lead" v-if="msg">[[ msg ]]</p>
@@ -27,7 +35,7 @@
 const { createApp } = Vue;
 createApp({
   delimiters:['[[',']]'],
-  data(){ return { scenes:[], selected:0, deviceId:'', msg:'' }; },
+  data(){ return { scenes:[], selected:0, deviceId:'', emotions:[['happy','开心'],['surprised','惊讶'],['thinking','思考'],['sleepy','困'],['idle','待机']], map:{}, msg:'' }; },
   computed:{
     previewSvg(){
       const s=this.scenes[this.selected]; if(!s||!s.frames||!s.frames[0]) return '';
@@ -48,13 +56,18 @@ createApp({
       if(!this.deviceId){ this.msg='请先在「我的设备」选择一台设备'; return; }
       const r = await (await fetch('/api/face_expr_scenes?device_id='+encodeURIComponent(this.deviceId))).json();
       this.scenes = r.config || [];
+      const m = await (await fetch('/api/emotion_expr_map?device_id='+encodeURIComponent(this.deviceId))).json();
+      this.map = m.map || {};
     },
     async save(){
       if(!this.deviceId){ this.msg='没有当前设备，无法保存'; return; }
       const r = await (await fetch('/api/face_expr_scenes', {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({device_id:this.deviceId, scenes:this.scenes})})).json();
-      this.msg = r.ok ? '表情已保存到这台设备' : ('保存失败：'+(r.error||''));
+      const r2 = await (await fetch('/api/emotion_expr_map', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({device_id:this.deviceId, map:this.map})})).json();
+      this.msg = (r.ok && r2.ok) ? '表情与情绪映射已保存到这台设备' : ('保存失败：'+((r.error||r2.error)||''));
     },
   },
   mounted(){ this.load(); },
