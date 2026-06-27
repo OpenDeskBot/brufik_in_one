@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brufik · 2C 控制台原型（Web App）</title>
+<style>
+  :root{
+    --bg:#f4f5fa; --card:#fff; --ink:#1d2230; --dim:#6b7385; --line:#eaecf3;
+    --brand:#6c5ce7; --brand2:#a18bff; --brand-soft:#efeaff;
+    --warm:#ff8a5c; --pink:#ff6b9d; --green:#22c55e; --blue:#4aa8ff; --yellow:#f6c945;
+    --shadow:0 6px 24px rgba(40,42,80,.08); --shadow2:0 2px 10px rgba(40,42,80,.06);
+    --r:18px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .app{display:flex;min-height:100vh;max-width:1280px;margin:0 auto;background:var(--bg)}
+
+  /* ===== sidebar ===== */
+  .side{width:236px;flex:none;background:#fff;border-right:1px solid var(--line);
+    display:flex;flex-direction:column;padding:20px 14px;position:sticky;top:0;height:100vh}
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 8px 18px}
+  .brand .logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--brand),var(--brand2));
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px}
+  .brand b{font-size:16px;display:block} .brand small{color:var(--dim);font-size:11px}
+  .navi{display:flex;flex-direction:column;gap:3px;margin-top:6px}
+  .navi button{display:flex;align-items:center;gap:11px;border:none;background:none;cursor:pointer;
+    padding:10px 12px;border-radius:11px;font-size:14px;color:var(--dim);text-align:left;width:100%;font-weight:600}
+  .navi button .ni{width:19px;height:19px;flex:none;display:flex;align-items:center;justify-content:center}
+  .navi button .ni svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .navi button:hover{background:#f6f6fc;color:var(--ink)}
+  .navi button.on{background:var(--brand-soft);color:var(--brand)}
+  .navi .gap{height:1px;background:var(--line);margin:12px 8px}
+  .navi .lbl{font-size:11px;color:#aab;letter-spacing:.5px;padding:6px 12px 2px;text-transform:uppercase}
+  .side .foot{margin-top:auto}
+  .userchip{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:#f6f6fc}
+  .userchip .ua{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:13px}
+  .userchip b{font-size:13px} .userchip small{color:var(--dim);font-size:11px}
+
+  /* ===== main ===== */
+  main{flex:1;min-width:0;padding:30px 40px 60px}
+  .pagehd{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px}
+  .pagehd h1{font-size:24px;margin:0} .pagehd p{margin:4px 0 0;color:var(--dim);font-size:14px}
+  .btn{border:none;border-radius:11px;padding:10px 18px;font-size:14px;font-weight:700;cursor:pointer}
+  .btn.primary{background:var(--brand);color:#fff} .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink)}
+  .btn:active{transform:scale(.98)}
+
+  .screen{display:none;animation:fade .25s ease}
+  .screen.on{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  /* ===== HOME ===== */
+  .homegrid{display:grid;grid-template-columns:1.2fr 1fr;gap:22px;align-items:start}
+  .stage{background:linear-gradient(160deg,#2b2c42,#1c1d2e);border-radius:24px;padding:30px;
+    position:relative;overflow:hidden;box-shadow:var(--shadow);min-height:340px;display:flex;flex-direction:column;justify-content:center}
+  .stage .ring{position:absolute;inset:-30% -10% auto auto;width:300px;height:300px;border-radius:50%;
+    background:radial-gradient(circle,rgba(161,139,255,.35),transparent 60%)}
+  .face{position:relative;z-index:2;width:300px;height:230px;margin:0 auto;background:#0e0f1a;border-radius:22px;
+    display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 2px rgba(255,255,255,.05)}
+  .statusrow{display:flex;gap:10px;justify-content:center;margin-top:22px;position:relative;z-index:2;flex-wrap:wrap}
+  .chip{background:rgba(255,255,255,.1);color:#e9e9f5;border-radius:20px;padding:7px 14px;font-size:13px;display:flex;align-items:center;gap:7px}
+  .chip .led{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
+
+  .rightcol{display:flex;flex-direction:column;gap:16px}
+  .heroes{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .hero{border-radius:var(--r);padding:22px;color:#fff;cursor:pointer;position:relative;overflow:hidden;
+    min-height:150px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:var(--shadow2)}
+  .hero.exp{background:linear-gradient(150deg,#ff8a5c,#ff6b9d)}
+  .hero.voice{background:linear-gradient(150deg,#6c5ce7,#4aa8ff)}
+  .hero .emoji svg{width:32px;height:32px;stroke:#fff;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.95}
+  .chip svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .hero b{font-size:19px} .hero span{font-size:13px;opacity:.92}
+  .hero:active{transform:scale(.99)}
+  .gridcards{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .mini{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;cursor:pointer;box-shadow:var(--shadow2);transition:.15s}
+  .mini:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+  .mini .ic{height:26px;display:flex;align-items:center}
+  .mini .ic svg{width:24px;height:24px;stroke:var(--brand);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .mini b{display:block;margin-top:10px;font-size:15px} .mini small{color:var(--dim);font-size:12px}
+
+  .blocktitle{font-size:13px;color:var(--dim);font-weight:700;margin:26px 2px 12px;letter-spacing:.3px}
+
+  /* ===== 表情 ===== */
+  .exprgrid{display:grid;grid-template-columns:360px 1fr;gap:26px;align-items:start}
+  .thumbs{display:flex;gap:12px;flex-wrap:wrap}
+  .thumb{width:70px;height:70px;border-radius:16px;background:#23243a;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;border:2px solid transparent;font-size:30px}
+  .thumb.sel{border-color:var(--warm);box-shadow:0 0 0 3px rgba(255,138,92,.2)}
+  .maprow{display:flex;align-items:center;justify-content:space-between;background:var(--card);
+    border:1px solid var(--line);border-radius:14px;padding:13px 16px;margin-bottom:10px;box-shadow:var(--shadow2)}
+  .maprow .lab{display:flex;align-items:center;gap:11px;font-weight:600}.maprow .lab .e{font-size:21px}
+  select{appearance:none;border:1px solid var(--line);background:var(--brand-soft);color:var(--brand);
+    border-radius:10px;padding:9px 32px 9px 14px;font-size:13px;font-weight:600;cursor:pointer;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%236c5ce7'%3E%3Cpath d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 12px center}
+
+  /* ===== 声音 ===== */
+  .scene-h{font-size:13px;color:var(--dim);font-weight:700;margin:22px 2px 12px}
+  .vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+  .vcard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:var(--shadow2);position:relative}
+  .vcard.cur{border-color:var(--brand);box-shadow:0 0 0 3px rgba(108,92,231,.12)}
+  .vcard b{font-size:15px} .vcard small{color:var(--dim);font-size:12px;display:block;margin-top:3px}
+  .vbtns{display:flex;gap:9px;margin-top:14px}
+  .vbtn{flex:1;border:none;border-radius:10px;padding:9px 0;font-size:13px;font-weight:700;cursor:pointer}
+  .vbtn.play{background:#eef1ff;color:var(--brand)} .vbtn.set{background:var(--brand);color:#fff}
+  .vcard.cur .vbtn.set{background:var(--green)}
+  .curtag{position:absolute;top:12px;right:12px;background:var(--green);color:#fff;font-size:11px;padding:3px 9px;border-radius:8px;font-weight:700}
+  .slider-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:22px;box-shadow:var(--shadow2);max-width:520px}
+  .slider-card .t{display:flex;justify-content:space-between;font-weight:600;margin-bottom:12px}
+  input[type=range]{width:100%;accent-color:var(--brand)}
+
+  /* lists */
+  .colwrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+  .note{background:#fffaf0;border:1px solid #ffe9c2;border-radius:16px;padding:16px}
+  .note p{margin:0;font-size:15px} .note small{color:var(--dim);font-size:12px}
+  .tl{display:flex;gap:14px;margin-bottom:14px;max-width:560px}
+  .tl .dot{width:11px;height:11px;border-radius:50%;background:var(--blue);margin-top:6px;flex:none;box-shadow:0 0 0 4px #e7f1ff}
+  .tl .body{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;flex:1;box-shadow:var(--shadow2)}
+  .tl .body b{font-size:15px} .tl .body small{color:var(--dim);display:block}
+  .people{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:18px;max-width:640px}
+  .person{text-align:center}
+  .person .pa{width:80px;height:80px;border-radius:50%;margin:0 auto;display:flex;align-items:center;justify-content:center;font-size:30px;color:#fff}
+  .person b{display:block;font-size:14px;margin-top:8px}
+  .dev{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:var(--shadow2);max-width:560px}
+  .dev .di{width:50px;height:50px;border-radius:13px;background:var(--brand-soft);display:flex;align-items:center;justify-content:center;font-size:24px}
+  .dev b{font-size:16px} .dev small{color:var(--dim);display:flex;align-items:center;gap:6px}
+  .dev .led{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
+
+  .adv-item{display:flex;align-items:center;justify-content:space-between;padding:16px 6px;border-bottom:1px solid var(--line);color:var(--dim);font-size:14px;max-width:680px;cursor:pointer}
+  .adv-item:hover{background:#fafaff}
+  .adv-item .l{display:flex;align-items:center;gap:11px;color:var(--ink);font-weight:600}
+  .adv-item .l svg{width:19px;height:19px;stroke:var(--dim);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+  .tagdev{font-size:10px;background:#f0f1f6;color:var(--dim);padding:2px 7px;border-radius:6px}
+
+  .toast{position:fixed;bottom:34px;left:50%;transform:translateX(-50%) translateY(20px);background:#1d2230;color:#fff;
+    padding:12px 22px;border-radius:22px;font-size:14px;opacity:0;transition:.25s;pointer-events:none;z-index:30;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===== SIDEBAR ===== -->
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">歪</div>
+      <div><b>小歪</b><small>我的桌搭子</small></div>
+    </div>
+    <nav class="navi" id="navi">
+      <button class="on" data-s="home" onclick="go('home')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg></span>家</button>
+      <div class="lbl">核心玩法</div>
+      <button data-s="expr" onclick="go('expr')"><span class="ni"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg></span>表情</button>
+      <button data-s="voice" onclick="go('voice')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/><path d="M19 6a8 8 0 010 12"/></svg></span>声音</button>
+      <div class="lbl">日常</div>
+      <button data-s="memory" onclick="go('memory')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg></span>它记得的事</button>
+      <button data-s="remind" onclick="go('remind')"><span class="ni"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>提醒</button>
+      <button data-s="people" onclick="go('people')"><span class="ni"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span>认识的人</button>
+      <button data-s="device" onclick="go('device')"><span class="ni"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg></span>我的设备</button>
+      <div class="gap"></div>
+      <button data-s="advanced" onclick="go('advanced')"><span class="ni"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 00-1.7-1l-.3-2.6h-4l-.3 2.6a7 7 0 00-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 000 2l-2 1.5 2 3.4 2.3-1a7 7 0 001.7 1l.3 2.6h4l.3-2.6a7 7 0 001.7-1l2.3 1 2-3.4-2-1.5a7 7 0 00.1-1z"/></svg></span>高级</button>
+    </nav>
+    <div class="foot">
+      <div class="userchip">
+        <div class="ua">歪</div>
+        <div><b>主人</b><small>skyler@…</small></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== MAIN ===== -->
+  <main>
+
+    <!-- HOME -->
+    <section class="screen on" id="home">
+      <div class="pagehd"><div><h1>下午好</h1><p>你的桌搭子现在很有精神。</p></div>
+        <button class="btn ghost" onclick="go('device')">＋ 绑定设备</button></div>
+      <div class="homegrid">
+        <div class="stage">
+          <div class="ring"></div>
+          <div class="face">
+            <svg width="200" height="150" viewBox="0 0 150 120">
+              <circle cx="48" cy="52" r="17" fill="#7fe7ff"/><circle cx="102" cy="52" r="17" fill="#7fe7ff"/>
+              <circle cx="52" cy="48" r="5" fill="#0e0f1a"/><circle cx="106" cy="48" r="5" fill="#0e0f1a"/>
+              <path d="M58 84 q17 16 34 0" stroke="#ff9ec4" stroke-width="6" fill="none" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="statusrow">
+            <div class="chip"><span class="led"></span>在线</div>
+            <div class="chip"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/></svg>暖阳女声</div>
+            <div class="chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg>元气满满</div>
+            <div class="chip"><svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg>记得 3 件事</div>
+          </div>
+        </div>
+        <div class="rightcol">
+          <div class="heroes">
+            <div class="hero exp" onclick="go('expr')"><div class="emoji"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg></div><div><b>捏表情</b><br><span>换张脸 · 配情绪</span></div></div>
+            <div class="hero voice" onclick="go('voice')"><div class="emoji"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/><path d="M19 6a8 8 0 010 12"/></svg></div><div><b>调声音</b><br><span>挑音色 · 试听</span></div></div>
+          </div>
+          <div class="gridcards">
+            <div class="mini" onclick="go('memory')"><div class="ic"><svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg></div><b>它记得的事</b><small>3 条记忆</small></div>
+            <div class="mini" onclick="go('remind')"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><b>提醒</b><small>2 个提醒</small></div>
+            <div class="mini" onclick="go('people')"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></div><b>认识的人</b><small>3 个人</small></div>
+            <div class="mini" onclick="go('device')"><div class="ic"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg></div><b>我的设备</b><small>1 台在线</small></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 表情 -->
+    <section class="screen" id="expr">
+      <div class="pagehd"><div><h1>表情</h1><p>先挑一套面孔风格，再给每种情绪配一个表情。</p></div>
+        <button class="btn primary" onclick="toast('表情已保存到这台设备')">保存表情</button></div>
+      <div class="exprgrid">
+        <div class="stage" style="min-height:280px;padding:24px">
+          <div class="face" id="exprFace" style="width:260px;height:200px">
+            <svg width="170" height="135" viewBox="0 0 150 120" id="faceSvg">
+              <circle cx="48" cy="52" r="17" fill="#ffd36b"/><circle cx="102" cy="52" r="17" fill="#ffd36b"/>
+              <circle cx="52" cy="48" r="5" fill="#0e0f1a"/><circle cx="106" cy="48" r="5" fill="#0e0f1a"/>
+              <path d="M58 84 q17 16 34 0" stroke="#ff9ec4" stroke-width="6" fill="none" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <div>
+          <div class="blocktitle" style="margin-top:0">面孔风格（皮肤）</div>
+          <div class="thumbs" id="skins"></div>
+          <div class="blocktitle">情绪 → 表情</div>
+          <div id="emoMap"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 声音 -->
+    <section class="screen" id="voice">
+      <div class="pagehd"><div><h1>声音</h1><p>挑一个喜欢的音色，点 ▶ 试听，满意就设为当前。</p></div></div>
+      <div id="voiceGallery"></div>
+      <div class="slider-card">
+        <div class="t"><span>🔈 音量</span><span id="volVal">80</span></div>
+        <input type="range" min="0" max="100" value="80" oninput="document.getElementById('volVal').textContent=this.value">
+      </div>
+    </section>
+
+    <!-- 记忆 -->
+    <section class="screen" id="memory">
+      <div class="pagehd"><div><h1>它记得的事</h1><p>机器人记住的关于你的小事，随时可改可删。</p></div>
+        <button class="btn primary" onclick="toast('（演示）打开新增记忆')">＋ 加一条</button></div>
+      <div class="colwrap">
+        <div class="note"><p>主人喜欢喝美式咖啡，不加糖。</p><small>3 天前记下</small></div>
+        <div class="note"><p>每周三晚上有篮球，别安排别的。</p><small>上周记下</small></div>
+        <div class="note"><p>怕辣，点外卖默认微辣以下。</p><small>更早</small></div>
+      </div>
+    </section>
+
+    <!-- 提醒 -->
+    <section class="screen" id="remind">
+      <div class="pagehd"><div><h1>提醒</h1><p>它会在这些时间主动叫你。</p></div></div>
+      <div class="tl"><div class="dot"></div><div class="body"><b>该喝水啦</b><small>每天 10:00 / 15:00</small></div></div>
+      <div class="tl"><div class="dot" style="background:var(--warm);box-shadow:0 0 0 4px #ffeede"></div><div class="body"><b>提醒主人 9 点开周会</b><small>每周一 08:50</small></div></div>
+    </section>
+
+    <!-- 认识的人 -->
+    <section class="screen" id="people">
+      <div class="pagehd"><div><h1>认识的人</h1><p>机器人通过摄像头认识的人，可改名或删除。</p></div></div>
+      <div class="people">
+        <div class="person"><div class="pa" style="background:linear-gradient(135deg,#6c5ce7,#a18bff)">歪</div><b>主人</b></div>
+        <div class="person"><div class="pa" style="background:linear-gradient(135deg,#ff8a5c,#ff6b9d)">妈</div><b>妈妈</b></div>
+        <div class="person"><div class="pa" style="background:linear-gradient(135deg,#22c55e,#4aa8ff)">友</div><b>小林</b></div>
+      </div>
+    </section>
+
+    <!-- 设备 -->
+    <section class="screen" id="device">
+      <div class="pagehd"><div><h1>我的设备</h1><p>绑定与管理你的 Brufik 机器人。</p></div>
+        <button class="btn primary" onclick="toast('（演示）扫码 / 输入 ID 绑定新设备')">＋ 绑定新设备</button></div>
+      <div class="dev"><div class="di">🤖</div><div style="flex:1"><b>客厅小歪</b><br><small><span class="led"></span>在线 · deskbot_abc123</small></div></div>
+    </section>
+
+    <!-- 高级 -->
+    <section class="screen" id="advanced">
+      <div class="pagehd"><div><h1>高级</h1><p>开发者与进阶设置，普通使用一般用不到。</p></div></div>
+      <div class="adv-item" onclick="toast('（演示）用量与账单')"><div class="l"><svg viewBox="0 0 24 24"><line x1="6" y1="20" x2="6" y2="12"/><line x1="12" y1="20" x2="12" y2="5"/><line x1="18" y1="20" x2="18" y2="14"/></svg>用量与账单</div><span>›</span></div>
+      <div class="adv-item" onclick="toast('（演示）API Key')"><div class="l"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="5"/><path d="M11.5 11.5L21 2"/><path d="M17 6l3 3"/></svg>API Key</div><span>›</span></div>
+      <div class="adv-item" onclick="toast('（演示）LLM 模型')"><div class="l"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M20 9h2M20 14h2M2 9h2M2 14h2"/></svg>LLM 模型</div><span>›</span></div>
+      <div class="adv-item" onclick="toast('（演示）调试页')"><div class="l"><svg viewBox="0 0 24 24"><path d="M5 6l5 6-5 6"/><line x1="12" y1="18" x2="20" y2="18"/></svg>调试 · 设备 / LLM / TTS / 模拟 <span class="tagdev">DEV</span></div><span>›</span></div>
+      <div class="adv-item" onclick="toast('（演示）账号设置')"><div class="l"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>账号设置</div><span>›</span></div>
+      <p style="color:var(--dim);font-size:13px;margin-top:18px;max-width:680px">＊ 这些都是现有控制台原样搬来的，功能不变，只是默认收起、视觉降权。</p>
+    </section>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  function go(id){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('on', s.id===id));
+    document.querySelectorAll('.navi button').forEach(b=>b.classList.toggle('on', b.dataset.s===id));
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  let toastT;
+  function toast(msg){
+    const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
+    clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),1600);
+  }
+
+  // 表情皮肤
+  const skins=[
+    {e:'😊',eye:'#ffd36b',mouth:'#ff9ec4'},{e:'😎',eye:'#7fe7ff',mouth:'#9be7ff'},
+    {e:'🥰',eye:'#ff8aa6',mouth:'#ff6b9d'},{e:'🤖',eye:'#9be15d',mouth:'#cdeb7a'},
+    {e:'👾',eye:'#a18bff',mouth:'#c6b6ff'},
+  ];
+  const skinBox=document.getElementById('skins');
+  skins.forEach((s,i)=>{
+    const d=document.createElement('div');d.className='thumb'+(i===0?' sel':'');d.textContent=s.e;
+    d.onclick=()=>{document.querySelectorAll('#skins .thumb').forEach(x=>x.classList.remove('sel'));d.classList.add('sel');paintFace(s);};
+    skinBox.appendChild(d);
+  });
+  function paintFace(s){
+    document.getElementById('faceSvg').innerHTML=
+      `<circle cx="48" cy="52" r="17" fill="${s.eye}"/><circle cx="102" cy="52" r="17" fill="${s.eye}"/>
+       <circle cx="52" cy="48" r="5" fill="#0e0f1a"/><circle cx="106" cy="48" r="5" fill="#0e0f1a"/>
+       <path d="M58 84 q17 16 34 0" stroke="${s.mouth}" stroke-width="6" fill="none" stroke-linecap="round"/>`;
+  }
+
+  // 情绪映射
+  const emos=[['😄','开心'],['😲','惊讶'],['🤔','思考'],['😴','困'],['😐','待机']];
+  const scenes=['元气满满','微笑','大笑','眨眼卖萌','瞪大眼','歪头思考','打瞌睡','面无表情','害羞'];
+  const map=document.getElementById('emoMap');
+  emos.forEach(([e,n],i)=>{
+    const row=document.createElement('div');row.className='maprow';
+    const opts=scenes.map((s,j)=>`<option ${j===i?'selected':''}>${s}</option>`).join('');
+    row.innerHTML=`<div class="lab"><span class="e">${e}</span>${n}</div><select onchange="toast('「${n}」已映射到：'+this.value)">${opts}</select>`;
+    map.appendChild(row);
+  });
+
+  // 音色画廊
+  const voices={
+    '客服场景':['暖阳女声 2.0','温婉珊珊 2.0','热情艾娜 2.0','轻盈朵朵 2.0'],
+    '教育场景':['Tina老师 2.0'],
+    '有声阅读':['儿童绘本 2.0','儒雅逸辰'],
+    '视频配音':['佩奇猪 2.0'],
+    '多语种':['Dacey','Stokie','Tim'],
+  };
+  const cur='暖阳女声 2.0';
+  const vg=document.getElementById('voiceGallery');
+  Object.entries(voices).forEach(([scene,list])=>{
+    const h=document.createElement('div');h.className='scene-h';h.textContent=scene;vg.appendChild(h);
+    const grid=document.createElement('div');grid.className='vgrid';
+    list.forEach(name=>{
+      const isCur=name===cur;
+      const c=document.createElement('div');c.className='vcard'+(isCur?' cur':'');
+      c.innerHTML=`${isCur?'<span class="curtag">当前</span>':''}<b>${name}</b><small>${scene}</small>
+        <div class="vbtns"><button class="vbtn play">▶ 试听</button><button class="vbtn set">${isCur?'使用中':'设为当前'}</button></div>`;
+      c.querySelector('.play').onclick=()=>toast('🔊 试听：'+name);
+      c.querySelector('.set').onclick=()=>{
+        document.querySelectorAll('#voiceGallery .vcard').forEach(x=>{x.classList.remove('cur');
+          const tag=x.querySelector('.curtag');if(tag)tag.remove();x.querySelector('.set').textContent='设为当前';});
+        c.classList.add('cur');c.querySelector('.set').textContent='使用中';
+        c.insertAdjacentHTML('afterbegin','<span class="curtag">当前</span>');
+        toast('已把当前音色设为：'+name);
+      };
+      grid.appendChild(c);
+    });
+    vg.appendChild(grid);
+  });
+</script>
+</body>
+</html>

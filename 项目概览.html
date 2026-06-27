@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brufik in One · 项目概览</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#2a313c;
+    --txt:#e6edf3; --dim:#9aa7b4; --muted:#6b7785;
+    --hw:#f0883e; --hw-dim:#3a2a1a;
+    --sv:#58a6ff; --sv-dim:#142233;
+    --ok:#3fb950; --pink:#db61a2; --purple:#a371f7; --yellow:#e3b341;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:radial-gradient(1200px 600px at 70% -10%, #1a2230 0%, var(--bg) 55%);
+    color:var(--txt); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.65; font-size:15px;
+  }
+  a{color:var(--sv); text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{background:#22272e; padding:1px 6px; border-radius:5px; font-family:"SF Mono",Menlo,Consolas,monospace; font-size:.86em; color:#ffd9a8}
+
+  /* layout */
+  .wrap{display:flex; max-width:1280px; margin:0 auto; gap:0}
+  nav{
+    position:sticky; top:0; align-self:flex-start; width:230px; min-width:230px; height:100vh;
+    overflow-y:auto; padding:28px 18px; border-right:1px solid var(--line);
+  }
+  nav .brand{font-weight:800; font-size:17px; letter-spacing:.3px; margin-bottom:4px}
+  nav .brand span{color:var(--hw)}
+  nav .sub{color:var(--muted); font-size:12px; margin-bottom:22px}
+  nav a{display:block; color:var(--dim); padding:6px 10px; border-radius:8px; font-size:13.5px; margin:2px 0}
+  nav a:hover{background:var(--panel); color:var(--txt); text-decoration:none}
+  nav .grp{font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin:18px 0 6px 10px}
+  main{flex:1; padding:36px 44px 120px; min-width:0}
+
+  /* hero */
+  .hero{padding:30px 34px; border:1px solid var(--line); border-radius:var(--radius);
+    background:linear-gradient(135deg,#161b22 0%,#1a2433 100%); margin-bottom:30px}
+  .hero h1{margin:0 0 6px; font-size:30px; letter-spacing:.5px}
+  .hero h1 span{color:var(--hw)}
+  .hero p{margin:0; color:var(--dim); max-width:760px}
+  .pills{margin-top:18px; display:flex; flex-wrap:wrap; gap:8px}
+  .pill{font-size:12px; padding:4px 11px; border-radius:20px; border:1px solid var(--line); background:#0d1117; color:var(--dim)}
+  .pill.hw{border-color:#5a3a1f; color:var(--hw)}
+  .pill.sv{border-color:#234; color:var(--sv)}
+
+  section{margin:42px 0; scroll-margin-top:20px}
+  h2{font-size:22px; margin:0 0 4px; display:flex; align-items:center; gap:10px}
+  h2 .tag{font-size:11px; padding:2px 9px; border-radius:6px; font-weight:600}
+  .tag.hw{background:var(--hw-dim); color:var(--hw)}
+  .tag.sv{background:var(--sv-dim); color:var(--sv)}
+  .lead{color:var(--dim); margin:0 0 18px}
+  h3{font-size:16px; margin:26px 0 10px; color:#fff}
+
+  .grid{display:grid; gap:14px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:900px){.g2,.g3{grid-template-columns:1fr}}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px}
+  .card h4{margin:0 0 8px; font-size:15px; display:flex; align-items:center; gap:8px}
+  .card.hw{border-top:3px solid var(--hw)}
+  .card.sv{border-top:3px solid var(--sv)}
+  .card p{margin:0 0 6px; color:var(--dim); font-size:14px}
+  .ico{width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center; border-radius:7px; font-size:14px; flex:none}
+  .ico.hw{background:var(--hw-dim)} .ico.sv{background:var(--sv-dim)}
+
+  ul.clean{margin:6px 0; padding-left:20px} ul.clean li{margin:4px 0; color:var(--dim)}
+  ul.clean li b{color:var(--txt)}
+
+  table{width:100%; border-collapse:collapse; margin:12px 0; font-size:13.5px}
+  th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.5px}
+  td b{color:var(--txt)}
+  tr:hover td{background:#12161d}
+
+  /* pipeline */
+  .flow{display:flex; align-items:stretch; gap:0; flex-wrap:wrap; margin:18px 0}
+  .step{flex:1; min-width:120px; background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:14px 12px; text-align:center; position:relative}
+  .step .n{font-size:11px; color:var(--muted)}
+  .step .t{font-weight:700; margin:3px 0; font-size:15px}
+  .step .d{font-size:12px; color:var(--dim)}
+  .arrow{display:flex; align-items:center; color:var(--hw); font-size:20px; padding:0 6px}
+  @media(max-width:900px){.arrow{transform:rotate(90deg)}}
+
+  .note{background:var(--panel2); border-left:3px solid var(--purple); padding:12px 16px; border-radius:0 10px 10px 0; margin:14px 0; color:var(--dim); font-size:14px}
+  .note b{color:var(--txt)}
+
+  .kvs{display:grid; grid-template-columns:auto 1fr; gap:6px 16px; font-size:13.5px; margin:8px 0}
+  .kvs dt{color:var(--muted)} .kvs dd{margin:0; color:var(--txt)}
+
+  .feat{display:flex; gap:12px; padding:13px 0; border-bottom:1px solid var(--line)}
+  .feat:last-child{border-bottom:none}
+  .feat .fi{font-size:20px; flex:none; width:30px; text-align:center}
+  .feat .ft{font-weight:600} .feat .fd{color:var(--dim); font-size:13.5px}
+
+  .legend{display:flex; gap:18px; margin:8px 0 0; font-size:12.5px; color:var(--muted); flex-wrap:wrap}
+  .dot{display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:middle}
+
+  footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); color:var(--muted); font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="brand">Brufik<span> in One</span></div>
+  <div class="sub">桌面 AI 语音机器人 · 一体化仓库</div>
+  <a href="#overview">📦 项目定位</a>
+  <a href="#whole">🔗 整体闭环</a>
+  <div class="grp">硬件 / 固件</div>
+  <a href="#hw-device">🤖 实体设备</a>
+  <a href="#hw-firmware">⚙️ 固件能力</a>
+  <a href="#hw-interact">🙋 设备交互</a>
+  <div class="grp">语音后台 Service</div>
+  <a href="#sv-pipeline">🎙️ 语音管线</a>
+  <a href="#sv-protocol">📡 通信协议</a>
+  <a href="#sv-llm">🧠 LLM 与工具</a>
+  <a href="#sv-tts">👄 TTS 与口型</a>
+  <a href="#sv-console">🖥️ Web 控制台</a>
+  <div class="grp">总览</div>
+  <a href="#features">✨ 功能清单</a>
+  <a href="#quickstart">🚀 快速上手</a>
+  <a href="#takeaways">💡 评估与思路</a>
+</nav>
+
+<main>
+
+<div class="hero">
+  <h1>Brufik <span>in One</span></h1>
+  <p>一个把 <b>硬件 / 固件</b> 与 <b>语音 AI 后台</b> 合在一个仓库里的开源「桌面陪伴机器人」项目。设备端是一只会转头、有表情、能对话的小机器人；后台端是一条完整的 <b>VAD → ASR → LLM → TTS</b> 语音管线，外加人脸识别、记忆、定时任务和 Web 管理控制台。两者通过一条 WebSocket 长连接（<code>/asr_chat</code>）实时联动。</p>
+  <div class="pills">
+    <span class="pill hw">ESP32-S3 固件</span>
+    <span class="pill hw">双轴舵机转头</span>
+    <span class="pill hw">1.83″ 表情屏</span>
+    <span class="pill sv">FunASR 本地识别</span>
+    <span class="pill sv">通义千问 LLM</span>
+    <span class="pill sv">Doubao / Paddle TTS</span>
+    <span class="pill sv">人脸识别 + 跟随</span>
+    <span class="pill">GPL-3.0 / CERN-OHL</span>
+  </div>
+</div>
+
+<!-- ============ 项目定位 ============ -->
+<section id="overview">
+  <h2>📦 项目定位</h2>
+  <p class="lead">这是一台「桌搭子」级别的 AI 语音陪伴机器人，DIY 友好、成本低，强调表情/动作的拟人化反馈。</p>
+  <div class="grid g3">
+    <div class="card">
+      <h4>🎯 是什么</h4>
+      <p>放在桌面上的小机器人，能听你说话、用自己的「声音 + 表情 + 转头动作」回应你，还能看着你（摄像头人脸跟随）。</p>
+    </div>
+    <div class="card">
+      <h4>👥 给谁用</h4>
+      <p>面向开发者 / 创客 / DIY 玩家。提供完整 PCB、3D 结构件、固件与后台源码，可自行烧录、组装、私有化部署。</p>
+    </div>
+    <div class="card">
+      <h4>🧩 一体化仓库</h4>
+      <p>由两个原本独立的项目合并而来：<code>hardware/</code>（Brufik 硬件）+ <code>service/</code>（opendesk-service 后台），统一管理、协同迭代。</p>
+    </div>
+  </div>
+
+  <h3>仓库结构</h3>
+  <table>
+    <tr><th>目录</th><th>角色</th><th>内容</th></tr>
+    <tr><td><b>hardware/</b> <span class="pill hw" style="font-size:10px">设备</span></td><td>实体机器人</td><td>ESP32-S3 固件、机械结构件（STEP/说明书）、PCB 重建文件（KiCad）、烧录脚本、自定义 bootloader / 分区表</td></tr>
+    <tr><td><b>service/</b> <span class="pill sv" style="font-size:10px">大脑</span></td><td>云端 / 本地后台</td><td><code>deskbot-server</code>（主服务，WS+Web）、<code>paddlespeech-server</code>（本地 TTS 旁路）、协议文档、配置</td></tr>
+  </table>
+</section>
+
+<!-- ============ 整体闭环 ============ -->
+<section id="whole">
+  <h2>🔗 整体交互闭环</h2>
+  <p class="lead">一句话讲清楚：你对着机器人说话，声音上云、被理解、生成回答与表情/动作，再下发回设备播放。</p>
+
+  <div class="flow">
+    <div class="step"><div class="n">设备端</div><div class="t">🎤 说话</div><div class="d">PDM 麦克风采集，VAD 触发</div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="n">WebSocket 上行</div><div class="t">📤 送音频</div><div class="d">16kHz PCM / Opus + flush</div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="n">后台管线</div><div class="t">🧠 理解+生成</div><div class="d">ASR→LLM(工具)→TTS</div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="n">WebSocket 下行</div><div class="t">📥 pb 帧</div><div class="d">PCM音频+口型+舵机+屏字</div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="n">设备端</div><div class="t">🗣️ 回应</div><div class="d">播音+动嘴+转头+显示</div></div>
+  </div>
+
+  <div class="note">
+    <b>关键设计：</b>设备「轻」、后台「重」。ESP32 几乎只负责采音、播音、画屏、转舵机；所有智能（识别、对话、人脸、记忆、定时）都在后台。默认模式 <code>asr_chat_device_pb_only</code> 下，设备只需解析 <code>pb_start / pb_chunk / pb_end</code> 三类下行帧 + 配套的 24kHz PCM，复杂度低、固件稳定。
+  </div>
+</section>
+
+<!-- ============ HARDWARE ============ -->
+<section id="hw-device">
+  <h2>🤖 实体设备 <span class="tag hw">HARDWARE</span></h2>
+  <p class="lead">基于 <b>Seeed XIAO ESP32-S3 Sense</b> 的桌面小机器人：一块表情屏 + 双轴转头 + 麦克风/喇叭 + 摄像头。</p>
+
+  <div class="grid g2">
+    <div class="card hw">
+      <h4><span class="ico hw">🧠</span>主控 & 感知</h4>
+      <ul class="clean">
+        <li><b>MCU：</b>XIAO ESP32-S3（双核，8MB PSRAM）</li>
+        <li><b>摄像头：</b>板载 OV2640（120° 广角）</li>
+        <li><b>麦克风：</b>板载 PDM 麦（无需外接）</li>
+        <li><b>喇叭：</b>2011 腔体喇叭 + MAX98357A I2S 功放</li>
+      </ul>
+    </div>
+    <div class="card hw">
+      <h4><span class="ico hw">🖥️</span>显示 & 动作</h4>
+      <ul class="clean">
+        <li><b>屏幕：</b>1.83″ ST7789P SPI LCD，<b>240×284</b></li>
+        <li><b>转头：</b>双轴舵机 — X 平移(60–120°) / Y 俯仰(70–110°)</li>
+        <li><b>状态灯：</b>可编程 RGB LED</li>
+        <li><b>供电：</b>USB-C 5V（舵机）+ 3.3V（逻辑）</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>引脚与硬件映射（deskbot_config.h）</h3>
+  <table>
+    <tr><th>模块</th><th>接口</th><th>引脚</th></tr>
+    <tr><td>LCD 屏</td><td>SPI</td><td>MOSI=GPIO9 · SCK=GPIO7 · CS=GPIO2 · DC=GPIO3</td></tr>
+    <tr><td>舵机 X（平移）</td><td>PWM</td><td>D7 / GPIO44，限位 60–120°</td></tr>
+    <tr><td>舵机 Y（俯仰）</td><td>PWM</td><td>D6 / GPIO43，限位 70–110°</td></tr>
+    <tr><td>I2S 音频</td><td>播放</td><td>DIN=GPIO1 · BCLK=GPIO6 · LRC=GPIO5</td></tr>
+    <tr><td>PDM 麦克风</td><td>采集</td><td>CLK=GPIO42 · DATA=GPIO41（板载）</td></tr>
+  </table>
+  <div class="note">机械结构提供完整 <b>STEP 模型</b>（<code>Brufik step all v1.01.STP</code>）与图文 <b>装配说明书</b>（<code>说明书1.02PDF.pdf</code>）；PCB 提供 KiCad 重建文件（<code>mechanical/pcb/Board1/</code>），也支持手工飞线方案。</div>
+</section>
+
+<section id="hw-firmware">
+  <h2>⚙️ 固件能力 <span class="tag hw">HARDWARE</span></h2>
+  <p class="lead">FreeRTOS 多任务固件（PlatformIO 构建，环境 <code>seeed_xiao_esp32s3</code>），各能力独立成任务。</p>
+  <table>
+    <tr><th>模块</th><th>文件</th><th>职责</th></tr>
+    <tr><td><b>语音会话</b></td><td>asr_chat_client</td><td>连接后台 <code>/asr_chat</code>，跑「采音→上传→收 pb→播放/动作」整轮</td></tr>
+    <tr><td><b>音频采集</b></td><td>audio_capture</td><td>I2S 16kHz 单声道，20ms/帧，基于噪声门限的 VAD 触发</td></tr>
+    <tr><td><b>音频播放</b></td><td>audio_player</td><td>I2S 输出 + DMA 队列，支持 PCM 流 / WAV / 音量控制</td></tr>
+    <tr><td><b>转头控制</b></td><td>head</td><td>双轴舵机 50Hz 刷新，斜坡平滑运动，预置点头/摇头/看向手势</td></tr>
+    <tr><td><b>显示</b></td><td>oled_display</td><td>ST7789 驱动，从 pb 动画帧渲染表情/口型/文字（含 UTF-8）</td></tr>
+    <tr><td><b>摄像头</b></td><td>camera_ws / camera_http</td><td>OV2640 采 JPEG，WebSocket 上行（帧率可由后台调）</td></tr>
+    <tr><td><b>配网</b></td><td>wifi_provision</td><td>NVS 存最多 10 个 SSID；无网时开热点 <code>Deskbot_Rom</code>（192.168.4.1）配网</td></tr>
+  </table>
+  <div class="note"><b>启动顺序的小心思：</b>舵机引脚 GPIO44/43 与 UART 复用，专门做了自定义 bootloader 钩子，避免上电/烧录时舵机被误触发抽动；摄像头初始化后才挂载舵机。</div>
+</section>
+
+<section id="hw-interact">
+  <h2>🙋 设备端交互 <span class="tag hw">HARDWARE</span></h2>
+  <div class="grid g2">
+    <div class="card hw">
+      <h4>👆 用户怎么操作</h4>
+      <ul class="clean">
+        <li>插 USB-C 上电 → 屏显进度 → <b>Ready</b></li>
+        <li>自动连 WiFi；连不上 → 连热点 <code>Deskbot_Rom</code> 网页配网</li>
+        <li><b>直接开口说话</b>（VAD 自动起停，无需按键/唤醒词）</li>
+        <li>串口 CLI 可做出厂复位 / 调试（<code>factory reset_wifi</code>）</li>
+      </ul>
+    </div>
+    <div class="card hw">
+      <h4>📢 设备怎么反馈（多模态）</h4>
+      <ul class="clean">
+        <li><b>屏幕：</b>动态表情脸 + 跟随语音的<b>口型</b> + 底部屏显文字</li>
+        <li><b>声音：</b>播放 TTS 合成语音（24kHz）</li>
+        <li><b>动作：</b>转头点头/摇头/看向某方向、跟随人脸</li>
+        <li><b>灯光：</b>RGB 状态灯（聆听/就绪/错误）</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SERVICE ============ -->
+<section id="sv-pipeline">
+  <h2>🎙️ 语音管线 <span class="tag sv">SERVICE</span></h2>
+  <p class="lead">后台核心是一条完整的语音对话流水线，每个环节都可在 <code>config.yaml</code> 调参或切换实现。</p>
+
+  <div class="flow">
+    <div class="step" style="border-top:3px solid var(--ok)"><div class="n">① 端点检测</div><div class="t">VAD</div><div class="d">WebRTC VAD<br>判断说没说话</div></div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-top:3px solid var(--sv)"><div class="n">② 语音转文字</div><div class="t">ASR</div><div class="d">FunASR<br>SenseVoiceSmall（本地）</div></div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-top:3px solid var(--purple)"><div class="n">③ 大模型</div><div class="t">LLM</div><div class="d">通义千问 qwen-flash<br>工具循环</div></div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-top:3px solid var(--pink)"><div class="n">④ 文字转语音</div><div class="t">TTS</div><div class="d">Doubao / PaddleSpeech<br>含音素口型</div></div>
+    <div class="arrow">→</div>
+    <div class="step" style="border-top:3px solid var(--hw)"><div class="n">⑤ 组帧下发</div><div class="t">pb wire</div><div class="d">音频+口型+舵机<br>+屏字</div></div>
+  </div>
+
+  <table>
+    <tr><th>环节</th><th>实现</th><th>要点</th></tr>
+    <tr><td><b>VAD</b></td><td>WebRTC VAD</td><td>mode=3，30ms 帧，最短语音 250ms / 最长静音 500ms</td></tr>
+    <tr><td><b>ASR</b></td><td>FunASR · SenseVoiceSmall</td><td>本地模型（~900MB），中文，支持 Opus/PCM16@16kHz，含文本过滤（最短长度 / 中文占比）</td></tr>
+    <tr><td><b>LLM</b></td><td>DashScope（通义千问）</td><td>OpenAI 兼容接口，默认 <code>qwen-flash</code>，JSON 模式 + 多轮工具调用（最多 8 轮）</td></tr>
+    <tr><td><b>TTS</b></td><td>PaddleSpeech / Doubao 双后端</td><td>输出 24kHz 单声道 PCM + 音素级时间戳用于口型</td></tr>
+  </table>
+</section>
+
+<section id="sv-protocol">
+  <h2>📡 设备通信协议 <span class="tag sv">SERVICE</span></h2>
+  <p class="lead">设备与后台之间是<b>单条持久 WebSocket</b>（<code>/asr_chat?device_id=&amp;api_key=</code>，端口 9000），采用「JSON + 二进制」配对帧，不做 base64。</p>
+
+  <div class="grid g2">
+    <div class="card sv">
+      <h4>⬆️ 上行（设备 → 后台）</h4>
+      <table style="margin:0">
+        <tr><th>类型</th><th>含义</th></tr>
+        <tr><td><code>audio</code> + bin</td><td>Opus/PCM16 音频流，<code>flush</code> 触发处理</td></tr>
+        <tr><td><code>camera_frame</code></td><td>JPEG 帧（可选），触发人脸检测/跟随</td></tr>
+        <tr><td><code>pb_ack</code></td><td>背压反馈：缓冲时长、当前舵机角度</td></tr>
+        <tr><td><code>ping</code></td><td>保活</td></tr>
+      </table>
+    </div>
+    <div class="card sv">
+      <h4>⬇️ 下行（后台 → 设备）</h4>
+      <table style="margin:0">
+        <tr><th>类型</th><th>含义</th></tr>
+        <tr><td><code>pb_start</code></td><td>序列首帧（含优先级 / 动作）</td></tr>
+        <tr><td><code>pb_chunk</code></td><td>续传分片</td></tr>
+        <tr><td><code>pb_end</code></td><td>序列结束</td></tr>
+        <tr><td><code>pb_single</code></td><td>一帧打包全部</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="note">
+    每个 pb 帧承载三种东西：<b>音频</b>（s16le 24kHz PCM）、<b>动画</b>（<code>anim[]</code>：背景/眼/嘴/鼻等图层 + 音素口型）、<b>舵机</b>（<code>servo[]</code>：绝对/相对/保持，X/Y 角度 + 时长）。画布固定 <b>284×240</b>。下行带<b>优先级队列</b>（0 空闲 / 1 说话 / 2 紧急 / 3 调试），高优先级到达可清掉旧的低优先级播放，实现「打断」。
+  </div>
+</section>
+
+<section id="sv-llm">
+  <h2>🧠 LLM 与工具生态 <span class="tag sv">SERVICE</span></h2>
+  <p class="lead">人设是「小歪」——桌面陪伴体，回答简短（&lt;50 字）、诚实、能感知人脸与时间。LLM 返回 JSON，可携带工具调用，后台执行后把结果喂回，循环至无工具为止。</p>
+
+  <div class="grid g3">
+    <div class="card"><h4>⏰ 任务 / 记忆</h4><ul class="clean">
+      <li><code>schedule_task</code> 定时提醒（北京时区 cron）</li>
+      <li><code>memory_add / delete</code> 长期记忆</li>
+      <li><code>session</code> 查会话历史</li>
+    </ul></div>
+    <div class="card"><h4>👀 视觉 / 动作</h4><ul class="clean">
+      <li><code>capture_camera</code> 取最新画面</li>
+      <li><code>register_face</code> 登记人脸</li>
+      <li><code>set_camera_follow</code> 人脸跟随模式</li>
+    </ul></div>
+    <div class="card"><h4>🌐 外部 / 文件</h4><ul class="clean">
+      <li><code>webfetch / websearch</code> 联网</li>
+      <li><code>read / write</code> 沙箱文件读写</li>
+      <li>多轮工具循环（上限 8 轮）</li>
+    </ul></div>
+  </div>
+
+  <h3>记忆 / 会话 / 多轮</h3>
+  <ul class="clean">
+    <li><b>会话：</b>10 分钟空闲超时，按 <code>session_id</code> 存历史，下一轮带上下文。</li>
+    <li><b>长期记忆：</b>每设备一份 <code>user_memory.json</code>，注入 LLM 上下文，可在控制台增删改。</li>
+    <li><b>人脸档案：</b>MediaPipe 检测 + InsightFace ArcFace 512 维向量（相似度阈值 0.4）识别身份，可命名。</li>
+    <li><b>数据隔离：</b>每个 <code>device_id</code> 独立目录（人设/记忆/人脸/会话/临时文件）。</li>
+  </ul>
+</section>
+
+<section id="sv-tts">
+  <h2>👄 TTS 与口型同步 <span class="tag sv">SERVICE</span></h2>
+  <p class="lead">这是该项目让机器人「活起来」的关键——把语音、嘴型、屏显文字三者对齐。</p>
+  <div class="grid g2">
+    <div class="card sv">
+      <h4>🔊 双 TTS 后端</h4>
+      <p><b>PaddleSpeech（默认·本地）：</b>ONNX 流式声码器，按音素数把 PCM 均分得到近似时长，端口 8092 旁路服务。</p>
+      <p><b>Doubao（豆包·云端，可选）：</b>字节 Seed-TTS 2.0 双向 WebSocket，可返回 <code>words/phonemes</code> 精确时间戳；无时间戳时按拼音音节回退均分。</p>
+    </div>
+    <div class="card sv">
+      <h4>📝 底部屏显文字</h4>
+      <p>LLM 输出可带 <code>screen_text</code>（支持 <code>\n</code> 换行）+ <code>screen_text_color</code>。后台渲染成 pb 动画里的文字图层，<b>底部居中</b>显示、自动换行。</p>
+      <p>与朗读分离：<code>tts</code> 是念出来的，<code>screen_text</code> 只显示不念。</p>
+    </div>
+  </div>
+  <div class="note"><b>音素口型映射：</b><code>face_mouth_by_phoneme.json</code> 把音素映射到嘴部图层形状/位置/颜色；TTS 返回的音素时间轴驱动屏幕逐帧换嘴型，从而和声音同步——这就是最近一次提交「Doubao TTS backend with phoneme lip-sync」做的事。</div>
+</section>
+
+<section id="sv-console">
+  <h2>🖥️ Web 控制台 <span class="tag sv">SERVICE</span></h2>
+  <p class="lead">Flask 独立进程（端口 5050），邮箱+密码登录，SQLite 存储，给用户做设备绑定、用量监控、记忆/人脸管理与调试。</p>
+  <div class="grid g3">
+    <div class="card"><h4>📊 仪表盘 / 用量</h4><p>近 7 天 ASR/人脸/LLM/TTS 用量；按 API Key / 设备 / 日期细分。</p></div>
+    <div class="card"><h4>📱 我的设备</h4><p>注册/绑定 <code>device_id</code>，切换当前设备。</p></div>
+    <div class="card"><h4>⏰ 定时任务</h4><p>查看 LLM 创建的提醒（北京时间），可删除。</p></div>
+    <div class="card"><h4>🧠 记忆</h4><p>每设备长期记忆条目增删改，注入对话上下文。</p></div>
+    <div class="card"><h4>🙂 人脸档案</h4><p>查看每设备已登记人脸（person_id / 名字 / face_id）。</p></div>
+    <div class="card"><h4>🔑 账户设置</h4><p>API Key 管理（<code>odk_*</code>，含免费试用 key）、改密码、显示名。</p></div>
+    <div class="card"><h4>🐞 调试 · LLM</h4><p>不走 ASR 直接测对话、看 JSON 解析。</p></div>
+    <div class="card"><h4>🐞 调试 · TTS</h4><p>测合成、看音素切分时间。</p></div>
+    <div class="card"><h4>🐞 调试 · 模拟</h4><p>整轮模拟：user_text → LLM → pb 输出。</p></div>
+  </div>
+</section>
+
+<!-- ============ 功能清单 ============ -->
+<section id="features">
+  <h2>✨ 完整功能清单</h2>
+  <div class="grid g2">
+    <div class="card">
+      <div class="feat"><div class="fi">🗣️</div><div><div class="ft">自然语音对话</div><div class="fd">无唤醒词，VAD 自动起停，多轮上下文</div></div></div>
+      <div class="feat"><div class="fi">😊</div><div><div class="ft">表情 + 口型动画</div><div class="fd">数据驱动的表情场景，音素级嘴型同步</div></div></div>
+      <div class="feat"><div class="fi">🔄</div><div><div class="ft">转头与手势</div><div class="fd">点头/摇头/看向，平滑斜坡运动</div></div></div>
+      <div class="feat"><div class="fi">📝</div><div><div class="ft">底部屏显文字</div><div class="fd">可独立于语音显示彩色文字</div></div></div>
+    </div>
+    <div class="card">
+      <div class="feat"><div class="fi">👁️</div><div><div class="ft">人脸识别 + 跟随</div><div class="fd">认人、起名，舵机自动追脸/注视</div></div></div>
+      <div class="feat"><div class="fi">🧠</div><div><div class="ft">长期记忆</div><div class="fd">记住关于你的事，跨会话保留</div></div></div>
+      <div class="feat"><div class="fi">⏰</div><div><div class="ft">定时提醒</div><div class="fd">"提醒我喝水" → 后台 cron，到点主动播报</div></div></div>
+      <div class="feat"><div class="fi">🌐</div><div><div class="ft">联网 + 工具</div><div class="fd">搜索、抓网页、文件读写沙箱</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 快速上手 ============ -->
+<section id="quickstart">
+  <h2>🚀 快速上手</h2>
+  <div class="grid g2">
+    <div class="card sv">
+      <h4><span class="ico sv">1</span>启动后台</h4>
+      <div class="kvs">
+        <dt>进入</dt><dd><code>cd service</code></dd>
+        <dt>配置</dt><dd>复制 <code>.env.example</code>，填 <code>LLM_API_KEY</code></dd>
+        <dt>启动</dt><dd><code>./start.sh</code>（拉起 TTS + 主服务 + 控制台）</dd>
+        <dt>控制台</dt><dd><code>http://&lt;IP&gt;:5050/</code></dd>
+        <dt>设备 WS</dt><dd><code>ws://&lt;IP&gt;:9000/asr_chat</code></dd>
+      </div>
+    </div>
+    <div class="card hw">
+      <h4><span class="ico hw">2</span>烧录固件</h4>
+      <div class="kvs">
+        <dt>进入</dt><dd><code>cd hardware</code></dd>
+        <dt>配置</dt><dd>改 <code>firmware/deskbot_config.h</code>：WiFi、WS 地址、API Key</dd>
+        <dt>烧录</dt><dd><code>./flash_rom.sh all</code>（编译+烧录+看日志）</dd>
+        <dt>分区</dt><dd>7MB 固件 + 1MB FFat（舵机校准）</dd>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>许可证：</b>硬件结构 CERN-OHL-S-2.0；固件与后台 GPL-3.0。</div>
+</section>
+
+<!-- ============ 评估 ============ -->
+<section id="takeaways">
+  <h2>💡 设计思路评估</h2>
+  <div class="grid g2">
+    <div class="card" style="border-top:3px solid var(--ok)">
+      <h4>👍 亮点</h4>
+      <ul class="clean">
+        <li><b>端云职责清晰：</b>设备极简（只解析 3 类 pb 帧），智能全在后台，固件好维护。</li>
+        <li><b>拟人化反馈到位：</b>语音 + 表情 + 口型 + 转头 + 屏字五通道，音素级同步，"活"感强。</li>
+        <li><b>可插拔：</b>ASR/LLM/TTS 各自可换；TTS 本地(Paddle)/云(Doubao) 双后端。</li>
+        <li><b>产品化完整：</b>带账号体系、API Key、用量统计、记忆/人脸/定时管理与调试控制台。</li>
+        <li><b>开源全栈：</b>从 STEP 结构件、PCB、bootloader 到后台一应俱全，可完整复刻。</li>
+      </ul>
+    </div>
+    <div class="card" style="border-top:3px solid var(--yellow)">
+      <h4>🔍 可关注点</h4>
+      <ul class="clean">
+        <li><b>依赖外部 API：</b>LLM 走 DashScope、Doubao 走字节云，需密钥与网络，非纯本地。</li>
+        <li><b>资源占用：</b>本地 ASR 模型 ~900MB + 人脸模型，后台对机器有一定要求。</li>
+        <li><b>设备录音是定长轮次：</b>固件按最长 10s/轮录音，长句/打断体验取决于 VAD 调参。</li>
+        <li><b>配置偏手工：</b>固件 WiFi/Key 为编译期写死（也支持热点配网），首次门槛偏开发者向。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  本页由对仓库 <code>brufik_in_one</code> 的源码与文档梳理生成 · 涵盖 <code>hardware/</code> 与 <code>service/</code> 两个子系统 ·
+  关键参考：<code>README.md</code>、<code>service/docs/esp32_pb_protocol.md</code>、<code>service/config.yaml</code>、<code>hardware/firmware/deskbot_config.h</code> 等。
+</footer>
+
+</main>
+</div>
+</body>
+</html>
