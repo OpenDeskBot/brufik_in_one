@@ -131,3 +131,9 @@
   .toast{position:fixed;bottom:34px;left:50%;transform:translateX(-50%) translateY(20px);background:#1d2230;color:#fff;
     padding:12px 22px;border-radius:22px;font-size:14px;opacity:0;transition:.25s;pointer-events:none;z-index:30;box-shadow:0 8px 30px rgba(0,0,0,.25)}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.navi .navlink{display:flex;align-items:center;gap:11px;text-decoration:none;
+  padding:10px 12px;border-radius:11px;font-size:14px;color:var(--dim);font-weight:600}
+.navi .navlink:hover{background:#f6f6fc;color:var(--ink)}
+.navi .navlink.on{background:var(--brand-soft);color:var(--brand)}
+.navi .navlink svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
