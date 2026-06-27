@@ -20,7 +20,19 @@ def temp_db(monkeypatch):
         yield db_path
 
 
-def _login_client():
+PAGES = ["/home", "/voice", "/expr", "/my/memories", "/my/reminders", "/my/people", "/my/devices", "/advanced"]
+
+
+@pytest.mark.parametrize("path", PAGES)
+def test_2c_pages_redirect_when_anonymous(temp_db, path):
+    from deskbot_server.web.app import create_app
+
+    client = create_app().test_client()
+    assert client.get(path).status_code == 302
+
+
+@pytest.mark.parametrize("path", PAGES)
+def test_2c_pages_render_when_logged_in(temp_db, path):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
@@ -28,20 +40,5 @@ def _login_client():
     app = create_app()
     client = app.test_client()
     client.post("/login", data={"email": "u2c@example.com", "password": "password1234"})
-    return client
-
-
-PAGES = ["/home", "/voice", "/expr", "/my/memories", "/my/reminders", "/my/people", "/my/devices", "/advanced"]
-
-
-def test_2c_pages_redirect_when_anonymous(temp_db):
-    from deskbot_server.web.app import create_app
-
-    client = create_app().test_client()
-    assert client.get("/home").status_code == 302
-
-
-@pytest.mark.parametrize("path", PAGES)
-def test_2c_pages_render_when_logged_in(temp_db, path):
-    resp = _login_client().get(path)
+    resp = client.get(path)
     assert resp.status_code == 200

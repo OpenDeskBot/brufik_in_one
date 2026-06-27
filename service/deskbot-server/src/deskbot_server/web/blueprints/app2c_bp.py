@@ -3,6 +3,7 @@ from __future__ import annotations
 from flask import Blueprint, render_template
 from flask_login import login_required
 
+# No url_prefix: 2C consumer routes live at root (/home, /voice, /my/*)
 bp = Blueprint("app2c", __name__)
 
 
