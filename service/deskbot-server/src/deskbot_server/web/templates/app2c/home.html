@@ -1,6 +1,8 @@
 {% extends "base_2c.html" %}
 {% block page_title %}家 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
 {% block content %}
+<div id="home">
       <div class="pagehd"><div><h1>下午好</h1><p>你的桌搭子现在很有精神。</p></div>
         <button class="btn ghost" onclick="location.href='{{ url_for('app2c.devices') }}'">＋ 绑定设备</button></div>
       <div class="homegrid">
@@ -14,10 +16,10 @@
             </svg>
           </div>
           <div class="statusrow">
-            <div class="chip"><span class="led"></span>在线</div>
-            <div class="chip"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/></svg>暖阳女声</div>
-            <div class="chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg>元气满满</div>
-            <div class="chip"><svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg>记得 3 件事</div>
+            <div class="chip"><span class="led" :style="bound ? null : 'background:#9aa7b4;box-shadow:none'"></span>[[ bound ? '已连接' : '未绑定设备' ]]</div>
+            <div class="chip"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/></svg>[[ voiceLabel ]]</div>
+            <div class="chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg>[[ emotionCount ]] 种情绪</div>
+            <div class="chip"><svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg>记得 [[ memoryCount ]] 件事</div>
           </div>
         </div>
         <div class="rightcol">
@@ -26,11 +28,46 @@
             <div class="hero voice" onclick="location.href='{{ url_for('app2c.voice') }}'"><div class="emoji"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/><path d="M19 6a8 8 0 010 12"/></svg></div><div><b>调声音</b><br><span>挑音色 · 试听</span></div></div>
           </div>
           <div class="gridcards">
-            <div class="mini" onclick="location.href='{{ url_for('app2c.memories') }}'"><div class="ic"><svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg></div><b>它记得的事</b><small>3 条记忆</small></div>
-            <div class="mini" onclick="location.href='{{ url_for('app2c.reminders') }}'"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><b>提醒</b><small>2 个提醒</small></div>
-            <div class="mini" onclick="location.href='{{ url_for('app2c.people') }}'"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></div><b>认识的人</b><small>3 个人</small></div>
-            <div class="mini" onclick="location.href='{{ url_for('app2c.devices') }}'"><div class="ic"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg></div><b>我的设备</b><small>1 台在线</small></div>
+            <div class="mini" onclick="location.href='{{ url_for('app2c.memories') }}'"><div class="ic"><svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg></div><b>它记得的事</b><small>[[ memoryCount ]] 条记忆</small></div>
+            <div class="mini" onclick="location.href='{{ url_for('app2c.reminders') }}'"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><b>提醒</b><small>[[ reminderCount ]] 个提醒</small></div>
+            <div class="mini" onclick="location.href='{{ url_for('app2c.people') }}'"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></div><b>认识的人</b><small>[[ peopleCount ]] 个人</small></div>
+            <div class="mini" onclick="location.href='{{ url_for('app2c.devices') }}'"><div class="ic"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg></div><b>我的设备</b><small>[[ deviceCount ]] 台设备</small></div>
           </div>
         </div>
       </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({
+  delimiters: ['[[', ']]'],
+  data(){ return { bound:false, voiceLabel:'未设置音色', emotionCount:0, memoryCount:0, reminderCount:0, peopleCount:0, deviceCount:0 }; },
+  methods:{
+    async j(u){ try{ return await (await fetch(u)).json(); }catch(e){ return {}; } },
+    async load(){
+      // 当前音色：火山引擎(豆包)返回 speaker id，再用音色清单解析成展示名称
+      const cfg = await this.j('/api/doubao_tts/config');
+      const sid = (cfg.config && cfg.config.speaker) || '';
+      if(sid){
+        const sp = await this.j('/api/doubao_tts/speakers');
+        const hit = (sp.speakers || []).find(x => x.id === sid);
+        this.voiceLabel = hit ? hit.label : sid;
+      }
+      // 设备
+      const dv = await this.j('/app/api/devices');
+      this.deviceCount = (dv.devices || []).length;
+      this.bound = !!dv.current_device_id;
+      // 以下统计依赖已选当前设备
+      if(this.bound){
+        const mem = await this.j('/app/api/memories'); this.memoryCount = (mem.memories || []).length;
+        const rem = await this.j('/app/api/scheduled-tasks'); this.reminderCount = (rem.tasks || []).length;
+        const ppl = await this.j('/app/api/face-profiles'); this.peopleCount = (ppl.profiles || []).length;
+        const em = await this.j('/api/emotion_expr_map'); this.emotionCount = Object.keys(em.map || {}).length;
+      }
+    },
+  },
+  mounted(){ this.load(); },
+}).mount('#home');
+</script>
 {% endblock %}
