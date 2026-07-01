@@ -22,5 +22,9 @@ class FlaskUser(UserMixin):
         return (self._user.display_name or "").strip() or self.email
 
     @property
+    def is_developer(self) -> bool:
+        return bool(getattr(self._user, "is_developer", False))
+
+    @property
     def db_user(self) -> User:
         return self._user

@@ -11,7 +11,7 @@ except ImportError:
     ZoneInfo = None  # type: ignore[misc, assignment]
 
 from croniter import croniter
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from deskbot_server.db.engine import get_session
 from deskbot_server.db.models import ScheduledTask, _new_id
@@ -256,7 +256,12 @@ def get_scheduled_task(task_id: str, *, device_id: str | None = None) -> dict[st
     return _task_to_dict(row)
 
 
-def list_scheduled_tasks_for_device(device_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+def list_scheduled_tasks_for_device(
+    device_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
     dev = str(device_id or "").strip()
     if not dev:
         return []
@@ -265,9 +270,25 @@ def list_scheduled_tasks_for_device(device_id: str, *, limit: int = 100) -> list
         select(ScheduledTask)
         .where(ScheduledTask.device_id == dev)
         .order_by(ScheduledTask.next_run_at.asc())
+        .offset(max(0, int(offset)))
         .limit(max(1, min(int(limit), 500)))
     ).all()
     return [_task_to_dict(r) for r in rows]
+
+
+def count_scheduled_tasks_for_device(device_id: str) -> int:
+    dev = str(device_id or "").strip()
+    if not dev:
+        return 0
+    session = get_session()
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(ScheduledTask)
+            .where(ScheduledTask.device_id == dev)
+        )
+        or 0
+    )
 
 
 def update_scheduled_task(

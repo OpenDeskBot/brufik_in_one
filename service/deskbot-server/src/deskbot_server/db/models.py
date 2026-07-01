@@ -26,6 +26,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    is_developer: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -126,3 +127,18 @@ class ScheduledTask(Base):
     result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SettingsTestDaily(Base):
+    """设置页 LLM/TTS 测试每日配额（按用户与 IP 分别计数）。"""
+
+    __tablename__ = "settings_test_daily"
+    __table_args__ = (
+        UniqueConstraint("scope", "scope_key", "usage_date", name="uq_settings_test_daily"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    scope_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    usage_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

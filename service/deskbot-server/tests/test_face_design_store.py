@@ -98,11 +98,14 @@ def test_save_emotions_to_design_file(tmp_path, monkeypatch):
     assert {r["name"] for r in reloaded} == {"happy"}
 
 
-def test_resolve_face_design_path_falls_back_to_global(tmp_path, monkeypatch):
-    global_path = tmp_path / "deskbot-face.json"
+def test_resolve_face_design_path_uses_global(tmp_path, monkeypatch):
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    global_path = global_dir / "deskbot-face.json"
     global_path.write_text('{"name":"g","phonemes":[],"emotions":[]}', encoding="utf-8")
     device_dir = tmp_path / "device" / "dev1"
     device_dir.mkdir(parents=True)
+    (device_dir / "deskbot-face.json").write_text('{"name":"d","phonemes":[],"emotions":[]}', encoding="utf-8")
     monkeypatch.setattr("deskbot_server.face_design_store.FACE_DESIGN_FILE", str(global_path))
     monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", tmp_path)
     from deskbot_server.face_design_store import resolve_face_design_path

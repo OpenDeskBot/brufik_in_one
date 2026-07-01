@@ -17,9 +17,17 @@ def _migrate_legacy_schema(engine) -> None:
     if "users" not in insp.get_table_names():
         return
     cols = {c["name"] for c in insp.get_columns("users")}
-    if "display_name" not in cols:
-        with engine.begin() as conn:
+    with engine.begin() as conn:
+        if "display_name" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN display_name VARCHAR(64)"))
+            cols.add("display_name")
+        if "is_developer" not in cols:
+            if "is_builtin" in cols:
+                conn.execute(text("ALTER TABLE users RENAME COLUMN is_builtin TO is_developer"))
+            else:
+                conn.execute(text(
+                    "ALTER TABLE users ADD COLUMN is_developer BOOLEAN NOT NULL DEFAULT 0"
+                ))
     _migrate_scheduled_tasks_schema(engine)
 
 

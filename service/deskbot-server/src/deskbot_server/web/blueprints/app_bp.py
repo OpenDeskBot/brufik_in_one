@@ -12,7 +12,7 @@ from deskbot_server.auth.api_key_service import (
     list_api_keys_for_user,
     revoke_api_key,
 )
-from deskbot_server.web.helpers import fetch_online_device_map
+from deskbot_server.web.helpers import fetch_live_device_details
 from deskbot_server.auth.device_service import (
     bind_device,
     list_devices_for_user,
@@ -32,6 +32,7 @@ from deskbot_server.memory_store import (
     update_memory,
 )
 from deskbot_server.scheduled_task_service import (
+    count_scheduled_tasks_for_device,
     delete_scheduled_task,
     list_scheduled_tasks_for_device,
 )
@@ -40,11 +41,18 @@ from deskbot_server.llm_config_store import (
     add_llm_model,
     delete_llm_model,
     get_active_model_id,
+    get_llm_model,
     list_llm_models,
     set_active_llm_model,
     update_llm_model,
 )
-from deskbot_server.llm.runtime import resolve_llm_config, resolve_system_llm_config
+from deskbot_server.llm.runtime import (
+    ResolvedLlmConfig,
+    build_litellm_model,
+    litellm_completion,
+    resolve_llm_config,
+    resolve_system_llm_config,
+)
 from deskbot_server.web.session_device import (
     clear_current_device,
     get_current_device_id,
@@ -120,24 +128,7 @@ def dashboard():
 @bp.get("/devices")
 @login_required
 def devices_page():
-    devices = list_devices_for_user(current_user.id)
-    online_map = fetch_online_device_map()
-    device_rows = [
-        {
-            "device_id": d.device_id,
-            "display_name": d.display_name or d.device_id,
-            "online": online_map.get(d.device_id, False),
-            "is_current": d.device_id == get_current_device_id(),
-        }
-        for d in devices
-    ]
-    return render_template(
-        "app/devices.html",
-        devices=devices,
-        device_rows=device_rows,
-        current_device_id=get_current_device_id(),
-        active_nav="devices_mgr",
-    )
+    return redirect(url_for("app.dashboard"))
 
 
 @bp.get("/scheduled-tasks")
@@ -145,14 +136,32 @@ def devices_page():
 def scheduled_tasks_page():
     devices = list_devices_for_user(current_user.id)
     current_device_id = get_current_device_id()
+    page = max(1, int(request.args.get("page") or 1))
+    per_page = int(request.args.get("per_page") or 10)
+    if per_page not in (10, 50, 100, 200):
+        per_page = 10
+    total = 0
     tasks: list[dict] = []
     if current_device_id and user_owns_device(current_user.id, current_device_id):
-        tasks = list_scheduled_tasks_for_device(current_device_id)
+        total = count_scheduled_tasks_for_device(current_device_id)
+        offset = (page - 1) * per_page
+        tasks = list_scheduled_tasks_for_device(
+            current_device_id,
+            limit=per_page,
+            offset=offset,
+        )
+    total_pages = max(1, (total + per_page - 1) // per_page) if total else 1
+    if page > total_pages:
+        page = total_pages
     return render_template(
         "app/scheduled_tasks.html",
         devices=devices,
         current_device_id=current_device_id,
         tasks=tasks,
+        page=page,
+        per_page=per_page,
+        total=total,
+        total_pages=total_pages,
         active_nav="scheduled_tasks",
     )
 
@@ -291,6 +300,66 @@ def usage_page():
     )
 
 
+@bp.get("/configure")
+@login_required
+def configure_page():
+    devices = list_devices_for_user(current_user.id)
+    current_device_id = get_current_device_id()
+    system_default = resolve_system_llm_config()
+    active_model_id: str | None = None
+    llm_form = {
+        "name": system_default.display_name,
+        "model_name": system_default.model.split("/", 1)[-1] if "/" in system_default.model else system_default.model,
+        "protocol": system_default.protocol,
+        "base_url": system_default.api_base or "",
+        "api_key_set": bool(system_default.api_key),
+        "source": "system",
+    }
+    if current_device_id and user_owns_device(current_user.id, current_device_id):
+        active_model_id = get_active_model_id(current_device_id)
+        if active_model_id:
+            entry = get_llm_model(current_device_id, active_model_id)
+            if entry is not None:
+                llm_form = {
+                    "name": entry.name,
+                    "model_name": entry.model_name,
+                    "protocol": entry.protocol,
+                    "base_url": entry.base_url,
+                    "api_key_set": bool(entry.api_key),
+                    "source": "device",
+                }
+        else:
+            try:
+                resolved = resolve_llm_config(current_device_id)
+                llm_form["name"] = resolved.display_name
+                llm_form["model_name"] = resolved.model.split("/", 1)[-1] if "/" in resolved.model else resolved.model
+                llm_form["protocol"] = resolved.protocol
+                llm_form["base_url"] = resolved.api_base or ""
+                llm_form["api_key_set"] = bool(resolved.api_key)
+            except ValueError:
+                pass
+
+    from deskbot_server.tts.doubao import load_doubao_tts_config
+
+    tts_cfg = load_doubao_tts_config()
+    return render_template(
+        "app/configure.html",
+        devices=devices,
+        current_device_id=current_device_id,
+        active_model_id=active_model_id,
+        llm_form=llm_form,
+        protocols=SUPPORTED_PROTOCOLS,
+        tts_config=tts_cfg.masked(),
+        tts_preview_texts=[
+            "你好，我是你的桌面机器人助手。",
+            "今天天气真不错，适合写代码。",
+            "欢迎使用 OpenDesk，很高兴见到你。",
+            "这是一段语音合成试听示例。",
+        ],
+        active_nav="configure",
+    )
+
+
 @bp.get("/settings")
 @login_required
 def settings_page():
@@ -364,6 +433,8 @@ def revoke_api_key_post(key_id: str):
 @login_required
 def api_list_devices():
     devices = list_devices_for_user(current_user.id)
+    live_map = fetch_live_device_details(user_id=current_user.id)
+    current = get_current_device_id()
     return jsonify(
         {
             "ok": True,
@@ -373,10 +444,13 @@ def api_list_devices():
                     "device_id": d.device_id,
                     "display_name": d.display_name or d.device_id,
                     "claimed_at": d.claimed_at.isoformat() if d.claimed_at else None,
+                    "online": live_map.get(d.device_id, {}).get("online", False),
+                    "last_seen": live_map.get(d.device_id, {}).get("last_seen", "—"),
+                    "is_current": d.device_id == current,
                 }
                 for d in devices
             ],
-            "current_device_id": get_current_device_id(),
+            "current_device_id": current,
         }
     )
 
@@ -429,8 +503,27 @@ def api_list_scheduled_tasks():
         return jsonify({"ok": False, "error": "请先选择设备"}), 400
     if not user_owns_device(current_user.id, device_id):
         return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
-    tasks = list_scheduled_tasks_for_device(device_id)
-    return jsonify({"ok": True, "device_id": device_id, "tasks": tasks})
+    page = max(1, int(request.args.get("page") or 1))
+    per_page = int(request.args.get("per_page") or 10)
+    if per_page not in (10, 50, 100, 200):
+        per_page = 10
+    total = count_scheduled_tasks_for_device(device_id)
+    total_pages = max(1, (total + per_page - 1) // per_page) if total else 1
+    if page > total_pages:
+        page = total_pages
+    offset = (page - 1) * per_page
+    tasks = list_scheduled_tasks_for_device(device_id, limit=per_page, offset=offset)
+    return jsonify(
+        {
+            "ok": True,
+            "device_id": device_id,
+            "tasks": tasks,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "total_pages": total_pages,
+        }
+    )
 
 
 @bp.get("/api/face-profiles")
@@ -465,6 +558,37 @@ def _require_owned_device_id() -> tuple[str | None, tuple | None]:
     if not user_owns_device(current_user.id, device_id):
         return None, (jsonify({"ok": False, "error": "设备不属于当前账号"}), 403)
     return device_id, None
+
+
+def _consume_settings_test_quota():
+    from deskbot_server.application.settings_test_limit import (
+        SETTINGS_TEST_DAILY_LIMIT,
+        SettingsTestLimitExceeded,
+        check_and_consume_settings_test,
+        client_ip_from_request,
+    )
+
+    try:
+        snap = check_and_consume_settings_test(
+            user_id=current_user.id,
+            client_ip=client_ip_from_request(request),
+        )
+    except SettingsTestLimitExceeded as exc:
+        return None, (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "daily_limit": SETTINGS_TEST_DAILY_LIMIT,
+                }
+            ),
+            429,
+        )
+    return {
+        "daily_limit": SETTINGS_TEST_DAILY_LIMIT,
+        "user_remaining": snap.user_remaining,
+        "ip_remaining": snap.ip_remaining,
+    }, None
 
 
 @bp.get("/api/memories")
@@ -600,6 +724,79 @@ def api_create_llm_model():
     return jsonify({"ok": True, "model": model})
 
 
+@bp.post("/api/llm-models/test")
+@login_required
+def api_test_llm_model():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    quota, limit_err = _consume_settings_test_quota()
+    if limit_err:
+        return limit_err
+    payload = request.get_json(silent=True) or {}
+    model_id = str(payload.get("model_id") or "").strip() or None
+    name = str(payload.get("name") or "").strip()
+    model_name = str(payload.get("model_name") or "").strip()
+    protocol = str(payload.get("protocol") or "openai").strip().lower() or "openai"
+    base_url = str(payload.get("base_url") or "").strip()
+    api_key = str(payload.get("api_key") or "").strip()
+    prompt = str(payload.get("prompt") or "你好，请用一句话介绍你自己。").strip()
+
+    if model_id:
+        existing = get_llm_model(device_id, model_id)
+        if existing is None:
+            return jsonify({"ok": False, "error": "模型不存在"}), 404
+        if not name:
+            name = existing.name
+        if not model_name:
+            model_name = existing.model_name
+        if not protocol:
+            protocol = existing.protocol
+        if not base_url:
+            base_url = existing.base_url
+        if not api_key:
+            api_key = existing.api_key
+
+    if not model_name:
+        return jsonify({"ok": False, "error": "model_name required"}), 400
+    if protocol not in SUPPORTED_PROTOCOLS:
+        return jsonify({"ok": False, "error": f"不支持的协议: {protocol}"}), 400
+
+    try:
+        config = ResolvedLlmConfig(
+            model=build_litellm_model(protocol, model_name),
+            api_key=api_key,
+            api_base=base_url or None,
+            protocol=protocol,
+            source="test",
+            display_name=name or model_name,
+        )
+        reply, meta = litellm_completion(
+            [{"role": "user", "content": prompt}],
+            config=config,
+            json_mode=False,
+            temperature=0.7,
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+
+    return jsonify(
+        {
+            "ok": True,
+            "reply": reply,
+            "meta": {
+                "model": meta.get("model"),
+                "display_name": meta.get("display_name"),
+                "usage": meta.get("usage"),
+            },
+            "quota": quota,
+        }
+    )
+
+
 @bp.put("/api/llm-models/<model_id>")
 @login_required
 def api_update_llm_model(model_id: str):
@@ -653,6 +850,106 @@ def api_select_llm_model():
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify({"ok": True, "active_model_id": active})
+
+
+def _tts_cfg_from_payload(payload: dict):
+    from deskbot_server.tts.doubao import DoubaoTtsConfig, load_doubao_tts_config, resolve_optional_secret
+
+    base = load_doubao_tts_config()
+    api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
+    sample_rate_raw = payload.get("sample_rate", base.sample_rate)
+    try:
+        sample_rate = int(sample_rate_raw)
+    except (TypeError, ValueError):
+        sample_rate = base.sample_rate
+    return DoubaoTtsConfig(
+        api_key=api_key,
+        speaker=str(payload.get("speaker") or base.speaker).strip(),
+        resource_id=str(payload.get("resource_id") or base.resource_id).strip(),
+        model=str(payload.get("model") or base.model).strip(),
+        ws_url=str(payload.get("ws_url") or base.ws_url).strip(),
+        sample_rate=sample_rate,
+        audio_format=str(payload.get("audio_format") or base.audio_format).strip(),
+    )
+
+
+@bp.get("/api/tts/config")
+@login_required
+def api_tts_config_get():
+    from deskbot_server.tts.doubao import load_doubao_tts_config
+
+    cfg = load_doubao_tts_config()
+    return jsonify({"ok": True, "config": cfg.masked()})
+
+
+@bp.post("/api/tts/config")
+@login_required
+def api_tts_config_post():
+    from deskbot_server.tts.doubao import load_doubao_tts_config
+    from deskbot_server.tts.env_store import save_doubao_tts_env
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+
+    from deskbot_server.tts.doubao import load_doubao_tts_config, resolve_optional_secret
+
+    base = load_doubao_tts_config()
+    api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
+    if not api_key:
+        return jsonify({"ok": False, "error": "api_key 不能为空"}), 400
+    try:
+        save_doubao_tts_env(payload)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    cfg = load_doubao_tts_config()
+    return jsonify({"ok": True, "config": cfg.masked()})
+
+
+@bp.get("/api/tts/speakers")
+@login_required
+def api_tts_speakers():
+    from deskbot_server.tts.speakers import list_doubao_tts_speaker_presets
+
+    return jsonify({"ok": True, "speakers": list_doubao_tts_speaker_presets()})
+
+
+@bp.post("/api/tts/preview")
+@login_required
+def api_tts_preview():
+    import asyncio
+    import base64
+
+    from deskbot_server.tts.doubao import synthesize_doubao_tts
+    from deskbot_server.util import pcm_to_wav_bytes
+
+    quota, limit_err = _consume_settings_test_quota()
+    if limit_err:
+        return limit_err
+    payload = request.get_json(silent=True) or {}
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "试听文本不能为空"}), 400
+    cfg = _tts_cfg_from_payload(payload)
+    if not cfg.api_key:
+        return jsonify({"ok": False, "error": "请先配置 TTS API Key"}), 400
+    try:
+        result = asyncio.run(synthesize_doubao_tts(text, cfg))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    wav = pcm_to_wav_bytes(result.pcm, result.sample_rate)
+    return jsonify(
+        {
+            "ok": True,
+            "sample_rate": result.sample_rate,
+            "elapsed_ms": result.elapsed_ms,
+            "speaker": cfg.speaker,
+            "wav_base64": base64.b64encode(wav).decode("ascii"),
+            "quota": quota,
+        }
+    )
 
 
 @bp.delete("/api/scheduled-tasks/<task_id>")

@@ -412,11 +412,9 @@ def design_frames_to_pb_chain(
     """将设计页 ``[{ ms, elements }, ...]`` 转为可下发的 pb 链（合并后 ``chunk_ms`` ≤ 10s）。"""
     from deskbot_server.pb.servo_pcm import (
         PB_CHUNK_MS_MAX,
-        load_tts_cfg_for_pb_hints,
         make_anim_item,
         merge_pb_subchunks,
         pb_json_messages,
-        resolve_pb_device_hints,
     )
 
     if not frames:
@@ -436,7 +434,6 @@ def design_frames_to_pb_chain(
     merged_rows, merged_pcm = merge_pb_subchunks(
         sub_rows, pcm_empty, sample_rate=24000, max_chunk_ms=PB_CHUNK_MS_MAX
     )
-    pb_vol, pb_cam_fps = resolve_pb_device_hints(load_tts_cfg_for_pb_hints())
     pairs = pb_json_messages(
         pb_req=runtime_req,
         sample_rate=24000,
@@ -446,8 +443,6 @@ def design_frames_to_pb_chain(
         pcm_per_idx=merged_pcm,
         action=PB_ACTION_REPLACE,
         level=PB_LEVEL_DEBUG,
-        volume=pb_vol,
-        cam_fps=pb_cam_fps,
     )
     apply_pb_dispatch_fields(
         [msg for msg, _ in pairs], action=PB_ACTION_REPLACE, level=PB_LEVEL_DEBUG

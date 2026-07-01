@@ -85,30 +85,61 @@ def deskbot_http_base() -> str:
     return "/proxy/deskbot"
 
 
-def fetch_online_device_map(*, timeout: float = 1.5) -> dict[str, bool]:
-    """查询 deskbot-server 内存注册表，返回 device_id -> online。"""
+def _fetch_upstream_devices(*, user_id: str | None = None, timeout: float = 1.5) -> list[dict]:
     from urllib import error as urlerror
+    from urllib import parse as urlparse
     from urllib import request as urlrequest
 
     base = deskbot_upstream_base().rstrip("/")
     url = f"{base}/api/devices"
-    req = urlrequest.Request(url, headers={"Accept": "application/json"}, method="GET")
+    headers = {"Accept": "application/json"}
+    query = ""
+    uid = str(user_id or "").strip()
+    if uid:
+        from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
+
+        tok = issue_debug_ws_token(uid).token
+        query = urlparse.urlencode({"debug_token": tok})
+    else:
+        from deskbot_server.auth.api_key_service import read_free_api_key_raw
+
+        upstream_key = read_free_api_key_raw()
+        if upstream_key:
+            headers["X-API-Key"] = upstream_key
+    if query:
+        url = f"{url}?{query}"
+    req = urlrequest.Request(url, headers=headers, method="GET")
     try:
         with urlrequest.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError, OSError, TimeoutError):
-        return {}
+        return []
     devices = payload.get("devices") if isinstance(payload, dict) else None
     if not isinstance(devices, list):
-        return {}
-    out: dict[str, bool] = {}
-    for row in devices:
-        if not isinstance(row, dict):
-            continue
+        return []
+    return [d for d in devices if isinstance(d, dict)]
+
+
+def fetch_live_device_details(*, user_id: str | None = None, timeout: float = 1.5) -> dict[str, dict]:
+    """查询 deskbot-server 内存注册表，返回 device_id -> {online, last_seen}。"""
+    out: dict[str, dict] = {}
+    for row in _fetch_upstream_devices(user_id=user_id, timeout=timeout):
         did = str(row.get("device_id") or "").strip()
-        if did:
-            out[did] = bool(row.get("online"))
+        if not did:
+            continue
+        out[did] = {
+            "online": bool(row.get("online")),
+            "last_seen": str(row.get("last_seen") or "—"),
+        }
     return out
+
+
+def fetch_online_device_map(*, user_id: str | None = None, timeout: float = 1.5) -> dict[str, bool]:
+    """查询 deskbot-server 内存注册表，返回 device_id -> online。"""
+    return {
+        did: bool(info.get("online"))
+        for did, info in fetch_live_device_details(user_id=user_id, timeout=timeout).items()
+    }
 
 
 def deskbot_upstream_base() -> str:

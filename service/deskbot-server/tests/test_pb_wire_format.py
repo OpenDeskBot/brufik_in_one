@@ -4,9 +4,9 @@ from deskbot_server.pb.servo_pcm import (
     PB_CHUNK_MS_MAX,
     make_anim_item,
     merge_pb_subchunks,
-    parse_pb_cam_fps,
     parse_pb_volume,
     pb_json_messages,
+    resolve_pb_device_hints,
 )
 from deskbot_server.pb.shapes import (
     PB_DEFAULT_RGB565,
@@ -138,7 +138,7 @@ def test_merge_pb_subchunks_respects_max_ms():
         assert sum(int(x["ms"]) for x in row["anim"]) <= PB_CHUNK_MS_MAX + 113
 
 
-def test_pb_json_messages_volume_cam_fps_on_chain_types():
+def test_pb_json_messages_volume_on_chain_types():
     row = {"chunk_ms": 50, "anim": [make_anim_item(_elements(), 50)]}
     pairs = pb_json_messages(
         pb_req="req1",
@@ -148,19 +148,32 @@ def test_pb_json_messages_volume_cam_fps_on_chain_types():
         anim_rows=[row, row, row],
         pcm_per_idx=[b"", b"", b""],
         volume=70,
-        cam_fps=3,
     )
     assert len(pairs) == 3
     start, chunk, end = [m for m, _ in pairs]
     assert start["type"] == "pb_start"
     assert start["volume"] == 70
-    assert start["cam_fps"] == 3
-    assert chunk["type"] == "pb_chunk"
+    assert "cam_fps" not in start
     assert chunk["volume"] == 70
-    assert chunk["cam_fps"] == 3
-    assert end["type"] == "pb_end"
     assert end["volume"] == 70
-    assert end["cam_fps"] == 3
+
+
+def test_pb_json_messages_omits_volume_when_unset():
+    row = {"chunk_ms": 50, "anim": [make_anim_item(_elements(), 50)]}
+    msg, _ = pb_json_messages(
+        pb_req="req1",
+        sample_rate=24000,
+        fmt="s16le",
+        channels=1,
+        anim_rows=[row],
+        pcm_per_idx=[b""],
+    )[0]
+    assert "volume" not in msg
+
+
+def test_resolve_pb_device_hints_no_auto_volume():
+    assert resolve_pb_device_hints(None, device_id="dev1") is None
+    assert resolve_pb_device_hints(None, volume=55) == 55
 
 
 def test_pb_json_messages_assets_binary_order():
@@ -182,12 +195,10 @@ def test_pb_json_messages_assets_binary_order():
     assert bins == [jpeg]
 
 
-def test_parse_pb_volume_and_cam_fps():
+def test_parse_pb_volume():
     assert parse_pb_volume(None) is None
     assert parse_pb_volume(85) == 85
     assert parse_pb_volume(150) == 100
-    assert parse_pb_cam_fps(0) is None
-    assert parse_pb_cam_fps(5) == 5
 
 
 def test_text_primitives_wrap():

@@ -10,6 +10,7 @@ from flask import Blueprint, Response, jsonify, request
 from flask_login import current_user, login_required
 
 from deskbot_server.auth.api_key_service import read_free_api_key_raw
+from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
 from deskbot_server.auth.device_service import device_ids_for_user, user_owns_device
 from deskbot_server.web.helpers import deskbot_upstream_base
 from deskbot_server.web.session_device import get_current_device_id
@@ -43,7 +44,7 @@ def _device_scoped_paths() -> set[str]:
         "/api/device_pb_anim",
         "/api/device_pb_expr_scene",
         "/api/device_pb_scenes",
-        "/api/scene_playbook/run",
+        "/api/device_face_play",
     }
 
 
@@ -63,7 +64,7 @@ def proxy_deskbot(subpath: str):
     allowed_ids = device_ids_for_user(current_user.id)
 
     if path == "/api/devices":
-        upstream = _forward(method, path, allowed_ids=allowed_ids)
+        upstream = _forward(method, path, user_id=current_user.id, allowed_ids=allowed_ids)
         if upstream.status_code != 200:
             return upstream
         try:
@@ -95,7 +96,19 @@ def proxy_deskbot(subpath: str):
         if did and not user_owns_device(current_user.id, did):
             return jsonify({"ok": False, "error": "无权操作该设备"}), 403
 
-    return _forward(method, path, device_id=device_id, allowed_ids=allowed_ids)
+    return _forward(method, path, device_id=device_id, user_id=current_user.id, allowed_ids=allowed_ids)
+
+
+def _upstream_auth_headers(*, user_id: str | None = None) -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    uid = str(user_id or "").strip()
+    if uid:
+        headers["X-Deskbot-Web-Token"] = issue_debug_ws_token(uid).token
+        return headers
+    upstream_key = read_free_api_key_raw()
+    if upstream_key:
+        headers["X-API-Key"] = upstream_key
+    return headers
 
 
 def _forward(
@@ -103,6 +116,7 @@ def _forward(
     path: str,
     *,
     device_id: str | None = None,
+    user_id: str | None = None,
     allowed_ids: set[str] | None = None,
 ) -> Response:
     base = deskbot_upstream_base().rstrip("/")
@@ -114,10 +128,7 @@ def _forward(
     if query:
         url = f"{url}?{query}"
 
-    headers = {"Accept": "application/json"}
-    upstream_key = read_free_api_key_raw()
-    if upstream_key:
-        headers["X-API-Key"] = upstream_key
+    headers = _upstream_auth_headers(user_id=user_id)
     data = None
     if method in ("POST", "PUT", "PATCH"):
         if request.is_json:

@@ -416,38 +416,6 @@ async def run_device_tts_only(
     return result
 
 
-async def run_device_playbook(
-    downlink: DownlinkPort,
-    chat: "ChatService",
-    playbook: dict,
-    *,
-    request_id: Optional[str] = None,
-    device_id: Optional[str] = None,
-) -> ChatTurnResult:
-    """场景编排：TTS 与表情/舵机轨在同一条 pb 链内交错下发（非 TTS 结束后再播）。"""
-    from deskbot_server.scene_playbook_runner import playbook_to_llm_plan
-
-    text, moves, anims = playbook_to_llm_plan(playbook)
-    if not text.strip():
-        if moves or anims:
-            text = "。"
-        else:
-            result = ChatTurnResult()
-            result.status = "error"
-            result.error = "empty playbook"
-            return result
-    return await run_device_tts_only(
-        downlink,
-        chat,
-        text,
-        request_id=request_id,
-        device_id=device_id,
-        scenes=None,
-        moves=moves,
-        anims=anims,
-    )
-
-
 async def _send_pb_pairs(
     downlink: DownlinkPort,
     *,
@@ -612,7 +580,6 @@ async def _run_pb_playback(
                 ),
                 random_servo_cfg=chat.settings.pb_random_servo_cfg() if chunk_is_first else None,
                 volume=parsed.get("volume") if chunk_is_first else None,
-                cam_fps=parsed.get("cam_fps") if chunk_is_first else None,
                 device_id=device_id,
                 screen_text=parsed.get("screen_text") if chunk_is_first else None,
                 screen_text_color=parsed.get("screen_text_color") if chunk_is_first else None,

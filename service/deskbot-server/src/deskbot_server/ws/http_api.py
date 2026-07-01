@@ -91,6 +91,8 @@ def _build_http_request_handler(
       用于注视/跟随舵机与 ``happy_smile`` 同批入队。下位机约定：仅一帧时用
       ``pb_single``；多帧须以 ``pb_start`` 开头、``pb_end`` 收尾，勿单发 ``pb_end`` 冒充单片。
     - GET /api/device_pb_scenes：列出 ``data/deskbot-face.json`` 中 ``emotions`` 的场景 name。
+    - GET /api/device_face_catalog：列出 ``deskbot-face.json`` 音素与情绪摘要（调试页）。
+    - GET /api/device_face_play?device_id=…&kind=phoneme|emotion&name=…：向设备下发对应表情链（无音频）。
     - GET /api/device_pb_scene?device_id=…&scene=<id>：按 ``deskbot-face.json`` 向该设备
       ``/asr_chat`` **顺序**下发 ``pb_start`` → ``pb_chunk``* → ``pb_end``（含 ``anim``+``servo``，无音频）。
       ``scene`` 与文件中的 key **不区分大小写**。
@@ -98,8 +100,6 @@ def _build_http_request_handler(
       带 ``?enabled=1|0|true|false`` 时同时写入开关（调试页「启用自动应答」）。
     - GET/POST /api/device_tts：``device_id`` + ``text``，跳过 LLM 直接音素 TTS 并下发 pb；
       可选 ``scene``：与 TTS 在同一条 pb 链锁内顺序追加该场景帧（先语音后场景）。
-    - GET/POST /api/scene_playbook/run：``device_id`` + ``playbook``（或 ``name`` 查表），
-      TTS/表情/舵机三轨在**同一条 pb 链**内与音素分片交错下发（非 TTS 结束后再播）。
     - GET/POST /api/servo_config：读取/写入 ``data/servo.json`` 舵机限位/反向与 ``presets`` 动作预设。
     - POST /api/device_pb_anim：向设备下发仅含 ``anim`` 的单片 ``pb_single``（调试口型预览）。
     - GET /health：存活探针
@@ -556,6 +556,156 @@ def _build_http_request_handler(
                 },
             )
 
+        if path_only == "/api/device_face_catalog":
+            from deskbot_server.face_design_store import build_face_expression_catalog
+
+            try:
+                catalog = build_face_expression_catalog()
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                return _json_resp(
+                    500,
+                    {"ok": False, "error": str(exc), "t": time.time()},
+                )
+            logger.info(
+                "[HTTP] GET /api/device_face_catalog peer=%s phonemes=%d emotions=%d",
+                peer,
+                len(catalog.get("phonemes") or []),
+                len(catalog.get("emotions") or []),
+            )
+            return _json_resp(
+                200,
+                {
+                    "ok": True,
+                    "phonemes": catalog.get("phonemes") or [],
+                    "emotions": catalog.get("emotions") or [],
+                    "file": os.path.basename(FACE_DESIGN_FILE),
+                    "t": time.time(),
+                },
+            )
+
+        if path_only == "/api/device_face_play":
+            if method != "GET":
+                return _json_resp(
+                    405,
+                    {"ok": False, "error": "method not allowed", "t": time.time()},
+                )
+            from deskbot_server.face_design_store import (
+                _load_face_design_cached,
+                build_face_expression_catalog,
+                ensure_face_design_file,
+                resolve_face_expression,
+            )
+
+            dev = (qargs.get("device_id") or "").strip()
+            kind_q = (qargs.get("kind") or "").strip().lower()
+            name_q = (qargs.get("name") or qargs.get("scene") or "").strip()
+            if not dev:
+                return _json_resp(
+                    400,
+                    {"ok": False, "error": "missing device_id", "t": time.time()},
+                )
+            denied = _device_access_denied(dev)
+            if denied is not None:
+                return denied
+            if kind_q not in ("phoneme", "emotion"):
+                return _json_resp(
+                    400,
+                    {"ok": False, "error": "kind must be phoneme or emotion", "t": time.time()},
+                )
+            if not name_q:
+                return _json_resp(
+                    400,
+                    {"ok": False, "error": "missing name", "t": time.time()},
+                )
+            try:
+                doc = _load_face_design_cached(device_id=dev)
+                if not isinstance(doc, dict):
+                    doc = ensure_face_design_file(device_id=dev)
+                ent = resolve_face_expression(doc, kind=kind_q, name=name_q)
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                return _json_resp(
+                    500,
+                    {"ok": False, "error": str(exc), "t": time.time()},
+                )
+            if ent is None:
+                catalog = build_face_expression_catalog(device_id=dev)
+                if kind_q == "phoneme":
+                    valid = [
+                        str(x.get("name") or "")
+                        for x in catalog.get("phonemes") or []
+                        if isinstance(x, dict) and x.get("name")
+                    ]
+                else:
+                    valid = [
+                        str(x.get("name") or "")
+                        for x in catalog.get("emotions") or []
+                        if isinstance(x, dict) and x.get("name")
+                    ]
+                return _json_resp(
+                    400,
+                    {
+                        "ok": False,
+                        "error": f"unknown {kind_q}: {name_q!r}",
+                        "valid_names": sorted(set(valid)),
+                        "t": time.time(),
+                    },
+                )
+            req_id = uuid.uuid4().hex[:16]
+            pairs = design_frames_to_pb_chain(ent.get("frames") or [], runtime_req=req_id)
+            if not pairs:
+                return _json_resp(
+                    500,
+                    {"ok": False, "error": "empty frames", "t": time.time()},
+                )
+            chain = [msg for msg, _bins in pairs]
+            binaries_per_frame = [list(_bins) for _msg, _bins in pairs]
+            expr_name = str(ent.get("name") or name_q).strip()
+            logger.info(
+                "[HTTP] GET /api/device_face_play peer=%s device_id=%s kind=%s name=%s req=%s frames=%d",
+                peer,
+                dev,
+                kind_q,
+                expr_name,
+                req_id,
+                len(chain),
+            )
+            try:
+                n = await asr_chat_hub.send_pb_chain_ordered(
+                    dev, chain, binaries_per_frame=binaries_per_frame
+                )
+            except Exception:
+                logger.exception(
+                    "[HTTP] /api/device_face_play 下发异常 device_id=%s kind=%s name=%s",
+                    dev,
+                    kind_q,
+                    expr_name,
+                )
+                n = 0
+            hint = None
+            channels: dict[str, int] = {}
+            if n == 0:
+                channels = _registry_channels(registry, dev)
+                hint = (
+                    "没有发往 WebSocket：该 device_id 当前无已连接的 /asr_chat。"
+                    f"当前注册通道={channels or '无'}。"
+                )
+            return _json_resp(
+                200,
+                {
+                    "ok": n > 0,
+                    "device_id": dev,
+                    "kind": kind_q,
+                    "name": expr_name,
+                    "req": req_id,
+                    "frames": len(chain),
+                    "delivered": n,
+                    "hint": hint,
+                    "error": hint if n == 0 else None,
+                    "channels": channels if n == 0 else None,
+                    "t": time.time(),
+                },
+            )
+
         if path_only == "/api/device_tts":
             from deskbot_server.application.chat_flow import run_device_tts_only
             from deskbot_server.infrastructure.ws.downlink_adapter import WsDownlinkAdapter
@@ -672,133 +822,6 @@ def _build_http_request_handler(
                     "text": text,
                     "scene": scene_q or None,
                     "req": req_id,
-                    "t": time.time(),
-                },
-            )
-
-        if path_only == "/api/scene_playbook/run":
-            from deskbot_server.application.chat_flow import run_device_playbook
-            from deskbot_server.infrastructure.ws.downlink_adapter import WsDownlinkAdapter
-            from deskbot_server.scene_playbooks_store import (
-                find_playbook_by_name,
-                load_scene_playbooks_file,
-                normalize_playbook,
-            )
-
-            dev = ""
-            playbook_raw: object = None
-            if method == "POST":
-                try:
-                    raw_body = (getattr(request, "body", None) or b"").decode("utf-8")
-                    payload = json.loads(raw_body) if raw_body.strip() else {}
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    return _json_resp(
-                        400,
-                        {"ok": False, "error": "invalid JSON body", "t": time.time()},
-                    )
-                if isinstance(payload, dict):
-                    dev = str(payload.get("device_id") or "").strip()
-                    if "playbook" in payload:
-                        playbook_raw = payload.get("playbook")
-                    elif payload.get("name"):
-                        rows = load_scene_playbooks_file(
-                            seed_if_missing=False, device_id=dev or None
-                        ) or []
-                        playbook_raw = find_playbook_by_name(rows, str(payload.get("name")))
-            else:
-                dev = (qargs.get("device_id") or "").strip()
-                name_q = (qargs.get("name") or "").strip()
-                if name_q:
-                    rows = load_scene_playbooks_file(
-                        seed_if_missing=False, device_id=dev or None
-                    ) or []
-                    playbook_raw = find_playbook_by_name(rows, name_q)
-            if not dev:
-                return _json_resp(
-                    400,
-                    {"ok": False, "error": "missing device_id", "t": time.time()},
-                )
-            denied = _device_access_denied(dev)
-            if denied is not None:
-                return denied
-            if not playbook_raw:
-                return _json_resp(
-                    400,
-                    {"ok": False, "error": "missing playbook or unknown name", "t": time.time()},
-                )
-            try:
-                playbook = normalize_playbook(playbook_raw)
-            except ValueError as exc:
-                return _json_resp(
-                    400,
-                    {"ok": False, "error": str(exc), "t": time.time()},
-                )
-            ws = await asr_chat_hub.first_ws(dev)
-            if ws is None:
-                return _json_resp(
-                    200,
-                    {
-                        "ok": False,
-                        "error": "device not connected on /asr_chat",
-                        "device_id": dev,
-                        "delivered": 0,
-                        "hint": "请确认 ESP32 已用相同 device_id 连接 /asr_chat",
-                        "t": time.time(),
-                    },
-                )
-            req_id = uuid.uuid4().hex[:16]
-            settings = chat.settings
-            broker = device_pipeline_broker
-
-            async def _playbook_job() -> None:
-                downlink = WsDownlinkAdapter(
-                    ws,
-                    settings=settings,
-                    device_id=dev,
-                    dp_broker=broker,
-                )
-                try:
-                    turn = await run_device_playbook(
-                        downlink,
-                        chat,
-                        playbook,
-                        request_id=req_id,
-                        device_id=dev,
-                    )
-                    ok = (turn.status or "ok") == "ok" and not turn.error
-                    logger.info(
-                        "[HTTP] /api/scene_playbook/run done device_id=%s req=%s name=%s ok=%s err=%s",
-                        dev,
-                        req_id,
-                        playbook.get("name"),
-                        ok,
-                        turn.error,
-                    )
-                except Exception:
-                    logger.exception(
-                        "[HTTP] /api/scene_playbook/run failed device_id=%s req=%s",
-                        dev,
-                        req_id,
-                    )
-
-            asyncio.create_task(_playbook_job())
-            logger.info(
-                "[HTTP] %s /api/scene_playbook/run accepted peer=%s device_id=%s req=%s name=%s",
-                method,
-                peer,
-                dev,
-                req_id,
-                playbook.get("name"),
-            )
-            return _json_resp(
-                200,
-                {
-                    "ok": True,
-                    "accepted": True,
-                    "device_id": dev,
-                    "name": playbook.get("name"),
-                    "req": req_id,
-                    "interleaved": True,
                     "t": time.time(),
                 },
             )

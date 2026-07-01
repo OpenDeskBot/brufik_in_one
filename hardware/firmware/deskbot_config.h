@@ -20,6 +20,15 @@
 #define ASR_CHAT_HOST DESKBOT_WS_HOST
 #define ASR_CHAT_PORT DESKBOT_WS_PORT
 
+/** 1 = 经 /asr_chat 上传 camera_frame；0 = 暂停（本地仍可采集，不发 WS）。 */
+#ifndef DESKBOT_CAMERA_UPLINK_ENABLED
+#define DESKBOT_CAMERA_UPLINK_ENABLED 0
+#endif
+
+static inline bool deskbot_camera_uplink_enabled(void) {
+  return DESKBOT_CAMERA_UPLINK_ENABLED != 0;
+}
+
 static inline bool deskbot_ws_configured(void) {
   return DESKBOT_WS_HOST[0] != '\0';
 }
@@ -88,16 +97,36 @@ static inline bool deskbot_api_key_configured(void) {
 
 #define DESKBOT_PDM_MIC_CLK  GPIO_NUM_42
 #define DESKBOT_PDM_MIC_DATA GPIO_NUM_41
-#define DESKBOT_PDM_VOICE_MARGIN             220
-#define DESKBOT_PDM_VOICE_HANGOVER_MARGIN    180
-#define DESKBOT_PDM_VOICE_TRIGGER_RATIO_NUM    105
+
+/* VADNet（ESP-SR AFE）参数：见 vadnet_gate.cpp
+ * vad_mode：0 最松 → 4 最严（远场/背景人声误触时可加大）。 */
+#define DESKBOT_VADNET_MIN_SPEECH_MS         200
+#define DESKBOT_VADNET_MIN_NOISE_MS          300
+#define DESKBOT_VADNET_DELAY_MS              128
+#define DESKBOT_VADNET_MODE                  2
+/** VADNet 判 speech 时另需满足的帧均 abs 下限（enhanceVoice 后；近讲通常 >150）。 */
+#define DESKBOT_VADNET_MIN_ABS_AVG           140
+/** VADNet 监听阶段环形缓冲时长（秒）；触发后按时间序整段上行，再续 live 帧。 */
+#define DESKBOT_VADNET_RING_SECONDS          10
+
+/* 能量门控（VADNet 联合触发 + fallback） */
+#define DESKBOT_PDM_VOICE_MARGIN             320
+#define DESKBOT_PDM_VOICE_HANGOVER_MARGIN    200
+#define DESKBOT_PDM_VOICE_TRIGGER_RATIO_NUM    130
 #define DESKBOT_PDM_VOICE_TRIGGER_RATIO_DEN  100
+/** 触发阈值绝对下限（enhanceVoice×5 后的 mean-abs）；防安静环境下 thr 过低。 */
+#define DESKBOT_PDM_VOICE_TRIGGER_FLOOR      140
 
 static inline size_t deskbot_pdm_voice_trigger_thr(size_t ema) {
   const size_t t_delta = ema + (size_t)DESKBOT_PDM_VOICE_MARGIN;
   const size_t t_ratio =
       (ema * (size_t)DESKBOT_PDM_VOICE_TRIGGER_RATIO_NUM) / (size_t)DESKBOT_PDM_VOICE_TRIGGER_RATIO_DEN;
-  return (t_delta < t_ratio) ? t_delta : t_ratio;
+  /* 取较高者：旧 min() 在 ema≈60 时 thr≈63，3m 人声也会触发。 */
+  size_t thr = (t_delta > t_ratio) ? t_delta : t_ratio;
+  if (thr < (size_t)DESKBOT_PDM_VOICE_TRIGGER_FLOOR) {
+    thr = (size_t)DESKBOT_PDM_VOICE_TRIGGER_FLOOR;
+  }
+  return thr;
 }
 
 static inline size_t deskbot_pdm_voice_hangover_thr(size_t ema) {
@@ -105,8 +134,12 @@ static inline size_t deskbot_pdm_voice_hangover_thr(size_t ema) {
 }
 #define DESKBOT_PDM_EMA_QUIET_RATIO_NUM      102
 #define DESKBOT_PDM_EMA_QUIET_RATIO_DEN      100
-#define DESKBOT_PDM_VOICE_TRIGGER_FRAMES     1
+/** 连续超阈帧数（20ms/帧）；3=60ms，可滤远场短促人声。 */
+#define DESKBOT_PDM_VOICE_TRIGGER_FRAMES     3
 #define DESKBOT_PDM_VOICE_THRESHOLD_MAX      24000
 #define DESKBOT_PDM_PRE_VOICE_FRAMES         50
-#define DESKBOT_PDM_SILENCE_END_MS           2000
+#define DESKBOT_PDM_SILENCE_END_MS           1000
+
+/** I2S 播放 chunk 的 mean-abs×volume 低于此值视为静音，isSpeaking 保持 false。 */
+#define DESKBOT_SPEAKER_AUDIBLE_MEAN_ABS     16
 

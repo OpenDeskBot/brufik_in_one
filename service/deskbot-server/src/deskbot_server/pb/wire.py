@@ -90,7 +90,6 @@ def build_pb_wire_pairs(
     request_id: Optional[str] = None,
     random_servo_cfg: Optional[dict[str, Any]] = None,
     volume: int | None = None,
-    cam_fps: int | None = None,
     device_id: Optional[str] = None,
     screen_text: str | None = None,
     screen_text_color: Any = None,
@@ -161,9 +160,7 @@ def build_pb_wire_pairs(
     )
 
     pb_req = request_id or uuid.uuid4().hex[:16]
-    pb_vol, pb_cam_fps = resolve_pb_device_hints(
-        tts_cfg, volume=volume, cam_fps=cam_fps, device_id=device_id
-    )
+    pb_vol = resolve_pb_device_hints(tts_cfg, volume=volume, device_id=device_id)
     pairs = pb_json_messages(
         pb_req=pb_req,
         sample_rate=sample_rate,
@@ -172,7 +169,6 @@ def build_pb_wire_pairs(
         anim_rows=merged_rows,
         pcm_per_idx=merged_pcm,
         volume=pb_vol,
-        cam_fps=pb_cam_fps,
         action=action,
     )
     if random_servo_cfg:

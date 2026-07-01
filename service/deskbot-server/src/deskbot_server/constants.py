@@ -46,11 +46,11 @@ def pb_max_chunk_ms_for_pcm(
     sr = max(1, int(sample_rate))
     return max(100, (limit // 2) * 1000 // sr)
 
+GLOBAL_DATA_DIR = DATA_DIR / "global"
 SERVO_CFG_FILE = str(DATA_DIR / "servo.json")
-CAMERA_FACE_CFG_FILE = str(DATA_DIR / "camera_face.json")
+CAMERA_FACE_CFG_FILE = str(GLOBAL_DATA_DIR / "camera_face.json")
 FACE_PROFILES_FILE = str(DATA_DIR / "face_profiles.json")
-FACE_DESIGN_FILE = str(DATA_DIR / "deskbot-face.json")
-SCENE_PLAYBOOKS_FILE = str(DATA_DIR / "scene_playbooks.json")
+FACE_DESIGN_FILE = str(GLOBAL_DATA_DIR / "deskbot-face.json")
 USER_MEMORY_FILE = str(DATA_DIR / "user_memory.json")
 DEVICE_VOLUME_FILE = str(DATA_DIR / "device_volume.json")
 

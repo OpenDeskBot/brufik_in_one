@@ -93,12 +93,21 @@ def create_app() -> Flask:
 
     @app.context_processor
     def inject_globals():
+        from deskbot_server.web.session_device import get_current_device_id
+
         display_name = None
+        current_device_id = None
+        is_developer = False
         if current_user.is_authenticated:
             display_name = getattr(current_user, "display_name", None) or current_user.email
+            current_device_id = get_current_device_id()
+            db_user = get_user_by_id(current_user.id)
+            is_developer = bool(db_user and getattr(db_user, "is_developer", False))
         return {
             "nav_user_email": current_user.email if current_user.is_authenticated else None,
             "nav_display_name": display_name,
+            "nav_current_device_id": current_device_id,
+            "nav_is_developer": is_developer,
         }
 
     return app

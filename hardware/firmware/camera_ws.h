@@ -13,6 +13,8 @@ bool deskbot_vision_uplink_paused(void);
 void camera_ws_init(void);
 bool camera_ws_take_frame(const uint8_t** out_buf, size_t* out_len, uint32_t* out_seq);
 void camera_ws_release_frame(void);
+/** 丢弃尚未发送的 JPEG（语音 PCM 上行开始时调用，避免错开发射）。 */
+void camera_ws_discard_pending(void);
 
 /** 调整上行帧率（fps>0）；默认 10fps，服务端 pb 字段 cam_fps 可动态覆盖。 */
 void camera_ws_set_fps(uint32_t fps);

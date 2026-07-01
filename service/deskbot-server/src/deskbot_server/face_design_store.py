@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import json
 import os
-import shutil
 from typing import Any, Optional
 
 from deskbot_server.constants import FACE_DESIGN_FILE
@@ -17,14 +16,9 @@ _design_cache: tuple[str, float, dict[str, Any] | None] | None = None
 
 
 def resolve_face_design_path(*, device_id: Optional[str] = None) -> str:
-    """设备目录无 ``deskbot-face.json`` 时回退 ``data/deskbot-face.json``。"""
-    scoped = resolve_json_path(FACE_DESIGN_FILE, device_id)
-    if device_id and os.path.isfile(scoped):
-        return scoped
-    global_path = resolve_json_path(FACE_DESIGN_FILE, None)
-    if os.path.isfile(global_path):
-        return global_path
-    return scoped if device_id else global_path
+    """所有设备共用 ``data/global/deskbot-face.json``。"""
+    del device_id
+    return resolve_json_path(FACE_DESIGN_FILE, None)
 
 
 def _normalize_expression(raw: object) -> dict[str, Any]:
@@ -73,25 +67,17 @@ def load_face_design_file(
 
 
 def ensure_face_design_file(*, device_id: Optional[str] = None) -> dict[str, Any]:
-    """加载 ``deskbot-face.json``；设备目录缺失时从全局 ``data/deskbot-face.json`` 复制。"""
-    doc = load_face_design_file(device_id=device_id)
+    """加载 ``data/global/deskbot-face.json``。"""
+    del device_id
+    doc = load_face_design_file()
     if doc is not None:
         return doc
-    global_path = resolve_face_design_path(device_id=None)
-    if not os.path.isfile(global_path):
+    path = resolve_face_design_path()
+    if not os.path.isfile(path):
         raise FileNotFoundError(
-            f"缺少 {os.path.basename(FACE_DESIGN_FILE)}，请在 data/ 下提供全局模板"
+            f"缺少 {os.path.basename(FACE_DESIGN_FILE)}，请在 data/global/ 下提供全局模板"
         )
-    if device_id:
-        scoped = resolve_json_path(FACE_DESIGN_FILE, device_id)
-        if not os.path.isfile(scoped):
-            os.makedirs(os.path.dirname(scoped) or ".", exist_ok=True)
-            shutil.copy2(global_path, scoped)
-            clear_face_design_cache()
-            doc = load_face_design_file(device_id=device_id)
-            if doc is not None:
-                return doc
-    with open(global_path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return normalize_face_design_doc(json.load(f))
 
 
@@ -99,7 +85,7 @@ def save_face_design_file(
     doc: dict[str, Any], *, device_id: Optional[str] = None
 ) -> dict[str, Any]:
     norm = normalize_face_design_doc(doc)
-    path = resolve_json_path(FACE_DESIGN_FILE, device_id) if device_id else resolve_face_design_path()
+    path = resolve_face_design_path(device_id=device_id)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(norm, f, ensure_ascii=False, indent=2)
@@ -297,3 +283,57 @@ def apply_emotion_scenes_to_design(
         emotions.append(scene)
     out["emotions"] = emotions
     return out
+
+
+def _summarize_expression(expr: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    frames = expr.get("frames") if isinstance(expr.get("frames"), list) else []
+    total_ms = 0
+    for fr in frames:
+        if isinstance(fr, dict):
+            total_ms += max(1, int(fr.get("ms") or 800))
+    alias_raw = expr.get("alias")
+    alias = [str(x).strip() for x in alias_raw if str(x).strip()] if isinstance(alias_raw, list) else []
+    return {
+        "kind": kind,
+        "name": str(expr.get("name") or "").strip(),
+        "title": str(expr.get("title") or expr.get("name") or "").strip(),
+        "alias": alias,
+        "frames": len(frames),
+        "total_ms": total_ms,
+    }
+
+
+def build_face_expression_catalog(*, device_id: Optional[str] = None) -> dict[str, Any]:
+    """音素 + 情绪摘要列表，供调试页展示。"""
+    doc = _load_face_design_cached(device_id=device_id)
+    if not isinstance(doc, dict):
+        doc = ensure_face_design_file(device_id=device_id)
+    phonemes: list[dict[str, Any]] = []
+    for expr in doc.get("phonemes") or []:
+        if not isinstance(expr, dict) or not str(expr.get("name") or "").strip():
+            continue
+        if not isinstance(expr.get("frames"), list) or not expr.get("frames"):
+            continue
+        phonemes.append(_summarize_expression(expr, kind="phoneme"))
+    emotions: list[dict[str, Any]] = []
+    for expr in doc.get("emotions") or []:
+        if not isinstance(expr, dict) or not str(expr.get("name") or "").strip():
+            continue
+        if not isinstance(expr.get("frames"), list) or not expr.get("frames"):
+            continue
+        emotions.append(_summarize_expression(expr, kind="emotion"))
+    phonemes.sort(key=lambda x: (x["name"].lower(), x["name"]))
+    emotions.sort(key=lambda x: (x["name"].lower(), x["name"]))
+    return {"phonemes": phonemes, "emotions": emotions}
+
+
+def resolve_face_expression(
+    doc: dict[str, Any] | None, *, kind: str, name: str
+) -> Optional[dict[str, Any]]:
+    """按 ``kind=phoneme|emotion`` 与 ``name``（含 alias）查表情条目。"""
+    k = str(kind or "").strip().lower()
+    if k == "phoneme":
+        return find_phoneme_expression(doc, name)
+    if k in ("emotion", "emotions"):
+        return find_emotion_expression(doc, name)
+    return None

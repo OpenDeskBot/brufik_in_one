@@ -61,26 +61,26 @@ def attach_pb_device_hints(
     msg: dict[str, Any],
     *,
     volume: int | None = None,
-    cam_fps: int | None = None,
+    mic: str | None = None,
 ) -> None:
     """为 ``pb_start`` / ``pb_chunk`` / ``pb_end`` / ``pb_single`` 附加设备侧提示。"""
     if msg.get("type") not in _PB_HINT_TYPES:
         return
     if volume is not None:
         msg["volume"] = int(volume)
-    if cam_fps is not None and int(cam_fps) > 0:
-        msg["cam_fps"] = int(cam_fps)
+    if mic is not None and str(mic).strip().lower() in ("mute", "open"):
+        msg["mic"] = str(mic).strip().lower()
 
 
 def apply_pb_device_hints_to_frames(
     frames: list[dict[str, Any]],
     *,
     volume: int | None = None,
-    cam_fps: int | None = None,
+    mic: str | None = None,
 ) -> None:
-    """为 pb 链各分片写入统一的 ``volume`` / ``cam_fps``（仅适用类型）。"""
+    """为 pb 链各分片写入统一的 ``volume`` / ``mic``（仅适用类型）。"""
     for one in frames:
-        attach_pb_device_hints(one, volume=volume, cam_fps=cam_fps)
+        attach_pb_device_hints(one, volume=volume, mic=mic)
 
 
 _PAUSE_PHONEME_ALIASES = frozenset({"sil", "sp", "spl", "spn", "sp1", "sp2", "sp3", "sp4"})

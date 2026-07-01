@@ -164,11 +164,10 @@ def test_parse_llm_tools():
     assert parsed["tools"] == [{"tool": "memory_add", "text": "喜欢猫"}]
 
 
-def test_parse_llm_reply_volume_cam_fps():
-    raw = '{"tts":"好","volume":75,"cam_fps":4,"moves":[],"anims":[]}'
+def test_parse_llm_reply_volume():
+    raw = '{"tts":"好","volume":75,"moves":[],"anims":[]}'
     parsed = parse_llm_reply(raw)
     assert parsed["volume"] == 75
-    assert parsed["cam_fps"] == 4
 
 
 def test_resize_jpeg_for_lcd_display():
@@ -222,13 +221,11 @@ def test_device_volume_persist(tmp_path, monkeypatch):
     assert dvs.get_device_volume("dev1") == 55
     assert dvs.persist_device_volume(90, device_id="dev1") == 90
     assert dvs.get_device_volume("dev1") == 90
-    raw = '{"tts":"好","volume":75,"cam_fps":4,"moves":[],"anims":[]}'
+    raw = '{"tts":"好","volume":75,"moves":[],"anims":[]}'
     parsed = parse_llm_reply(raw)
     assert parsed["volume"] == 75
-    assert parsed["cam_fps"] == 4
     omit = parse_llm_reply('{"tts":"好","moves":[],"anims":[]}')
     assert omit["volume"] is None
-    assert omit["cam_fps"] is None
 
 
 def test_parse_llm_reply_empty_tts_not_raw_json():

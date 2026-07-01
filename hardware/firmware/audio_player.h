@@ -33,6 +33,7 @@ void setup_audio();
  * 不得与 mic_capture_task 并行对 I2S_NUM_0 再调 i2s_read。 */
 void record(int16_t *data, size_t length = DMA_BUF_LEN);
 void enhanceVoice(int16_t *data, size_t length = DMA_BUF_LEN);
+void enhanceVoice_reset(void);
 size_t calculate_mean(const int16_t *data, size_t length);
 
 /*
@@ -86,6 +87,12 @@ unsigned audio_play_input_queue_depth();
 /** 流式 PCM（pb/TTS）是否仍占用 I2S 播放管线（含尾音 flush 写入）。
  * 用于 ASR 半双工：pbSignalTtsRoundComplete 之后队列里可能仍有 PCM，tts_active_ 已为 false 时仍需参考本标志。 */
 bool audio_play_stream_pcm_active();
+
+/** 扬声器是否在播可听 PCM（见 DESKBOT_SPEAKER_AUDIBLE_MEAN_ABS）。 */
+bool audio_play_speaker_busy();
+
+/** 调试：play() 内 i2s_write 是否进行中（含静音 chunk / tail flush 以外的路径）。 */
+bool audio_play_i2s_in_progress();
 
 /* pb 播放序列用：显式 begin/push/end，支持任意采样率/声道（仍仅支持 16bit PCM）。
  * - begin 成功后占用 pipeline（互斥在播放任务内 take，end 时 give），直到 end/stop。

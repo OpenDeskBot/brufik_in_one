@@ -84,6 +84,18 @@ void camera_ws_release_frame(void) {
   }
 }
 
+void camera_ws_discard_pending(void) {
+  if (!s_mutex) {
+    return;
+  }
+  if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
+    return;
+  }
+  s_ready = false;
+  s_len = 0;
+  xSemaphoreGive(s_mutex);
+}
+
 void camera_ws_set_fps(uint32_t fps) {
   if (fps == 0) {
     return;

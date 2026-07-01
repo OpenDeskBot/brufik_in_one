@@ -7,11 +7,13 @@ import logging
 import os
 import time
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user
 
 from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
 from deskbot_server.auth.device_service import user_owns_device
+from deskbot_server.auth.permissions import current_user_is_developer, require_developer
+from deskbot_server.auth.service import list_users, set_user_developer
 from deskbot_server.llm.utils import llm_pb_scenes_prompt_appendix, parse_llm_reply
 from deskbot_server.camera_face_config_store import (
     load_camera_face_cfg_file,
@@ -22,7 +24,6 @@ from deskbot_server.camera_face_tune import apply_camera_face_tune
 from deskbot_server.constants import (
     CAMERA_FACE_CFG_FILE,
     FACE_PROFILES_FILE,
-    SCENE_PLAYBOOKS_FILE,
     SERVO_CFG_FILE,
     USER_MEMORY_FILE,
 )
@@ -30,12 +31,6 @@ from deskbot_server.device_data import (
     load_llm_system_prompt,
     resolve_json_path,
     save_llm_system_prompt,
-)
-from deskbot_server.face_expr_scenes_store import load_face_expr_scenes_file
-from deskbot_server.scene_playbooks_store import (
-    load_scene_playbooks_file,
-    normalize_scene_playbooks,
-    save_scene_playbooks_file,
 )
 from deskbot_server.application.face_registration import register_face_for_device
 from deskbot_server.face_profiles_store import load_face_profiles
@@ -60,6 +55,21 @@ from deskbot_server.web.session_device import get_current_device_id
 
 bp = Blueprint("debug", __name__)
 logger = logging.getLogger("deskbot-server")
+
+
+@bp.before_request
+def _require_developer_for_debug():
+    path = request.path or ""
+    if path == "/health":
+        return None
+    if not current_user.is_authenticated:
+        return None
+    if current_user_is_developer():
+        return None
+    if path.startswith("/api/"):
+        return jsonify({"ok": False, "error": "需要开发者权限"}), 403
+    flash("需要开发者权限", "error")
+    return redirect(url_for("app.dashboard"))
 
 
 def _deny_foreign_device(device_id: str):
@@ -109,6 +119,43 @@ def api_debug_ws_token():
             "ok": True,
             "token": info.token,
             "expires_in": info.expires_in,
+        }
+    )
+
+
+@bp.get("/debug/users")
+@require_developer
+def debug_users():
+    rows = list_users()
+    return render_template(
+        "debug_users.html",
+        active_nav="users",
+        users=rows,
+        current_user_id=current_user.id,
+    )
+
+
+@bp.post("/api/debug/users/<user_id>/developer")
+@require_developer
+def api_set_user_developer(user_id: str):
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+    try:
+        is_developer = bool(payload.get("is_developer"))
+        user = set_user_developer(user_id, is_developer=is_developer)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify(
+        {
+            "ok": True,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "display_name": user.display_name,
+                "is_developer": user.is_developer,
+                "is_active": user.is_active,
+            },
         }
     )
 
@@ -776,78 +823,6 @@ def api_user_memory_delete(entry_id: str):
     if not ok:
         return jsonify({"ok": False, "error": "not found", "t": time.time()}), 404
     return jsonify({"ok": True, "id": entry_id, "t": time.time()})
-
-
-@bp.get("/api/deskbot_face")
-def api_deskbot_face_get():
-    """只读：当前设备的 ``deskbot-face.json`` 中 ``emotions``（场景编排预览等）。"""
-    device_id, err = _require_device_id()
-    if err:
-        return err
-    from deskbot_server.face_design_store import resolve_face_design_path
-
-    cfg_path = resolve_face_design_path(device_id=device_id)
-    try:
-        rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
-    return jsonify(
-        {
-            "ok": True,
-            "emotions": rows or [],
-            "exists": os.path.isfile(cfg_path),
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
-    )
-
-
-@bp.get("/api/scene_playbooks")
-def api_scene_playbooks_get():
-    device_id, err = _require_device_id()
-    if err:
-        return err
-    cfg_path = resolve_json_path(SCENE_PLAYBOOKS_FILE, device_id)
-    try:
-        rows = load_scene_playbooks_file(seed_if_missing=True, device_id=device_id)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
-    return jsonify(
-        {
-            "ok": True,
-            "config": rows or [],
-            "exists": os.path.isfile(cfg_path),
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
-    )
-
-
-@bp.post("/api/scene_playbooks")
-def api_scene_playbooks_post():
-    device_id, err = _require_device_id()
-    if err:
-        return err
-    payload = request.get_json(silent=True)
-    cfg_path = resolve_json_path(SCENE_PLAYBOOKS_FILE, device_id)
-    try:
-        rows = normalize_scene_playbooks(payload if payload is not None else [])
-        save_scene_playbooks_file(rows, device_id=device_id)
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 400
-    except OSError as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
-    return jsonify(
-        {
-            "ok": True,
-            "config": rows,
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
-    )
 
 
 @bp.get("/api/health")

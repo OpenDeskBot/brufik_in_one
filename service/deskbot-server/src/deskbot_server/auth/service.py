@@ -38,9 +38,11 @@ def create_user(email: str, password: str) -> User:
         raise ValueError("密码至少 8 位")
 
     session = get_session()
+    is_first_user = session.scalar(select(User.id).limit(1)) is None
     user = User(
         email=email_norm,
         password_hash=generate_password_hash(password),
+        is_developer=is_first_user,
         is_active=True,
     )
     session.add(user)
@@ -48,7 +50,10 @@ def create_user(email: str, password: str) -> User:
         session.commit()
     except IntegrityError as exc:
         session.rollback()
-        raise ValueError("该邮箱已注册") from exc
+        err = str(getattr(exc, "orig", exc) or exc).lower()
+        if "email" in err or "unique" in err:
+            raise ValueError("该邮箱已注册") from exc
+        raise ValueError("注册失败，请稍后重试") from exc
     session.refresh(user)
     session.expunge(user)
     return user
@@ -68,6 +73,32 @@ def update_display_name(user_id: str, display_name: str) -> None:
         raise ValueError("用户不存在")
     user.display_name = name
     session.commit()
+
+
+def list_users() -> list[User]:
+    session = get_session()
+    return list(session.scalars(select(User).order_by(User.created_at.asc())))
+
+
+def count_developers() -> int:
+    from sqlalchemy import func
+
+    session = get_session()
+    return int(session.scalar(select(func.count()).select_from(User).where(User.is_developer.is_(True))) or 0)
+
+
+def set_user_developer(user_id: str, *, is_developer: bool) -> User:
+    session = get_session()
+    user = session.get(User, user_id)
+    if user is None or not user.is_active:
+        raise ValueError("用户不存在")
+    if user.is_developer and not is_developer and count_developers() <= 1:
+        raise ValueError("至少保留一名开发者")
+    user.is_developer = bool(is_developer)
+    session.commit()
+    session.refresh(user)
+    session.expunge(user)
+    return user
 
 
 def change_password(user_id: str, old_password: str, new_password: str) -> None:

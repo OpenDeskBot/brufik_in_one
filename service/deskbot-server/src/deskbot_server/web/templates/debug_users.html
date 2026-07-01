@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block page_title %}用户管理 · OpenDesk{% endblock %}
+{% block content %}
+<header class="page-header">
+  <h1>用户管理</h1>
+  <p class="page-lead">管理注册用户，设置或取消开发者权限</p>
+</header>
+
+<div class="section-card">
+  <table class="agent-table">
+    <thead>
+      <tr>
+        <th>邮箱</th>
+        <th>名称</th>
+        <th>开发者</th>
+        <th>状态</th>
+        <th>注册时间</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for user in users %}
+      <tr data-user-id="{{ user.id }}">
+        <td class="mono">{{ user.email }}</td>
+        <td>{{ user.display_name or '—' }}</td>
+        <td>
+          {% if user.is_developer %}
+          <span class="agent-badge">是</span>
+          {% else %}
+          <span class="muted">否</span>
+          {% endif %}
+        </td>
+        <td>{% if user.is_active %}正常{% else %}已禁用{% endif %}</td>
+        <td class="muted">{{ user.created_at.strftime('%Y-%m-%d %H:%M') if user.created_at else '—' }}</td>
+        <td>
+          {% if user.is_developer %}
+          <button type="button" class="agent-btn secondary sm js-dev-toggle" data-developer="0"
+            {% if user.id == current_user_id %}title="取消自己的开发者权限后需其他开发者恢复"{% endif %}>
+            取消开发者
+          </button>
+          {% else %}
+          <button type="button" class="agent-btn sm js-dev-toggle" data-developer="1">设为开发者</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">暂无用户</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p id="userManageMsg" class="muted" style="margin-top:12px;"></p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+  const msg = document.getElementById("userManageMsg");
+  document.querySelectorAll(".js-dev-toggle").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const row = btn.closest("tr");
+      const userId = row?.dataset.userId;
+      if (!userId) return;
+      const isDeveloper = btn.dataset.developer === "1";
+      const label = isDeveloper ? "设为开发者" : "取消开发者";
+      if (!confirm(`确认${label}？`)) return;
+      btn.disabled = true;
+      msg.textContent = "处理中…";
+      try {
+        const res = await fetch(`/api/debug/users/${encodeURIComponent(userId)}/developer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_developer: isDeveloper }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        location.reload();
+      } catch (err) {
+        msg.textContent = String(err.message || err);
+        btn.disabled = false;
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

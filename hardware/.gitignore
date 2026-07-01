@@ -17,6 +17,10 @@ sdkconfig.*
 !sdkconfig.defaults
 platformio.local.ini
 
+# ESP-SR fetched on first build (see scripts/fetch_esp_sr.py)
+components/esp-sr/
+srmodels.bin
+
 # Logs & local runtime
 *.log
 app.log

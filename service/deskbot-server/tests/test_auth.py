@@ -51,9 +51,19 @@ def test_register_and_bind_device(temp_db):
     from deskbot_server.auth.service import create_user
 
     user = create_user("alice@example.com", "secret1234")
+    assert user.is_developer is True
     device = bind_device(user.id, "deskbot_a1")
     assert device.device_id == "deskbot_a1"
     assert user_owns_device(user.id, "deskbot_a1")
+
+
+def test_second_user_is_not_developer_by_default(temp_db):
+    from deskbot_server.auth.service import create_user
+
+    first = create_user("first@example.com", "password1234")
+    second = create_user("second@example.com", "password1234")
+    assert first.is_developer is True
+    assert second.is_developer is False
 
 
 def test_bind_conflict(temp_db):

@@ -444,7 +444,7 @@ def align_pcm_s16le_mono_to_chunk_ms(
 
 
 def parse_pb_volume(raw: Any) -> int | None:
-    """解析 ``tts.pb_volume``（0–100）；无效或空则 ``None``（wire 省略，设备不改动）。"""
+    """解析 ``volume``（0–100）；无效或空则 ``None``（wire 省略，设备不改动）。"""
     if raw is None or raw == "":
         return None
     try:
@@ -453,61 +453,33 @@ def parse_pb_volume(raw: Any) -> int | None:
         return None
 
 
-def parse_pb_cam_fps(raw: Any) -> int | None:
-    """解析 ``tts.pb_cam_fps``；``≤0`` 或无效为 ``None``（wire 省略，设备不改动）。"""
-    if raw is None or raw == "":
-        return None
-    try:
-        v = int(raw)
-        return v if v > 0 else None
-    except (TypeError, ValueError):
-        return None
+def resolve_pb_volume_hint(volume: int | None = None) -> int | None:
+    """仅当调用方显式传入 ``volume`` 时写入 pb；否则 wire 省略。"""
+    return parse_pb_volume(volume) if volume is not None else None
 
 
-def pb_device_hints_from_tts_cfg(tts_cfg: dict[str, Any] | None) -> tuple[int | None, int | None]:
+def pb_device_hints_from_tts_cfg(tts_cfg: dict[str, Any] | None) -> int | None:
     cfg = tts_cfg or {}
-    return parse_pb_volume(cfg.get("pb_volume")), parse_pb_cam_fps(cfg.get("pb_cam_fps"))
+    return parse_pb_volume(cfg.get("pb_volume"))
 
 
 def resolve_pb_device_hints(
     tts_cfg: dict[str, Any] | None = None,
     *,
     volume: int | None = None,
-    cam_fps: int | None = None,
     device_id: str | None = None,
-) -> tuple[int | None, int | None]:
-    """显式 ``volume`` / ``cam_fps`` 优先，否则设备持久化音量 / ``tts_cfg``。"""
-    vol = parse_pb_volume(volume) if volume is not None else None
-    fps = parse_pb_cam_fps(cam_fps) if cam_fps is not None else None
-    if vol is None and device_id:
-        from deskbot_server.device_volume_store import get_device_volume
-
-        vol = get_device_volume(device_id)
-    if vol is None and fps is None:
-        return pb_device_hints_from_tts_cfg(tts_cfg)
-    cfg_vol, cfg_fps = pb_device_hints_from_tts_cfg(tts_cfg)
-    return vol if vol is not None else cfg_vol, fps if fps is not None else cfg_fps
-
-
-def load_tts_cfg_for_pb_hints() -> dict[str, Any]:
-    try:
-        from deskbot_server.config import load_config
-
-        return dict(load_config().get("tts") or {})
-    except Exception:
-        return {}
+) -> int | None:
+    """显式 ``volume`` 优先；未设置则 ``None``（不下发、设备保持现状）。"""
+    del device_id, tts_cfg  # 不再自动注入设备持久化音量
+    return resolve_pb_volume_hint(volume)
 
 
 def attach_pb_device_hints_from_config(
     target: dict[str, Any] | list[dict[str, Any]],
     tts_cfg: dict[str, Any] | None = None,
 ) -> None:
-    """从 ``tts.pb_volume`` / ``tts.pb_cam_fps``（或显式 ``tts_cfg``）写入设备提示。"""
-    vol, fps = resolve_pb_device_hints(tts_cfg or load_tts_cfg_for_pb_hints())
-    if isinstance(target, list):
-        apply_pb_device_hints_to_frames(target, volume=vol, cam_fps=fps)
-    else:
-        attach_pb_device_hints(target, volume=vol, cam_fps=fps)
+    """保留 API；不再自动注入 volume（须由 LLM/调用方显式指定）。"""
+    del target, tts_cfg
 
 
 def pb_expected_binary_lengths(msg: dict[str, Any]) -> list[int]:
@@ -539,7 +511,6 @@ def pb_json_messages(
     action: str = PB_ACTION_REPLACE,
     level: int = PB_LEVEL_TASK,
     volume: int | None = None,
-    cam_fps: int | None = None,
 ) -> list[tuple[dict[str, Any], list[bytes]]]:
     """生成 ``(pb 字典, 紧随 binary 列表)``；binary 顺序：PCM（若有）→ ``assets[]``。
 
@@ -548,7 +519,7 @@ def pb_json_messages(
     ``action``：``replace`` / ``append`` / ``default``；``level``：0–3，语义见协议文档。
     缺省 ``replace`` + ``level=1``（任务态）。
 
-    ``volume`` / ``cam_fps``：写入 ``pb_start`` / ``pb_chunk`` / ``pb_end`` / ``pb_single``；省略表示设备保持现状。
+    ``volume``：仅显式传入时写入 pb；省略表示设备保持现状。
     """
     n = len(anim_rows)
     if n == 0:
@@ -608,7 +579,7 @@ def pb_json_messages(
                 for blob in row_assets
                 for aw, ah in (jpeg_blob_dimensions(blob),)
             ]
-        attach_pb_device_hints(msg, volume=volume, cam_fps=cam_fps)
+        attach_pb_device_hints(msg, volume=volume)
         binaries: list[bytes] = []
         if pcm:
             binaries.append(pcm)

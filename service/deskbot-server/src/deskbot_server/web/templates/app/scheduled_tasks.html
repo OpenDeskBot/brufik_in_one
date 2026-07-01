@@ -6,34 +6,24 @@
   <p class="page-lead">Cron 定时任务（北京时间）。由对话 LLM 创建与管理，到点自动执行并播报。一次性任务执行后结束；周期性任务按 cron 重复。</p>
 </header>
 
+{% if not devices %}
 <div class="section-card">
-  <h3>选择设备</h3>
-  {% if devices %}
-  <div class="form-row" style="align-items:flex-end;">
-    <div style="flex:1;">
-      <label>当前设备</label>
-      <select id="deviceSelect" class="agent-input">
-        <option value="">— 请选择 —</option>
-        {% for d in devices %}
-        <option value="{{ d.device_id }}" {% if d.device_id == current_device_id %}selected{% endif %}>
-          {{ d.display_name or d.device_id }} ({{ d.device_id }})
-        </option>
+  <p class="muted">尚未绑定设备，请先在顶部点击「绑定设备」。</p>
+</div>
+{% elif current_device_id %}
+<div class="section-card">
+  <div class="table-toolbar">
+    <h3 style="margin:0;">任务列表 <span class="muted" style="font-weight:400;font-size:13px;">{{ current_device_id }}</span></h3>
+    <div class="table-toolbar-right">
+      <label class="muted sm">每页</label>
+      <select id="perPageSelect" class="agent-input sm-input">
+        {% for n in [10, 50, 100, 200] %}
+        <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
         {% endfor %}
       </select>
-    </div>
-    <div style="flex:0;">
-      <label>&nbsp;</label>
-      <button type="button" id="selectBtn" class="agent-btn secondary">切换</button>
+      <span class="muted sm">共 {{ total }} 条</span>
     </div>
   </div>
-  {% else %}
-  <p class="muted">尚未绑定设备，请先在 <a href="{{ url_for('app.devices_page') }}">我的设备</a> 页添加。</p>
-  {% endif %}
-</div>
-
-{% if current_device_id %}
-<div class="section-card">
-  <h3>任务列表 <span class="muted" style="font-weight:400;font-size:13px;">{{ current_device_id }}</span></h3>
   <table class="agent-table" id="taskTable">
     <thead>
       <tr>
@@ -80,26 +70,40 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if total|default(0) > 0 %}
+  <div class="table-pagination">
+    <button type="button" class="agent-btn ghost sm" id="prevPageBtn" {% if page|default(1) <= 1 %}disabled{% endif %}>上一页</button>
+    <span class="muted sm">第 {{ page|default(1) }} / {{ total_pages|default(1) }} 页</span>
+    <button type="button" class="agent-btn ghost sm" id="nextPageBtn" {% if page|default(1) >= total_pages|default(1) %}disabled{% endif %}>下一页</button>
+  </div>
+  {% endif %}
 </div>
-{% elif devices %}
-<div class="section-card">
-  <p class="muted">请先在上方选择设备，再查看该设备的定时任务。</p>
-</div>
-{% endif %}
 
 <script>
-  const deviceSelect = document.getElementById("deviceSelect");
-  document.getElementById("selectBtn")?.addEventListener("click", async () => {
-    const device_id = deviceSelect?.value?.trim() || "";
-    const res = await fetch("{{ url_for('app.api_select_device') }}", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_id: device_id || null }),
-    });
-    const data = await res.json();
-    if (data.ok) location.reload();
+  const pageState = { page: {{ page|default(1) }}, per_page: {{ per_page|default(10) }} };
+
+  function gotoTasksPage(page, perPage) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", String(perPage));
+    if (window.__appShellNavigate) {
+      window.__appShellNavigate(url.toString());
+      return;
+    }
+    window.location.href = url.toString();
+  }
+
+  document.getElementById("perPageSelect")?.addEventListener("change", (e) => {
+    gotoTasksPage(1, Number(e.target.value) || 10);
+  });
+  document.getElementById("prevPageBtn")?.addEventListener("click", () => {
+    gotoTasksPage(Math.max(1, pageState.page - 1), pageState.per_page);
+  });
+  document.getElementById("nextPageBtn")?.addEventListener("click", () => {
+    gotoTasksPage(pageState.page + 1, pageState.per_page);
   });
 
+  window.addEventListener("deskbot:device-changed", () => location.reload());
   document.querySelectorAll(".del-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       if (!confirm("确定删除该定时任务？")) return;
@@ -112,11 +116,16 @@
       );
       const data = await res.json();
       if (data.ok) {
-        btn.closest("tr")?.remove();
+        location.reload();
       } else {
         alert(data.error || "删除失败");
       }
     });
   });
 </script>
+{% elif devices %}
+<div class="section-card">
+  <p class="muted">请先在顶部「我的设备」中选择当前设备。</p>
+</div>
+{% endif %}
 {% endblock %}

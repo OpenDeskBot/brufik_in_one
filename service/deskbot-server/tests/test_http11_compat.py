@@ -23,10 +23,10 @@ def _drive(reader: StreamReader, gen):
 
 
 def test_parse_post_json_body():
-    payload = {"device_id": "d1", "playbook": {"name": "demo"}}
+    payload = {"device_id": "d1", "text": "你好"}
     body = json.dumps(payload).encode("utf-8")
     raw = (
-        b"POST /api/scene_playbook/run HTTP/1.1\r\n"
+        b"POST /api/device_tts HTTP/1.1\r\n"
         b"Content-Type: application/json\r\n"
         b"Content-Length: "
         + str(len(body)).encode()
@@ -40,7 +40,7 @@ def test_parse_post_json_body():
         parse_http_request_with_body(reader.read_line, reader.read_exact),
     )
     assert getattr(req, "method", None) == "POST"
-    assert req.path == "/api/scene_playbook/run"
+    assert req.path == "/api/device_tts"
     assert json.loads(getattr(req, "body", b"").decode()) == payload
 
 

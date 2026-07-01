@@ -123,12 +123,44 @@ async def ws_require_api_key(websocket, qargs: dict) -> ApiKeyAuth | None:
 
 def http_require_api_key(qargs: dict, headers) -> ApiKeyAuth:
     auth = resolve_api_key(qargs=qargs, headers=headers)
-    if auth is None:
-        raise PermissionError("api_key_required")
-    from deskbot_server.auth.api_key_service import check_quota
+    if auth is not None:
+        from deskbot_server.auth.api_key_service import check_quota
 
-    check_quota(auth.api_key_id, 0)
-    return auth
+        check_quota(auth.api_key_id, 0)
+        return auth
+
+    web_auth = _resolve_web_session_auth(qargs, headers)
+    if web_auth is not None:
+        return web_auth
+
+    raise PermissionError("api_key_required")
+
+
+def _web_session_auth(user_id: str) -> ApiKeyAuth:
+    return ApiKeyAuth(
+        api_key_id="__web_session__",
+        user_id=str(user_id).strip() or None,
+        is_free=False,
+        daily_quota_bytes=0,
+        name="web_session",
+    )
+
+
+def _resolve_web_session_auth(qargs: dict, headers) -> ApiKeyAuth | None:
+    """已登录 Web 控制台签发的 ``debug_token``（与 WS 调试同源）。"""
+    raw_token = extract_debug_token_from_query(qargs)
+    if not raw_token and headers is not None:
+        for key in ("X-Deskbot-Web-Token", "X-Deskbot-Debug-Token"):
+            val = str(headers.get(key) or "").strip()
+            if val:
+                raw_token = val
+                break
+    if not raw_token:
+        return None
+    user_id = verify_debug_ws_token(raw_token)
+    if not user_id:
+        return None
+    return _web_session_auth(user_id)
 
 
 def http_require_device_access(auth: ApiKeyAuth | None, device_id: str | None) -> None:

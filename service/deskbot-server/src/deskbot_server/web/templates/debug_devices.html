@@ -27,27 +27,15 @@
     <div class="dv-main-split">
       <div class="dv-main-header">
         <h1>设备调试</h1>
-        <p class="page-sub muted">选择在线设备并配置调试选项后，下方 Tab 可调试 TTS、舵机、摄像头、表情与场景；3D 形象随 pb_ack 舵机与口型预览同步。</p>
+        <p class="page-sub muted">在顶部选择当前设备并配置调试选项后，下方 Tab 可调试 TTS、舵机、摄像头、表情、ASR 与流水日志；3D 形象随 pb_ack 舵机与口型预览同步。</p>
+        <p v-if="deviceListError" class="dv-err sm">{{ deviceListError }}</p>
+        <p class="muted sm" v-if="selectedDeviceDetail">
+          当前设备 {{ selectedDeviceDetail.device_id }} · {{ deviceBriefStatus(selectedDeviceDetail) }}
+          · 最近 {{ selectedDeviceDetail.last_seen || '—' }}
+        </p>
+        <p v-else-if="!selected" class="dv-err sm">请先在顶部「我的设备」中选择设备</p>
       </div>
       <div class="dv-top-panels">
-        <div class="card dv-device-card">
-          <h3 class="dv-panel-title">设备选择</h3>
-          <div class="dv-toolbar dv-device-toolbar">
-            <label class="t-label">当前设备</label>
-            <select v-model="selected" class="dv-select" @change="onDeviceSelectChange">
-              <option value="">— 选择设备 —</option>
-              <option v-for="d in devices" :key="d.device_id" :value="d.device_id">
-                {{ deviceDisplayName(d.device_id) }} — {{ d.online ? '在线' : '离线' }}
-              </option>
-            </select>
-            <button type="button" @click="refreshDevices" class="dv-btn">刷新列表</button>
-          </div>
-          <p v-if="deviceListError" class="dv-err">{{ deviceListError }}</p>
-          <p class="muted sm" v-if="selectedDeviceDetail">
-            {{ selectedDeviceDetail.device_id }} · {{ deviceBriefStatus(selectedDeviceDetail) }}
-            · 最近 {{ selectedDeviceDetail.last_seen || '—' }}
-          </p>
-        </div>
         <div class="card dv-config-card">
           <h3 class="dv-panel-title">配置面板</h3>
           <div class="dv-config-options">
@@ -552,190 +540,103 @@
     </div>
 
 
-    <div v-show="activeTab === 'scene'" class="dv-tab-panel sp-playbook-card">
-      <h3 style="margin-top:0;">场景</h3>
-      <p class="doc muted sm">编排文字 TTS、表情场景与舵机预置为三条可拖动「音轨」；右侧 3D 预览由 Web 模拟舵机，无需在线设备。有设备时执行会同步下发。</p>
-      <div class="expr-phoneme-toolbar">
-        <button type="button" class="dv-btn sm" title="新增编排" @click="spAddRow">+</button>
-        <button type="button" class="dv-btn sm"
-                :disabled="spSaveBusy"
-                @click="spSaveToFile">保存到 scene_playbooks.json</button>
-        <button type="button" class="dv-btn sm secondary" @click="spLoadFromFile">重新载入</button>
-        <span class="muted sm mono">{{ spFileName }}</span>
+    <div v-show="activeTab === 'expr'" class="dv-tab-panel dv-expr-card">
+      <h3 style="margin-top:0;">表情调试</h3>
+      <p class="doc muted">从 <code class="mono">deskbot-face.json</code> 加载音素口型与情绪表情；点击条目即向当前设备下发 pb 动画（无音频）。</p>
+      <p v-if="!selected" class="dv-err sm">请先选择具体设备</p>
+      <div class="dv-expr-toolbar">
+        <input type="text" class="dv-expr-filter" v-model="exprFilter"
+               placeholder="筛选 name / title / alias…" />
+        <button type="button" class="dv-btn sm" :disabled="exprCatalogLoading" @click="refreshExprCatalog">
+          {{ exprCatalogLoading ? '加载中…' : '刷新列表' }}
+        </button>
       </div>
-      <p v-if="spLoadError" class="dv-err sm">{{ spLoadError }}</p>
-      <p v-if="spSaveStatus" class="sm" :class="{ 'dv-err': spSaveStatusErr }">{{ spSaveStatus }}</p>
-
-      <div class="expr-phoneme-split">
-        <section class="expr-phoneme-col expr-phoneme-col-table">
-          <h4 class="expr-phoneme-col-title">配置</h4>
-          <div class="table-wrap expr-phoneme-tbl-wrap">
-            <table class="expr-phoneme-tbl sm">
-              <thead>
-                <tr>
-                  <th>名称</th>
-                  <th>序列</th>
-                  <th colspan="3">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!spPlaybooks.length">
-                  <td colspan="5" class="expr-phoneme-empty">暂无编排，点 + 新增或重新载入</td>
-                </tr>
-                <tr v-for="(row, idx) in spPlaybooks" :key="row.name + '-' + idx"
-                    :class="['expr-phoneme-row', { sel: spSelectedIdx === idx }]"
-                    @click="spSelectedIdx = idx"
-                    @dblclick.stop="spOpenEditDialog(idx)">
-                  <td class="expr-phoneme-cell">{{ row.title || row.name }}</td>
-                  <td class="expr-phoneme-cell mono sm">{{ spTrackSummary(row) }}</td>
-                  <td class="expr-phoneme-act">
-                    <button type="button" class="dv-btn sm danger" title="删除"
-                            @click.stop="spDeleteRow(idx)">删除</button>
-                  </td>
-                  <td class="expr-phoneme-act">
-                    <button type="button" class="dv-btn sm secondary"
-                            @click.stop="spOpenEditDialog(idx)">编辑</button>
-                  </td>
-                  <td class="expr-phoneme-act">
-                    <button type="button" class="dv-btn sm"
-                            :disabled="spExecBusy"
-                            @click.stop="spExecRow(idx)">执行</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+      <p v-if="exprCatalogError" class="dv-err sm">{{ exprCatalogError }}</p>
+      <p v-if="exprPlayStatus" class="sm" :class="{ 'dv-err': exprPlayStatusErr }">{{ exprPlayStatus }}</p>
+      <div class="dv-expr-scroll">
+        <section class="dv-expr-section">
+          <h4 class="dv-expr-section-title">音素 <span class="muted sm">({{ exprPhonemesFiltered.length }})</span></h4>
+          <p v-if="!exprPhonemesFiltered.length" class="muted sm dv-expr-empty">暂无音素条目</p>
+          <div v-else class="dv-expr-grid">
+            <button v-for="item in exprPhonemesFiltered" :key="'ph-' + item.name"
+                    type="button" class="dv-expr-chip"
+                    :class="{ on: exprPlayingKey === ('phoneme:' + item.name), busy: exprPlaying && exprPlayingKey === ('phoneme:' + item.name) }"
+                    :disabled="!exprCanPlay"
+                    :title="exprItemTitle(item)"
+                    @click="exprPlay('phoneme', item.name)">
+              <span class="dv-expr-chip-name mono">{{ item.name }}</span>
+              <span class="dv-expr-chip-meta muted">{{ item.title }}</span>
+            </button>
           </div>
-          <p class="muted sm" style="margin:8px 0 0;">双击行可编辑三条音轨</p>
         </section>
-
-        <section class="expr-phoneme-col expr-phoneme-col-preview">
-          <h4 class="expr-phoneme-col-title">预览</h4>
-          <div class="sp-preview-wrap">
-            <div ref="scenePreview3dHost" class="sp-preview-host" aria-label="场景 3D 预览">
-              <p v-if="scenePreview3dError" class="dv-robot-fallback">{{ scenePreview3dError }}</p>
-            </div>
-            <div class="sp-preview-meta">
-              <div class="fp-meta-row"><span class="k">舵机</span><span class="v mono sm">Web 模拟 x={{ spSimServoXLabel }} y={{ spSimServoYLabel }}</span></div>
-              <div class="fp-meta-row"><span class="k">当前</span><span class="v sm">{{ scenePreviewLabel || '—' }}</span></div>
-              <div class="fp-meta-row"><span class="k">TTS</span><span class="v sm">{{ scenePreviewTtsLabel || '—' }}</span></div>
-              <div class="sp-preview-orbit-row">
-                <span class="muted sm">视角</span>
-                <input type="range" class="dv-robot-orbit" min="-180" max="180" step="1"
-                       v-model.number="scenePreviewViewYawDeg" aria-label="旋转场景预览" />
-              </div>
-            </div>
+        <section class="dv-expr-section">
+          <h4 class="dv-expr-section-title">情绪 <span class="muted sm">({{ exprEmotionsFiltered.length }})</span></h4>
+          <p v-if="!exprEmotionsFiltered.length" class="muted sm dv-expr-empty">暂无情绪条目</p>
+          <div v-else class="dv-expr-grid">
+            <button v-for="item in exprEmotionsFiltered" :key="'em-' + item.name"
+                    type="button" class="dv-expr-chip"
+                    :class="{ on: exprPlayingKey === ('emotion:' + item.name), busy: exprPlaying && exprPlayingKey === ('emotion:' + item.name) }"
+                    :disabled="!exprCanPlay"
+                    :title="exprItemTitle(item)"
+                    @click="exprPlay('emotion', item.name)">
+              <span class="dv-expr-chip-name mono">{{ item.name }}</span>
+              <span class="dv-expr-chip-meta muted">{{ item.title }}</span>
+            </button>
           </div>
-          <p v-if="spExecStatus" class="sm mono" :class="{ 'dv-err': spExecStatusErr }">{{ spExecStatus }}</p>
-          <p v-if="!selected" class="muted sm">未选设备：仅本地预览；选设备且 asr_chat 在线时会同步下发。</p>
         </section>
       </div>
+    </div>
 
-      <div v-if="spEditDialog" class="expr-design-modal-backdrop" @click.self="spCloseEditDialog">
-        <div class="expr-design-modal sp-edit-modal" role="dialog" aria-modal="true">
-          <h4 style="margin:0 0 12px;">编辑场景编排</h4>
-          <div class="sp-edit-grid">
-            <label class="expr-design-field">
-              <span class="expr-design-label">name（唯一键）</span>
-              <input v-model="spEditDialog.name" type="text" class="expr-design-input mono sm" spellcheck="false" />
-            </label>
-            <label class="expr-design-field">
-              <span class="expr-design-label">名称</span>
-              <input v-model="spEditDialog.title" type="text" class="expr-design-input sm" />
-            </label>
-          </div>
-          <label class="expr-design-field">
-            <span class="expr-design-label">整段 TTS 文本（可选，无文字轨时执行一次）</span>
-            <input v-model="spEditDialog.text" type="text" class="expr-design-input sm"
-                   placeholder="可选整段播报…" />
-          </label>
-
-          <div class="sp-track-lane">
-            <div class="sp-track-head">
-              <span class="sp-track-label">文字轨</span>
-              <button type="button" class="dv-btn sm secondary" @click="spAddClip('text_track')">+ 片段</button>
-            </div>
-            <div class="sp-track-clips">
-              <div v-for="(clip, ci) in spEditDialog.text_track" :key="clip.id"
-                   class="sp-clip" draggable="true"
-                   :class="{ dragging: spDragClip && spDragClip.track === 'text_track' && spDragClip.idx === ci }"
-                   @dragstart="spDragStart('text_track', ci, $event)"
-                   @dragover.prevent="spDragOver('text_track', ci, $event)"
-                   @drop.prevent="spDragDrop('text_track', ci, $event)">
-                <input v-model="clip.text" type="text" class="sp-clip-input sm" placeholder="TTS 文本" @mousedown.stop />
-                <input v-model.number="clip.ms" type="number" min="40" max="120000" step="10"
-                       class="sp-clip-ms mono sm" title="时长 ms" @mousedown.stop />
-                <span class="muted sm">ms</span>
-                <button type="button" class="dv-btn sm danger" @click.stop="spRemoveClip('text_track', ci)">×</button>
-              </div>
-              <span v-if="!spEditDialog.text_track.length" class="muted sm sp-track-empty">拖入或点 + 添加</span>
-            </div>
-          </div>
-
-          <div class="sp-track-lane">
-            <div class="sp-track-head">
-              <span class="sp-track-label">表情轨</span>
-              <button type="button" class="dv-btn sm secondary" @click="spAddClip('expr_track')">+ 片段</button>
-            </div>
-            <div class="sp-track-clips">
-              <div v-for="(clip, ci) in spEditDialog.expr_track" :key="clip.id"
-                   class="sp-clip" draggable="true"
-                   @dragstart="spDragStart('expr_track', ci, $event)"
-                   @dragover.prevent="spDragOver('expr_track', ci, $event)"
-                   @drop.prevent="spDragDrop('expr_track', ci, $event)">
-                <select v-model="clip.scene" class="sp-clip-select sm" @mousedown.stop>
-                  <option v-for="sc in spExprSceneOptions" :key="sc" :value="sc">{{ sc }}</option>
-                </select>
-                <input v-model.number="clip.ms" type="number" min="40" max="120000" step="10"
-                       class="sp-clip-ms mono sm" @mousedown.stop />
-                <span class="muted sm">ms</span>
-                <button type="button" class="dv-btn sm danger" @click.stop="spRemoveClip('expr_track', ci)">×</button>
-              </div>
-              <span v-if="!spEditDialog.expr_track.length" class="muted sm sp-track-empty">—</span>
-            </div>
-          </div>
-
-          <div class="sp-track-lane">
-            <div class="sp-track-head">
-              <span class="sp-track-label">舵机轨</span>
-              <button type="button" class="dv-btn sm secondary" @click="spAddClip('servo_track')">+ 片段</button>
-            </div>
-            <div class="sp-track-clips">
-              <div v-for="(clip, ci) in spEditDialog.servo_track" :key="clip.id"
-                   class="sp-clip" draggable="true"
-                   @dragstart="spDragStart('servo_track', ci, $event)"
-                   @dragover.prevent="spDragOver('servo_track', ci, $event)"
-                   @drop.prevent="spDragDrop('servo_track', ci, $event)">
-                <select v-model="clip.preset" class="sp-clip-select sm" @mousedown.stop
-                        @change="spOnServoPresetPick(clip)">
-                  <option value="">自定义</option>
-                  <option v-for="p in servoPresets" :key="p.id" :value="p.id">{{ p.label || p.id }}</option>
-                </select>
-                <template v-if="!clip.preset">
-                  <span class="mono sm">x</span>
-                  <input v-model.number="clip.x" type="number" class="sp-clip-ms mono sm" @mousedown.stop />
-                  <span class="mono sm">y</span>
-                  <input v-model.number="clip.y" type="number" class="sp-clip-ms mono sm" @mousedown.stop />
+    <div v-show="activeTab === 'asr'" class="dv-tab-panel dv-asr-card">
+      <h3 style="margin-top:0;">ASR识别</h3>
+      <p class="doc muted">勾选「开始调试」后，展示 ROM 上行整段音频（首帧 audio 至 flush）；含识别为空/被过滤/有效。最多 {{ asrMaxEvents }} 行。</p>
+      <div class="dp-toolbar">
+        <button type="button" @click="asrClear" class="dv-btn">清空表格</button>
+        <span class="muted sm">
+          {{ asrEvents.length }} 条；最后事件：{{ asrLastRecv || '—' }}
+        </span>
+      </div>
+      <p v-if="!selected" class="dv-err sm">请先选择具体设备</p>
+      <p v-if="!debugEnabled" class="muted sm">请勾选页顶「开始调试」以订阅 ASR 收音事件</p>
+      <div class="table-wrap">
+        <table class="dp-table dv-asr-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>有效</th>
+              <th>识别结果</th>
+              <th>音频</th>
+              <th>ASR 耗时</th>
+              <th>备注</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!asrEvents.length">
+              <td colspan="6" class="dp-empty">
+                {{ selected && debugEnabled ? '暂无收音（对着设备说话后会出现在此）' : '选择设备并开启调试' }}
+              </td>
+            </tr>
+            <tr v-for="r in asrEvents" :key="r.request_id || r._seq">
+              <td class="mono sm">{{ asrFormatTime(r) }}</td>
+              <td>
+                <span :class="['dp-status', r.asr_valid ? 'ok' : 'bad']">{{ asrValidLabel(r) }}</span>
+              </td>
+              <td><div class="t">{{ r.asr_text || '—' }}</div></td>
+              <td class="dv-asr-audio-cell">
+                <span class="mono sm">{{ asrAudioLabel(r) }}</span>
+                <template v-if="r.audioUrl">
+                  <button type="button" class="dv-btn sm" @click="asrTogglePlay(r)">
+                    {{ r._playing ? '停止' : '播放' }}
+                  </button>
+                  <a class="btn-link sm" :href="r.audioUrl" :download="'asr-' + (r.request_id || r._seq) + '.wav'">下载</a>
                 </template>
-                <input v-model.number="clip.ms" type="number" min="40" max="120000" step="10"
-                       class="sp-clip-ms mono sm" @mousedown.stop />
-                <span class="muted sm">ms</span>
-                <button type="button" class="dv-btn sm danger" @click.stop="spRemoveClip('servo_track', ci)">×</button>
-              </div>
-              <span v-if="!spEditDialog.servo_track.length" class="muted sm sp-track-empty">—</span>
-            </div>
-          </div>
-
-          <p v-if="spEditDialog.error" class="dv-err sm">{{ spEditDialog.error }}</p>
-          <div class="expr-design-modal-actions">
-            <button type="button" class="dv-btn sm secondary" @click="spCloseEditDialog">取消</button>
-            <button type="button" class="dv-btn sm"
-                    :disabled="spExecBusy"
-                    @click="spExecEditDialog">执行预览</button>
-            <button type="button" class="dv-btn sm"
-                    :disabled="spEditDialog.saving"
-                    @click="spSaveEditDialog">保存</button>
-          </div>
-        </div>
+                <span v-else class="muted sm">—</span>
+              </td>
+              <td class="mono">{{ dpMs(r.asr_ms) }}</td>
+              <td class="mono sm">{{ asrErrorLabel(r) }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -821,7 +722,7 @@
     }
     .dv-top-panels {
       display: grid;
-      grid-template-columns: minmax(260px, 1.2fr) minmax(240px, 1fr) minmax(220px, auto);
+      grid-template-columns: minmax(260px, 1.2fr) minmax(220px, auto);
       gap: 16px;
       align-items: stretch;
     }
@@ -977,144 +878,19 @@
       overflow: auto;
     }
 
-    .expr-preview-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      align-items: flex-start;
-      margin: 10px 0 14px;
-    }
-    .expr-phoneme-split {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px 20px;
-      align-items: flex-start;
-    }
-    .expr-phoneme-col { flex: 1 1 320px; min-width: 280px; }
-    .expr-phoneme-col-table { flex: 2 1 480px; }
-    .expr-phoneme-col-preview { flex: 1 1 260px; max-width: 420px; }
-    .expr-phoneme-col-title { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
-    .expr-phoneme-toolbar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-      margin: 8px 0 10px;
-    }
-    .expr-phoneme-tbl-wrap { max-height: min(68vh, 720px); overflow: auto; }
-    .expr-phoneme-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .expr-phoneme-tbl th, .expr-phoneme-tbl td {
-      border: 1px solid #e5e5ea;
-      padding: 6px 8px;
-      vertical-align: top;
-      text-align: left;
-    }
-    .expr-phoneme-tbl th { background: #f5f5f7; position: sticky; top: 0; z-index: 1; }
-    .expr-phoneme-row { cursor: pointer; }
-    .expr-phoneme-row:hover { background: #f9f9fb; }
-    .expr-phoneme-row.sel { background: #eef6ff; }
-    .expr-phoneme-cell { min-width: 80px; max-width: 280px; }
-    .expr-phoneme-preview {
-      max-height: 7rem;
-      overflow: auto;
-      word-break: break-all;
-      line-height: 1.35;
-      white-space: pre-wrap;
-    }
-    .expr-phoneme-edit {
-      width: 100%;
-      min-width: 120px;
-      box-sizing: border-box;
-      border: 1px solid #0a84ff;
-      border-radius: 4px;
-      padding: 4px 6px;
-      font-size: 11px;
-      resize: vertical;
-    }
-    .expr-phoneme-act { width: 3.2rem; text-align: center; white-space: nowrap; }
-    .expr-phoneme-empty { text-align: center; color: #6e6e73; padding: 16px; }
-    .expr-phoneme-json-wrap { margin-top: 4px; }
-    .expr-phoneme-json-ta {
-      width: 100%;
-      min-height: 360px;
-      box-sizing: border-box;
-      border: 1px solid #c7c7cc;
-      border-radius: 8px;
-      padding: 10px;
-      font-size: 11px;
-      line-height: 1.4;
-      resize: vertical;
-    }
-    .expr-canvas {
-      width: 284px;
-      height: 240px;
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
-      border: 2px solid #c7c7cc;
-      border-radius: 8px;
-      background: #111;
-      flex-shrink: 0;
-    }
-    .expr-preview-meta { flex: 1; min-width: 160px; }
-    .expr-scene-btns { margin-top: 4px; }
-
-    .expr-design-modal-backdrop {
-      position: fixed;
-      inset: 0;
-      z-index: 1200;
-      background: rgba(0, 0, 0, 0.45);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-    }
-    .expr-design-modal {
-      width: min(640px, 96vw);
-      max-height: 90vh;
-      overflow: auto;
-      background: #fff;
-      border-radius: 10px;
-      padding: 18px 20px;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
-    }
-    .expr-design-field { display: block; margin-bottom: 10px; }
-    .expr-design-field-ta { margin-bottom: 8px; }
-    .expr-design-label {
-      display: block;
-      font-size: 12px;
-      color: #6e6e73;
-      margin-bottom: 4px;
-    }
-    .expr-design-input {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 7px 9px;
-      border: 1px solid #c7c7cc;
-      border-radius: 6px;
-      font-size: 13px;
-    }
-    .expr-design-ta {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 8px 9px;
-      border: 1px solid #c7c7cc;
-      border-radius: 6px;
-      font-size: 12px;
-      line-height: 1.45;
-      resize: vertical;
-      min-height: 200px;
-    }
-    .expr-design-modal-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 12px;
-    }
-
     .dv-servo-card,
     .dv-camera-card,
     .dv-pipeline-card { margin-bottom: 0; }
-    .dv-tts-card { margin-bottom: 0; }
+    .dv-tts-card {
+      margin-bottom: 0;
+      overflow: hidden;
+    }
+    .dv-tts-card > h3,
+    .dv-tts-card > .doc,
+    .dv-tts-toolbar,
+    .dv-tts-card > .dv-err {
+      flex-shrink: 0;
+    }
     .dv-tts-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 10px; }
     .dv-tts-input {
       flex: 1;
@@ -1125,7 +901,8 @@
       font-size: 13px;
     }
     .dv-tts-table-wrap {
-      max-height: 11.75rem;
+      flex: 1;
+      min-height: 0;
       overflow-y: auto;
       border: 1px solid #e5e5ea;
       border-radius: 6px;
@@ -1240,55 +1017,68 @@
     }
     .cv-scene-action-status { margin: 8px 0 0; line-height: 1.4; }
 
-    .sp-preview-wrap { display: flex; flex-direction: column; gap: 10px; }
-    .sp-preview-host {
-      width: 100%;
-      height: 260px;
-      border-radius: 8px;
-      border: 1px solid #d2d2d7;
-      background: #eef2f7;
+    .dv-expr-card {
+      margin-bottom: 0;
       overflow: hidden;
-      position: relative;
     }
-    .sp-preview-host canvas { display: block; width: 100% !important; height: 100% !important; }
-    .sp-preview-meta { font-size: 12px; }
-    .sp-preview-orbit-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-    .sp-preview-orbit-row .dv-robot-orbit { flex: 1; }
-    .sp-edit-modal { width: min(920px, 96vw); }
-    .sp-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
-    @media (max-width: 640px) { .sp-edit-grid { grid-template-columns: 1fr; } }
-    .sp-track-lane { margin-bottom: 14px; }
-    .sp-track-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-    .sp-track-label { font-size: 13px; font-weight: 600; }
-    .sp-track-clips {
+    .dv-expr-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .dv-expr-toolbar {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
       align-items: center;
-      min-height: 48px;
-      padding: 10px;
-      background: #f5f5f7;
-      border-radius: 8px;
-      border: 1px dashed #c7c7cc;
+      margin: 8px 0 12px;
     }
-    .sp-track-empty { padding: 4px 2px; }
-    .sp-clip {
+    .dv-expr-filter {
+      flex: 1;
+      min-width: 12rem;
+      padding: 7px 10px;
+      border: 1px solid #c7c7cc;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .dv-expr-section { margin-top: 14px; }
+    .dv-expr-section-title { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+    .dv-expr-empty { margin: 0 0 8px; }
+    .dv-expr-grid {
       display: flex;
       flex-wrap: wrap;
-      align-items: center;
-      gap: 4px;
-      padding: 6px 8px;
+      gap: 6px;
+      align-items: stretch;
+    }
+    .dv-expr-chip {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      min-width: 4.5rem;
+      max-width: 11rem;
+      padding: 6px 10px;
+      border: 1px solid #c7c7cc;
+      border-radius: 8px;
       background: #fff;
-      border: 1px solid #0a84ff;
-      border-radius: 6px;
-      cursor: grab;
+      cursor: pointer;
+      text-align: left;
+      line-height: 1.25;
+    }
+    .dv-expr-chip:hover:not(:disabled) { background: #f5f5f7; border-color: #0071e3; }
+    .dv-expr-chip.on { background: #e8f4ff; border-color: #0071e3; }
+    .dv-expr-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+    .dv-expr-chip.busy { opacity: 0.7; }
+    .dv-expr-chip-name { font-size: 13px; font-weight: 600; }
+    .dv-expr-chip-meta {
       font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       max-width: 100%;
     }
-    .sp-clip.dragging { opacity: 0.45; }
-    .sp-clip-input { width: 140px; padding: 4px 6px; border: 1px solid #c7c7cc; border-radius: 4px; }
-    .sp-clip-select { max-width: 160px; padding: 4px 6px; border: 1px solid #c7c7cc; border-radius: 4px; }
-    .sp-clip-ms { width: 64px; padding: 4px 6px; border: 1px solid #c7c7cc; border-radius: 4px; }
+
     .dv-sp { flex: 1; }
     .dv-status.ok { color: #1a7f37; font-weight: 600; }
     .dv-status.bad { color: #b42318; font-weight: 600; }
@@ -1306,6 +1096,14 @@
     .dp-table td { vertical-align: top; }
     .dp-table th { white-space: nowrap; }
     .dp-table .pre { white-space: pre-wrap; word-break: break-word; max-width: 36rem; }
+    .dv-asr-audio-cell {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      min-width: 10rem;
+    }
+    .dv-asr-table .t { max-width: 24rem; word-break: break-word; }
     .dp-empty { text-align: center; color: #6e6e73; padding: 20px; }
     .dp-status.ok { color: #1a7f37; font-weight: 600; }
     .dp-status.bad { color: #b42318; font-weight: 600; }
@@ -1693,7 +1491,8 @@
       { id: "camera", label: "摄像头" },
       { id: "servo", label: "舵机控制" },
       { id: "tts", label: "TTS 下发" },
-      { id: "scene", label: "场景" },
+      { id: "expr", label: "表情调试" },
+      { id: "asr", label: "ASR识别" },
       { id: "pipeline", label: "流水日志" },
     ];
     /** 默认动作预设（首次无 localStorage 时使用） */
@@ -1884,6 +1683,15 @@
           cvSceneActionStatusErr: false,
           pbSceneKeys: [],
           pbScenesError: "",
+          exprCatalogLoading: false,
+          exprCatalogError: "",
+          exprPhonemes: [],
+          exprEmotions: [],
+          exprFilter: "",
+          exprPlaying: false,
+          exprPlayingKey: "",
+          exprPlayStatus: "",
+          exprPlayStatusErr: false,
           cvVoiceAutoReply: true,
           cvVoiceAutoReplySaving: false,
           cvVoiceAutoReplyErr: "",
@@ -1978,26 +1786,6 @@
           cvCfgStatus: "",
           cvCfgStatusErr: false,
 
-          exprScenesCache: [],
-
-          spPlaybooks: [],
-          spSelectedIdx: -1,
-          spEditDialog: null,
-          spDragClip: null,
-          spLoadError: "",
-          spSaveStatus: "",
-          spSaveStatusErr: false,
-          spSaveBusy: false,
-          spExecStatus: "",
-          spExecStatusErr: false,
-          spExecBusy: false,
-          spFileName: "scene_playbooks.json",
-          sceneSimServo: { x: 90, y: 90 },
-          scenePreviewLabel: "",
-          scenePreviewTtsLabel: "",
-          scenePreviewViewYawDeg: 0,
-          scenePreview3dError: "",
-
           dpWs: null,
           dpConnected: false,
           dpStatus: "未开始",
@@ -2009,6 +1797,15 @@
           _dpSeq: 0,
           _dpManualDisconnect: false,
           _dpReconnectTimer: null,
+
+          asrEvents: [],
+          asrMaxEvents: 100,
+          asrLastRecv: "",
+          _asrSeq: 0,
+          _asrPlayingSeq: null,
+          _asrAudioCtx: null,
+          _asrPlaySource: null,
+
           debugEnabled: (function () {
             try { return sessionStorage.getItem(DEBUG_ENABLED_LS_KEY) === "1"; } catch (_) { return false; }
           })(),
@@ -2023,13 +1820,6 @@
         this._robotAnimId = null;
         this._robotResizeObs = null;
         this._threeLoadPromise = null;
-        this._scenePreview3d = null;
-        this._scenePreviewAnimId = null;
-        this._scenePreviewResizeObs = null;
-        this._sceneTimelineTimers = [];
-        this._sceneServoAnimTimer = null;
-        this._sceneExprTimelineTimer = null;
-        this._sceneExprTimelineState = null;
       },
       computed: {
         dpWsUrl() { return buildDpWsUrl(this.dpBase, this.selected, this.debugWsToken); },
@@ -2477,23 +2267,27 @@
         robotViewYawLabel() {
           return this._fmtAngleDeg(this.robotViewYawDeg) || "0.0°";
         },
-        spSimServoXLabel() {
-          const x = Number(this.sceneSimServo && this.sceneSimServo.x);
-          return Number.isFinite(x) ? String(Math.round(x)) : "90";
-        },
-        spSimServoYLabel() {
-          const y = Number(this.sceneSimServo && this.sceneSimServo.y);
-          return Number.isFinite(y) ? String(Math.round(y)) : "90";
-        },
-        spExprSceneOptions() {
-          const names = (this.exprScenesCache || []).map((r) => r.name).filter(Boolean);
-          if (names.length) return names;
-          return this.pbSceneKeys.slice();
-        },
         exprSceneKeys() {
           return (this.pbSceneKeys || []).filter(
             (k) => !EXPR_SCENE_EXCLUDE.has(String(k).trim().toLowerCase()),
           );
+        },
+        exprFilterLower() {
+          return String(this.exprFilter || "").trim().toLowerCase();
+        },
+        exprPhonemesFiltered() {
+          const q = this.exprFilterLower;
+          return (this.exprPhonemes || []).filter((item) => this.exprItemMatchesFilter(item, q));
+        },
+        exprEmotionsFiltered() {
+          const q = this.exprFilterLower;
+          return (this.exprEmotions || []).filter((item) => {
+            if (EXPR_SCENE_EXCLUDE.has(String(item.name || "").trim().toLowerCase())) return false;
+            return this.exprItemMatchesFilter(item, q);
+          });
+        },
+        exprCanPlay() {
+          return !!this.selected && !this.exprPlaying;
         },
       },
       methods: {
@@ -2781,19 +2575,16 @@
           const row = this.ownedDeviceRows().find((x) => x.device_id === deviceId);
           return (row && row.display_name) || deviceId;
         },
-        async onDeviceSelectChange() {
-          const owned = this.ownedDeviceIdSet();
-          if (this.selected && !owned.has(this.selected)) {
-            this.selected = "";
-            return;
+        async onGlobalDeviceChange() {
+          this.dpDisconnect();
+          this.cvDisconnect();
+          await this.refreshDevices();
+          if (this.selected && !this.debugWsToken) {
+            await this.refreshDebugWsToken();
           }
-          try {
-            await fetch("/app/api/devices/select", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ device_id: this.selected || "" }),
-            });
-          } catch (_) { /* session sync best-effort */ }
+          if (this.debugEnabled && this.selected) {
+            this.$nextTick(() => this.reconnect());
+          }
         },
 
         async refreshDebugWsToken() {
@@ -2839,8 +2630,11 @@
               };
             });
             const ownedSet = this.ownedDeviceIdSet();
-            if (this.selected && !ownedSet.has(this.selected)) {
-              this.selected = ownedIds[0] || "";
+            const sessionId = window.__CURRENT_DEVICE_ID__ || "";
+            if (sessionId && ownedSet.has(sessionId)) {
+              this.selected = sessionId;
+            } else if (this.selected && !ownedSet.has(this.selected)) {
+              this.selected = "";
             }
             this.deviceListError = "";
             this._syncPbAckFromSelectedDevice();
@@ -2848,6 +2642,83 @@
             this.deviceListError = "获取设备列表失败：" + (e && e.message ? e.message : e);
           }
           await this.refreshPbScenes();
+          await this.refreshExprCatalog();
+        },
+        exprItemMatchesFilter(item, q) {
+          if (!q) return true;
+          if (!item || typeof item !== "object") return false;
+          if (String(item.name || "").toLowerCase().includes(q)) return true;
+          if (String(item.title || "").toLowerCase().includes(q)) return true;
+          for (const a of item.alias || []) {
+            if (String(a || "").toLowerCase().includes(q)) return true;
+          }
+          return false;
+        },
+        exprItemTitle(item) {
+          if (!item) return "";
+          const alias = Array.isArray(item.alias) && item.alias.length
+            ? " · alias: " + item.alias.join(", ")
+            : "";
+          return `${item.title || item.name}${alias} · ${item.frames || 0} 帧 · ${item.total_ms || 0} ms`;
+        },
+        async refreshExprCatalog() {
+          this.exprCatalogLoading = true;
+          this.exprCatalogError = "";
+          try {
+            const res = await fetch(this.httpBase + "/api/device_face_catalog", { cache: "no-store" });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            const d = await res.json();
+            if (!d || !d.ok) throw new Error((d && d.error) || "bad response");
+            this.exprPhonemes = Array.isArray(d.phonemes) ? d.phonemes.slice() : [];
+            this.exprEmotions = Array.isArray(d.emotions) ? d.emotions.slice() : [];
+          } catch (e) {
+            this.exprPhonemes = [];
+            this.exprEmotions = [];
+            this.exprCatalogError = "表情列表加载失败：" + (e && e.message ? e.message : e);
+          } finally {
+            this.exprCatalogLoading = false;
+          }
+        },
+        async exprPlay(kind, name) {
+          const dev = this.selected;
+          const nm = String(name || "").trim();
+          const k = String(kind || "").trim().toLowerCase();
+          if (!dev || !nm || !k || this.exprPlaying) return false;
+          this.exprPlaying = true;
+          this.exprPlayingKey = `${k}:${nm}`;
+          this.exprPlayStatus = "";
+          this.exprPlayStatusErr = false;
+          const url = deskbotApiUrl(this.httpBase, "/api/device_face_play");
+          url.searchParams.set("device_id", dev);
+          url.searchParams.set("kind", k);
+          url.searchParams.set("name", nm);
+          try {
+            const res = await fetch(url.toString(), { cache: "no-store" });
+            let body = {};
+            try {
+              body = await res.json();
+            } catch (e) {}
+            if (!res.ok) {
+              let err = body.error || ("HTTP " + res.status);
+              if (Array.isArray(body.valid_names) && body.valid_names.length) {
+                err += " 可用：" + body.valid_names.slice(0, 12).join(", ");
+              }
+              throw new Error(err);
+            }
+            const label = k === "phoneme" ? "音素" : "情绪";
+            let msg = `${label}「${body.name || nm}」已下发 req=${body.req || "?"}，${body.frames != null ? body.frames : "?"} 片，WebSocket 发送=${body.delivered != null ? body.delivered : "?"}`;
+            if (body.hint) msg += " " + body.hint;
+            this.exprPlayStatus = msg;
+            this.exprPlayStatusErr = body.delivered === 0;
+            return body.delivered !== 0;
+          } catch (e) {
+            this.exprPlayStatus = "表情下发失败：" + (e && e.message ? e.message : e);
+            this.exprPlayStatusErr = true;
+            return false;
+          } finally {
+            this.exprPlaying = false;
+            this.exprPlayingKey = "";
+          }
         },
         async refreshPbScenes() {
           this.pbScenesError = "";
@@ -3079,6 +2950,130 @@
             this.dpApplyStage(d.event);
             return;
           }
+          if (d.type === "asr_capture") {
+            this.asrApplyEvent(d.event);
+            return;
+          }
+        },
+        asrAudioUrlFromBase64(wavBase64) {
+          const raw = String(wavBase64 || "").trim();
+          if (!raw) return null;
+          try {
+            const bin = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+            return URL.createObjectURL(new Blob([bin], { type: "audio/wav" }));
+          } catch (e) {
+            return null;
+          }
+        },
+        asrFormatTime(r) { return formatAtOrTs(r); },
+        asrValidLabel(r) {
+          if (!r) return "—";
+          return r.asr_valid ? "有效" : "无效";
+        },
+        asrErrorLabel(r) {
+          if (!r || !r.error) return r && r.asr_valid ? "—" : "—";
+          const map = {
+            asr_empty: "识别为空",
+            asr_filtered: "结果被过滤",
+          };
+          return map[r.error] || r.error;
+        },
+        asrAudioLabel(r) {
+          if (!r) return "—";
+          const ms = r.audio_ms != null ? `${Math.round(Number(r.audio_ms) || 0)} ms` : null;
+          const bytes = r.pcm_bytes != null ? `${Number(r.pcm_bytes) || 0} B` : null;
+          const sr = r.sample_rate != null ? `${Number(r.sample_rate) || 0} Hz` : null;
+          const ch = r.channels != null ? `${Number(r.channels) || 1} ch` : null;
+          const codec = r.codec ? String(r.codec) : null;
+          const parts = [ms, bytes, sr, ch, codec].filter(Boolean);
+          return parts.length ? parts.join(" · ") : "—";
+        },
+        asrApplyEvent(evt) {
+          if (!this.debugEnabled || !evt || typeof evt !== "object") return;
+          const dev = evt.device_id || "";
+          if (this.selected && dev && dev !== this.selected) return;
+          const row = {
+            _seq: ++this._asrSeq,
+            request_id: evt.request_id || null,
+            received_ts: evt.received_ts != null ? evt.received_ts : Date.now() / 1000,
+            received_at: evt.received_at || null,
+            asr_valid: !!evt.asr_valid,
+            asr_text: evt.asr_text != null ? String(evt.asr_text) : "",
+            asr_ms: evt.asr_ms,
+            audio_ms: evt.audio_ms,
+            pcm_bytes: evt.pcm_bytes != null ? evt.pcm_bytes : null,
+            sample_rate: evt.sample_rate != null ? evt.sample_rate : null,
+            channels: evt.channels != null ? evt.channels : null,
+            codec: evt.codec || null,
+            error: evt.error || null,
+            audioUrl: null,
+            _playing: false,
+          };
+          if (evt.wav_base64) {
+            row.audioUrl = this.asrAudioUrlFromBase64(evt.wav_base64);
+          }
+          this.asrEvents.unshift(row);
+          if (this.asrEvents.length > this.asrMaxEvents) {
+            const removed = this.asrEvents.splice(this.asrMaxEvents);
+            for (const old of removed) {
+              if (old.audioUrl) URL.revokeObjectURL(old.audioUrl);
+            }
+          }
+          this.asrLastRecv = new Date().toLocaleString();
+        },
+        asrStopPlay() {
+          if (this._asrPlaySource) {
+            try { this._asrPlaySource.stop(); } catch (e) {}
+            this._asrPlaySource = null;
+          }
+        },
+        asrClear() {
+          this.asrStopPlay();
+          for (const r of this.asrEvents) {
+            if (r._playing) r._playing = false;
+            if (r.audioUrl) URL.revokeObjectURL(r.audioUrl);
+          }
+          this.asrEvents = [];
+          this._asrSeq = 0;
+          this.asrLastRecv = "";
+          this._asrPlayingSeq = null;
+        },
+        async asrTogglePlay(row) {
+          if (!row || !row.audioUrl) return;
+          if (this._asrPlayingSeq === row._seq) {
+            this.asrStopPlay();
+            row._playing = false;
+            this._asrPlayingSeq = null;
+            return;
+          }
+          this.asrStopPlay();
+          const prev = this.asrEvents.find((x) => x._seq === this._asrPlayingSeq);
+          if (prev) prev._playing = false;
+          try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!this._asrAudioCtx) this._asrAudioCtx = new Ctx();
+            const ctx = this._asrAudioCtx;
+            if (ctx.state === "suspended") await ctx.resume();
+            const resp = await fetch(row.audioUrl);
+            const ab = await resp.arrayBuffer();
+            const buf = await ctx.decodeAudioData(ab);
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.connect(ctx.destination);
+            src.onended = () => {
+              row._playing = false;
+              if (this._asrPlayingSeq === row._seq) this._asrPlayingSeq = null;
+              if (this._asrPlaySource === src) this._asrPlaySource = null;
+            };
+            this._asrPlaySource = src;
+            this._asrPlayingSeq = row._seq;
+            row._playing = true;
+            src.start(0);
+          } catch (e) {
+            row._playing = false;
+            this._asrPlayingSeq = null;
+            this._asrPlaySource = null;
+          }
         },
         onDebugEnabledChange(ev) {
           this.debugEnabled = !!ev.target.checked;
@@ -3094,6 +3089,7 @@
           } else {
             this.dpStopReconnectForever();
             this.cvStopReconnectForever();
+            this.asrClear();
             this.dpStatus = "未开始";
             this.cvStatus = "未开始";
           }
@@ -4396,605 +4392,6 @@
             for (const s of el[key] || []) this._exprDrawShape(ctx, s, colors[key] || "#888");
           }
         },
-        _exprShapeName(shape) {
-          return String(shape || "").trim().toLowerCase();
-        },
-        _exprLerpNum(a, b, t) {
-          const na = Number(a);
-          const nb = Number(b);
-          if (!Number.isFinite(na)) return b;
-          if (!Number.isFinite(nb)) return a;
-          return na + (nb - na) * t;
-        },
-        _exprInterpolatePrimitive(curr, next, t) {
-          if (!curr) return null;
-          const cs = this._exprShapeName(curr.shape);
-          const ns = this._exprShapeName(next && next.shape);
-          if (!cs || !next || cs !== ns) return JSON.parse(JSON.stringify(curr));
-          const out = JSON.parse(JSON.stringify(curr));
-          for (const k of Object.keys(out)) {
-            if (k === "shape") continue;
-            if (next[k] != null && typeof out[k] === "number" && typeof next[k] === "number") {
-              out[k] = this._exprLerpNum(out[k], next[k], t);
-            }
-          }
-          return out;
-        },
-        _exprInterpolatePrimitiveList(currList, nextList, t) {
-          const curr = Array.isArray(currList) ? currList : [];
-          const next = Array.isArray(nextList) ? nextList : [];
-          const out = [];
-          for (let i = 0; i < curr.length; i += 1) {
-            const c = curr[i];
-            if (!c) continue;
-            const nx = next[i];
-            if (!nx || this._exprShapeName(c.shape) !== this._exprShapeName(nx.shape)) {
-              out.push(JSON.parse(JSON.stringify(c)));
-            } else {
-              out.push(this._exprInterpolatePrimitive(c, nx, t));
-            }
-          }
-          return out;
-        },
-        _exprInterpolateElements(currEl, nextEl, t) {
-          const keys = ["nose", "mouth", "eye_l", "eye_r", "extra"];
-          const out = {};
-          for (const key of keys) {
-            out[key] = this._exprInterpolatePrimitiveList(
-              (currEl && currEl[key]) || [],
-              (nextEl && nextEl[key]) || [],
-              t,
-            );
-          }
-          return out;
-        },
-        _designFrameToElements(fr) {
-          if (!fr || typeof fr !== "object") {
-            return JSON.parse(JSON.stringify(EXPR_DEFAULT_ANIM.elements || {}));
-          }
-          const els = fr.elements || (fr.anim && fr.anim.elements);
-          if (els && typeof els === "object") {
-            return JSON.parse(JSON.stringify(els));
-          }
-          return JSON.parse(JSON.stringify(EXPR_DEFAULT_ANIM.elements || {}));
-        },
-        async exprScenesLoadForPreview() {
-          try {
-            const res = await fetch("/api/deskbot_face", { cache: "no-store" });
-            const d = await res.json();
-            if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
-            const rows = Array.isArray(d.emotions) ? d.emotions : [];
-            this.exprScenesCache = rows.map((r) => ({
-              name: String((r && r.name) || "").trim(),
-              title: String((r && r.title) || (r && r.name) || "").trim(),
-              frames: Array.isArray(r && r.frames) ? JSON.parse(JSON.stringify(r.frames)) : [],
-            }));
-          } catch (e) {
-            this.exprScenesCache = [];
-          }
-        },
-
-        spNewClipId() {
-          return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-        },
-        spNormalizePlaybook(raw) {
-          return {
-            name: String((raw && raw.name) || "").trim(),
-            title: String((raw && raw.title) || (raw && raw.name) || "").trim(),
-            text: String((raw && raw.text) || "").trim(),
-            text_track: Array.isArray(raw && raw.text_track)
-              ? JSON.parse(JSON.stringify(raw.text_track)) : [],
-            expr_track: Array.isArray(raw && raw.expr_track)
-              ? JSON.parse(JSON.stringify(raw.expr_track)) : [],
-            servo_track: Array.isArray(raw && raw.servo_track)
-              ? JSON.parse(JSON.stringify(raw.servo_track)) : [],
-          };
-        },
-        spApplyConfig(payload) {
-          const rows = Array.isArray(payload)
-            ? payload
-            : (payload && Array.isArray(payload.config) ? payload.config : []);
-          this.spPlaybooks = rows.map((r) => this.spNormalizePlaybook(r));
-        },
-        spBuildDocument() {
-          return JSON.parse(JSON.stringify(this.spPlaybooks || []));
-        },
-        spTrackSummary(row) {
-          if (!row) return "—";
-          const parts = [];
-          const tt = (row.text_track || []).length;
-          const et = (row.expr_track || []).length;
-          const st = (row.servo_track || []).length;
-          if (row.text) parts.push("整段TTS");
-          if (tt) parts.push(`文×${tt}`);
-          if (et) parts.push(`表情×${et}`);
-          if (st) parts.push(`舵机×${st}`);
-          if (!parts.length) return "—";
-          let total = 0;
-          for (const c of (row.text_track || [])) total += Math.max(0, Number(c.ms) || 0);
-          for (const c of (row.expr_track || [])) total += Math.max(0, Number(c.ms) || 0);
-          for (const c of (row.servo_track || [])) total += Math.max(0, Number(c.ms) || 0);
-          return `${parts.join(" · ")} · ${total} ms`;
-        },
-        async spLoadFromFile() {
-          this.spLoadError = "";
-          try {
-            const res = await fetch("/api/scene_playbooks", { cache: "no-store" });
-            const d = await res.json();
-            if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
-            if (d.file) this.spFileName = d.file;
-            this.spApplyConfig(d);
-          } catch (e) {
-            this.spLoadError = "载入失败：" + (e && e.message ? e.message : e);
-          }
-        },
-        async spSaveToFile() {
-          this.spSaveBusy = true;
-          this.spSaveStatus = "";
-          this.spSaveStatusErr = false;
-          try {
-            const body = this.spBuildDocument();
-            const res = await fetch("/api/scene_playbooks", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            });
-            const d = await res.json();
-            if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
-            if (d.file) this.spFileName = d.file;
-            this.spApplyConfig(d);
-            this.spSaveStatus = "已保存到 " + (d.file || this.spFileName);
-            return true;
-          } catch (e) {
-            this.spSaveStatus = "保存失败：" + (e && e.message ? e.message : e);
-            this.spSaveStatusErr = true;
-            return false;
-          } finally {
-            this.spSaveBusy = false;
-          }
-        },
-        spDefaultPlaybook() {
-          const suffix = Date.now().toString(36);
-          return {
-            name: "playbook_" + suffix,
-            title: "新编排",
-            text: "",
-            text_track: [],
-            expr_track: [{ id: this.spNewClipId(), scene: "default", ms: 800 }],
-            servo_track: [{ id: this.spNewClipId(), preset: "center", ms: 500 }],
-          };
-        },
-        spAddRow() {
-          const row = this.spDefaultPlaybook();
-          this.spPlaybooks.push(row);
-          this.spOpenEditDialog(this.spPlaybooks.length - 1);
-        },
-        spDeleteRow(idx) {
-          if (idx < 0 || idx >= this.spPlaybooks.length) return;
-          this.spPlaybooks.splice(idx, 1);
-          if (this.spSelectedIdx === idx) this.spSelectedIdx = -1;
-          else if (this.spSelectedIdx > idx) this.spSelectedIdx -= 1;
-        },
-        spCloneEditDraft(row) {
-          const r = this.spNormalizePlaybook(row);
-          return {
-            name: r.name,
-            title: r.title,
-            text: r.text,
-            text_track: (r.text_track || []).map((c) => ({ ...c, id: c.id || this.spNewClipId() })),
-            expr_track: (r.expr_track || []).map((c) => ({ ...c, id: c.id || this.spNewClipId() })),
-            servo_track: (r.servo_track || []).map((c) => ({ ...c, id: c.id || this.spNewClipId() })),
-            error: "",
-            saving: false,
-          };
-        },
-        spOpenEditDialog(idx) {
-          const row = this.spPlaybooks[idx];
-          if (!row) return;
-          this.spSelectedIdx = idx;
-          this.spEditDialog = { idx, ...this.spCloneEditDraft(row) };
-        },
-        spCloseEditDialog() {
-          this.spEditDialog = null;
-          this.spDragClip = null;
-        },
-        spAddClip(trackKey) {
-          const dlg = this.spEditDialog;
-          if (!dlg || !Array.isArray(dlg[trackKey])) return;
-          if (trackKey === "text_track") {
-            dlg[trackKey].push({ id: this.spNewClipId(), text: "你好", ms: 1500 });
-          } else if (trackKey === "expr_track") {
-            const sc = this.spExprSceneOptions[0] || "default";
-            dlg[trackKey].push({ id: this.spNewClipId(), scene: sc, ms: 800 });
-          } else {
-            dlg[trackKey].push({ id: this.spNewClipId(), preset: "center", ms: 500 });
-          }
-        },
-        spRemoveClip(trackKey, idx) {
-          const dlg = this.spEditDialog;
-          if (!dlg || !Array.isArray(dlg[trackKey])) return;
-          dlg[trackKey].splice(idx, 1);
-        },
-        spOnServoPresetPick(clip) {
-          if (!clip) return;
-          if (clip.preset) {
-            delete clip.x;
-            delete clip.y;
-            delete clip.xm;
-            delete clip.ym;
-          } else {
-            clip.x = 90;
-            clip.y = 90;
-            clip.xm = 0;
-            clip.ym = 0;
-          }
-        },
-        spDragStart(trackKey, idx, ev) {
-          this.spDragClip = { track: trackKey, idx };
-          if (ev && ev.dataTransfer) {
-            ev.dataTransfer.effectAllowed = "move";
-            ev.dataTransfer.setData("text/plain", String(idx));
-          }
-        },
-        spDragOver(trackKey, idx, ev) {
-          if (!this.spDragClip || this.spDragClip.track !== trackKey) return;
-          if (ev && ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
-        },
-        spDragDrop(trackKey, toIdx, ev) {
-          const drag = this.spDragClip;
-          this.spDragClip = null;
-          const dlg = this.spEditDialog;
-          if (!drag || !dlg || drag.track !== trackKey || !Array.isArray(dlg[trackKey])) return;
-          const fromIdx = drag.idx;
-          if (fromIdx === toIdx) return;
-          const arr = dlg[trackKey];
-          const item = arr.splice(fromIdx, 1)[0];
-          if (!item) return;
-          let insertAt = toIdx;
-          if (fromIdx < toIdx) insertAt -= 1;
-          arr.splice(insertAt, 0, item);
-        },
-        spParseEditDialog() {
-          const dlg = this.spEditDialog;
-          if (!dlg) throw new Error("无编辑会话");
-          const name = String(dlg.name || "").trim();
-          if (!name) throw new Error("name 不能为空");
-          if (!/^[a-z][a-z0-9_]*$/i.test(name)) {
-            throw new Error("name 须为字母开头，仅含字母数字下划线");
-          }
-          const title = String(dlg.title || name).trim();
-          const text = String(dlg.text || "").trim();
-          const text_track = (dlg.text_track || []).map((c) => {
-            const t = String(c.text || "").trim();
-            if (!t) throw new Error("文字轨片段 text 不能为空");
-            return {
-              id: String(c.id || this.spNewClipId()),
-              text: t,
-              ms: Math.max(40, Math.min(120000, Math.round(Number(c.ms) || 500))),
-            };
-          });
-          const expr_track = (dlg.expr_track || []).map((c) => {
-            const scene = String(c.scene || "").trim();
-            if (!scene) throw new Error("表情轨 scene 不能为空");
-            return {
-              id: String(c.id || this.spNewClipId()),
-              scene,
-              ms: Math.max(40, Math.min(120000, Math.round(Number(c.ms) || 500))),
-            };
-          });
-          const servo_track = (dlg.servo_track || []).map((c) => {
-            const ms = Math.max(40, Math.min(120000, Math.round(Number(c.ms) || 500)));
-            const preset = String(c.preset || "").trim();
-            const out = { id: String(c.id || this.spNewClipId()), ms };
-            if (preset) {
-              out.preset = preset;
-            } else {
-              out.x = Math.round(Number(c.x) || 90);
-              out.y = Math.round(Number(c.y) || 90);
-              out.xm = Number(c.xm) === 0 ? 0 : 1;
-              out.ym = Number(c.ym) === 0 ? 0 : (Number(c.ym) === 1 ? 1 : out.xm);
-            }
-            return out;
-          });
-          if (!text && !text_track.length && !expr_track.length && !servo_track.length) {
-            throw new Error("至少填写整段 TTS 或一条音轨片段");
-          }
-          return { name, title, text, text_track, expr_track, servo_track };
-        },
-        async spSaveEditDialog() {
-          const dlg = this.spEditDialog;
-          if (!dlg) return;
-          dlg.error = "";
-          dlg.saving = true;
-          try {
-            const parsed = this.spParseEditDialog();
-            const dup = this.spPlaybooks.findIndex(
-              (r, i) => i !== dlg.idx && String(r.name).toLowerCase() === parsed.name.toLowerCase(),
-            );
-            if (dup >= 0) throw new Error(`name 与第 ${dup + 1} 行重复`);
-            this.spPlaybooks.splice(dlg.idx, 1, parsed);
-            this.spSelectedIdx = dlg.idx;
-            const ok = await this.spSaveToFile();
-            if (!ok) {
-              dlg.error = this.spSaveStatus || "保存失败";
-              return;
-            }
-            this.spCloseEditDialog();
-          } catch (e) {
-            dlg.error = e && e.message ? e.message : String(e);
-          } finally {
-            if (this.spEditDialog) this.spEditDialog.saving = false;
-          }
-        },
-        spExecEditDialog() {
-          const dlg = this.spEditDialog;
-          if (!dlg) return;
-          try {
-            const pb = this.spParseEditDialog();
-            void this.spRunPlaybook(pb, { fromEdit: true });
-          } catch (e) {
-            dlg.error = e && e.message ? e.message : String(e);
-          }
-        },
-        spExecRow(idx) {
-          const row = this.spPlaybooks[idx];
-          if (!row) return;
-          this.spSelectedIdx = idx;
-          void this.spRunPlaybook(row);
-        },
-        _spStopPlayback() {
-          for (const t of (this._sceneTimelineTimers || [])) clearTimeout(t);
-          this._sceneTimelineTimers = [];
-          this._sceneExprStopTimeline();
-          if (this._sceneServoAnimTimer) {
-            cancelAnimationFrame(this._sceneServoAnimTimer);
-            this._sceneServoAnimTimer = null;
-          }
-          this.spExecBusy = false;
-        },
-        _sceneExprStopTimeline() {
-          if (this._sceneExprTimelineTimer) {
-            clearInterval(this._sceneExprTimelineTimer);
-            this._sceneExprTimelineTimer = null;
-          }
-          this._sceneExprTimelineState = null;
-        },
-        _scenePreviewSyncExprFromAnim(anim) {
-          const st = this._scenePreview3d;
-          if (!st || !st.faceCanvas) return;
-          this._exprDrawAnimOnCanvas(st.faceCanvas, anim);
-          if (st.faceTexture) st.faceTexture.needsUpdate = true;
-        },
-        _scenePreviewSyncServo() {
-          const st = this._scenePreview3d;
-          const THREE = window.__THREE__;
-          if (!st || !st.headPivot || !THREE) return;
-          const sim = this.sceneSimServo || {};
-          const x = Number(sim.x);
-          const y = Number(sim.y);
-          const deg = this._servoDisplayDegFromProtocol(
-            Number.isFinite(x) ? x : ROBOT_SERVO_CENTER,
-            Number.isFinite(y) ? y : ROBOT_SERVO_CENTER,
-          );
-          st.targetHeadYaw = THREE.MathUtils.degToRad(deg.yaw);
-          st.targetHeadPitch = THREE.MathUtils.degToRad(deg.pitch);
-        },
-        _scenePreviewSyncViewYaw() {
-          const st = this._scenePreview3d;
-          const THREE = window.__THREE__;
-          if (!st || !st.turntable || !THREE) return;
-          st.turntable.rotation.y = THREE.MathUtils.degToRad(Number(this.scenePreviewViewYawDeg) || 0);
-        },
-        _sceneExprTimelineTick() {
-          const st = this._sceneExprTimelineState;
-          if (!st) return;
-          const now = performance.now();
-          let idx = st.frameIdx;
-          let localStart = st.frameStartMs;
-          while (idx < st.durations.length - 1) {
-            const dur = st.durations[idx];
-            const elapsed = now - localStart;
-            if (elapsed < dur) break;
-            localStart += dur;
-            idx += 1;
-          }
-          if (idx !== st.frameIdx) {
-            st.frameIdx = idx;
-            st.frameStartMs = localStart;
-          }
-          const dur = st.durations[idx] || 500;
-          const elapsed = Math.max(0, now - st.frameStartMs);
-          const hasNext = idx < st.elementsList.length - 1;
-          const t = hasNext ? Math.min(1, elapsed / dur) : 0;
-          const currEl = st.elementsList[idx] || {};
-          const nextEl = hasNext ? (st.elementsList[idx + 1] || currEl) : currEl;
-          const interpEl = hasNext
-            ? this._exprInterpolateElements(currEl, nextEl, t)
-            : JSON.parse(JSON.stringify(currEl));
-          this._scenePreviewSyncExprFromAnim({ elements: interpEl });
-        },
-        _sceneExprPlayFrames(frames, label, maxMs) {
-          this._sceneExprStopTimeline();
-          const framesArr = Array.isArray(frames) ? frames : [];
-          if (!framesArr.length) {
-            this._scenePreviewSyncExprFromAnim(EXPR_DEFAULT_ANIM);
-            return;
-          }
-          this.scenePreviewLabel = label || "";
-          const elementsList = framesArr.map((fr) => this._designFrameToElements(fr));
-          const durations = framesArr.map((fr) => Math.max(40, Number(fr && fr.ms) || 500));
-          this._sceneExprTimelineState = {
-            elementsList,
-            durations,
-            frameIdx: 0,
-            frameStartMs: performance.now(),
-          };
-          this._sceneExprTimelineTick();
-          this._sceneExprTimelineTimer = setInterval(() => this._sceneExprTimelineTick(), 13);
-          if (maxMs > 0) {
-            this._sceneTimelineTimers.push(setTimeout(() => this._sceneExprStopTimeline(), maxMs));
-          }
-        },
-        _spResolveExprScene(name) {
-          const want = String(name || "").trim().toLowerCase();
-          if (!want) return null;
-          return (this.exprScenesCache || []).find(
-            (s) => String(s.name || "").trim().toLowerCase() === want,
-          ) || null;
-        },
-        _spServoClipSteps(clip) {
-          if (!clip) return [];
-          const presetId = String(clip.preset || "").trim();
-          if (presetId) {
-            const p = (this.servoPresets || []).find((x) => x.id === presetId);
-            if (p && p.steps && p.steps.length) return this._manualCloneServoSteps(p.steps);
-            return [{ x: 90, y: 90, xm: 0, ym: 0, ms: clip.ms || 500 }];
-          }
-          return [{
-            x: Number(clip.x) || 90,
-            y: Number(clip.y) || 90,
-            xm: Number(clip.xm) === 0 ? 0 : 1,
-            ym: Number(clip.ym) === 0 ? 0 : (Number(clip.ym) === 1 ? 1 : (Number(clip.xm) === 0 ? 0 : 1)),
-            ms: Math.max(40, Number(clip.ms) || 500),
-          }];
-        },
-        _spAnimateServoProtoSim(proto) {
-          return new Promise((resolve) => {
-            const startX = Number(this.sceneSimServo.x) || 90;
-            const startY = Number(this.sceneSimServo.y) || 90;
-            let endX = proto.xm === 0 ? proto.x : startX + proto.x;
-            let endY = proto.ym === 0 ? proto.y : startY + proto.y;
-            const c = this._servoCfgNorm();
-            endX = this._servoClampAxis(endX, c.xMin, c.xMax);
-            endY = this._servoClampAxis(endY, c.yMin, c.yMax);
-            const dur = Math.max(40, proto.ms || 400);
-            const t0 = performance.now();
-            const tick = () => {
-              const t = Math.min(1, (performance.now() - t0) / dur);
-              this.sceneSimServo = {
-                x: startX + (endX - startX) * t,
-                y: startY + (endY - startY) * t,
-              };
-              this._scenePreviewSyncServo();
-              if (t < 1) {
-                this._sceneServoAnimTimer = requestAnimationFrame(tick);
-              } else {
-                this._sceneServoAnimTimer = null;
-                resolve();
-              }
-            };
-            tick();
-          });
-        },
-        async _spRunServoClipSim(clip) {
-          const steps = this._spServoClipSteps(clip);
-          for (const step of steps) {
-            const proto = this._servoStepToProtocol(step);
-            await this._spAnimateServoProtoSim(proto);
-          }
-        },
-        _spPlayExprClip(sceneName, ms) {
-          const row = this._spResolveExprScene(sceneName);
-          if (!row || !row.frames || !row.frames.length) {
-            this.scenePreviewLabel = sceneName + " (未找到)";
-            this._scenePreviewSyncExprFromAnim(EXPR_DEFAULT_ANIM);
-            return;
-          }
-          this._sceneExprPlayFrames(row.frames, sceneName, ms);
-        },
-        async spDispatchPlaybookDevice(pb) {
-          if (!this.selected || !this.selectedHasAsrChat) return false;
-          try {
-            const res = await fetch(this.httpBase + "/api/scene_playbook/run", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ device_id: this.selected, playbook: pb }),
-              cache: "no-store",
-            });
-            const d = await res.json();
-            if (!res.ok || !d.ok) {
-              throw new Error((d && (d.error || d.hint)) || ("HTTP " + res.status));
-            }
-            return true;
-          } catch (e) {
-            this.spExecStatus = "设备下发失败：" + (e && e.message ? e.message : e);
-            this.spExecStatusErr = true;
-            return false;
-          }
-        },
-        async spRunPlaybook(pb, opts = {}) {
-          if (!pb) return;
-          this._spStopPlayback();
-          this.spExecBusy = true;
-          this.spExecStatus = "预览中…";
-          this.spExecStatusErr = false;
-          this.sceneSimServo = { x: 90, y: 90 };
-          this._scenePreviewSyncServo();
-          this.scenePreviewTtsLabel = "";
-          this.scenePreviewLabel = pb.title || pb.name || "";
-
-          if (this.activeTab === "scene") {
-            await this.$nextTick();
-            if (!this._scenePreview3d) await this.scenePreviewInit3d();
-          }
-
-          const canDevice = !!(this.selected && this.selectedHasAsrChat);
-          if (canDevice) {
-            void this.spDispatchPlaybookDevice(pb);
-          }
-
-          const scheduleAt = (delayMs, fn) => {
-            const wait = Math.max(0, delayMs);
-            this._sceneTimelineTimers.push(setTimeout(fn, wait));
-          };
-
-          let textOffset = 0;
-          for (const clip of (pb.text_track || [])) {
-            const startAt = textOffset;
-            textOffset += Math.max(40, Number(clip.ms) || 500);
-            scheduleAt(startAt, () => {
-              this.scenePreviewTtsLabel = clip.text;
-            });
-          }
-          if (pb.text && !(pb.text_track || []).length) {
-            scheduleAt(0, () => {
-              this.scenePreviewTtsLabel = pb.text;
-            });
-          }
-
-          let exprOffset = 0;
-          for (const clip of (pb.expr_track || [])) {
-            const startAt = exprOffset;
-            const ms = Math.max(40, Number(clip.ms) || 500);
-            exprOffset += ms;
-            scheduleAt(startAt, () => {
-              this._spPlayExprClip(clip.scene, ms);
-            });
-          }
-
-          let servoOffset = 0;
-          for (const clip of (pb.servo_track || [])) {
-            const startAt = servoOffset;
-            servoOffset += Math.max(40, Number(clip.ms) || 500);
-            scheduleAt(startAt, () => {
-              void this._spRunServoClipSim(clip);
-            });
-          }
-
-          const totalMs = Math.max(textOffset, exprOffset, servoOffset, 800);
-          scheduleAt(totalMs + 120, () => {
-            this.spExecBusy = false;
-            if (canDevice && !this.spExecStatusErr) {
-              this.spExecStatus = `预览完成（设备 ${this.selected} 已提交交错下发 req 见网络）`;
-            } else if (this.selected && !canDevice) {
-              this.spExecStatus = "预览完成（asr_chat 未连接，仅本地）";
-              this.spExecStatusErr = true;
-            } else if (!this.spExecStatusErr) {
-              this.spExecStatus = "预览完成（仅本地模拟）";
-            }
-          });
-        },
-
         _robotMakeForwardArrow(THREE) {
           const mat = new THREE.MeshStandardMaterial({
             color: 0x30d158,
@@ -5202,167 +4599,9 @@
           tick();
         },
 
-        scenePreviewDispose3d() {
-          if (this._scenePreviewAnimId) {
-            cancelAnimationFrame(this._scenePreviewAnimId);
-            this._scenePreviewAnimId = null;
-          }
-          if (this._scenePreviewResizeObs) {
-            try { this._scenePreviewResizeObs.disconnect(); } catch (e) { /* ignore */ }
-            this._scenePreviewResizeObs = null;
-          }
-          const st = this._scenePreview3d;
-          if (st && st.renderer) {
-            if (st.faceTexture) {
-              try { st.faceTexture.dispose(); } catch (e) { /* ignore */ }
-            }
-            st.renderer.dispose();
-            if (st.renderer.domElement && st.renderer.domElement.parentNode) {
-              st.renderer.domElement.parentNode.removeChild(st.renderer.domElement);
-            }
-          }
-          this._scenePreview3d = null;
-        },
-        async scenePreviewInit3d() {
-          this.scenePreviewDispose3d();
-          this.scenePreview3dError = "";
-          const host = this.$refs.scenePreview3dHost;
-          if (!host) return;
-
-          let THREE;
-          try {
-            THREE = await this._ensureThreeLoaded();
-          } catch (e) {
-            this.scenePreview3dError = "Three.js 加载失败";
-            return;
-          }
-
-          let renderer;
-          try {
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-          } catch (e) {
-            this.scenePreview3dError = "WebGL 不可用";
-            return;
-          }
-
-          const w = Math.max(120, host.clientWidth || 320);
-          const h = Math.max(120, host.clientHeight || 260);
-
-          const scene = new THREE.Scene();
-          scene.background = new THREE.Color(0xeef2f7);
-
-          const camera = new THREE.PerspectiveCamera(38, w / h, 0.08, 50);
-          camera.position.set(0, 0.92, 2.65);
-          camera.lookAt(0, 0.78, 0);
-
-          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-          renderer.setSize(w, h, false);
-          host.appendChild(renderer.domElement);
-
-          scene.add(new THREE.AmbientLight(0xffffff, 0.62));
-          const key = new THREE.DirectionalLight(0xffffff, 0.88);
-          key.position.set(1.5, 3.5, 2.5);
-          scene.add(key);
-          const rim = new THREE.DirectionalLight(0xcfe0ff, 0.35);
-          rim.position.set(-2, 1.2, -1.5);
-          scene.add(rim);
-          scene.add(new THREE.GridHelper(2.4, 8, 0xc7c7cc, 0xe5e5ea));
-          scene.add(this._robotMakeForwardArrow(THREE));
-
-          const turntable = new THREE.Group();
-          scene.add(turntable);
-
-          const bodyMat = new THREE.MeshStandardMaterial({ color: 0x8e8e93, roughness: 0.55, metalness: 0.12 });
-          const headMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f7, roughness: 0.42, metalness: 0.06 });
-          const neckMat = new THREE.MeshStandardMaterial({ color: 0x0071e3, roughness: 0.38, metalness: 0.18 });
-
-          const base = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.55, 0.62, 0.07, 24),
-            new THREE.MeshStandardMaterial({ color: 0xd1d1d6, roughness: 0.58 }),
-          );
-          base.position.y = -0.02;
-          turntable.add(base);
-
-          const body = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.62, 0.52), bodyMat);
-          body.position.y = 0.28;
-          turntable.add(body);
-
-          const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.22, 16), neckMat);
-          neck.position.y = 0.66;
-          turntable.add(neck);
-
-          const headPivot = new THREE.Group();
-          headPivot.position.y = 0.8;
-          turntable.add(headPivot);
-
-          const head = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.5, 0.54), headMat);
-          head.position.y = 0.22;
-          headPivot.add(head);
-
-          const faceCanvas = document.createElement("canvas");
-          faceCanvas.width = FACE_LCD_W;
-          faceCanvas.height = FACE_LCD_H;
-          const faceTexture = new THREE.CanvasTexture(faceCanvas);
-          faceTexture.magFilter = THREE.NearestFilter;
-          faceTexture.minFilter = THREE.NearestFilter;
-          const faceScreen = new THREE.Mesh(
-            new THREE.PlaneGeometry(0.42, 0.42 * FACE_LCD_H / FACE_LCD_W),
-            new THREE.MeshBasicMaterial({ map: faceTexture, toneMapped: false }),
-          );
-          faceScreen.position.set(0, 0.22, 0.272);
-          headPivot.add(faceScreen);
-
-          this._exprDrawAnimOnCanvas(faceCanvas, EXPR_DEFAULT_ANIM);
-          faceTexture.needsUpdate = true;
-
-          this._scenePreview3d = markRaw({
-            scene: markRaw(scene),
-            camera: markRaw(camera),
-            renderer: markRaw(renderer),
-            turntable: markRaw(turntable),
-            headPivot: markRaw(headPivot),
-            faceCanvas,
-            faceTexture: markRaw(faceTexture),
-            faceScreen: markRaw(faceScreen),
-            currentHeadYaw: 0,
-            currentHeadPitch: 0,
-            targetHeadYaw: 0,
-            targetHeadPitch: 0,
-          });
-          this._scenePreviewSyncServo();
-          this._scenePreviewSyncViewYaw();
-
-          const resize = () => {
-            const st = this._scenePreview3d;
-            if (!st || !host) return;
-            const rw = Math.max(120, host.clientWidth || 320);
-            const rh = Math.max(120, host.clientHeight || 260);
-            st.camera.aspect = rw / rh;
-            st.camera.updateProjectionMatrix();
-            st.renderer.setSize(rw, rh, false);
-          };
-          if (typeof ResizeObserver !== "undefined") {
-            this._scenePreviewResizeObs = new ResizeObserver(() => resize());
-            this._scenePreviewResizeObs.observe(host);
-          }
-
-          const tick = () => {
-            const st = this._scenePreview3d;
-            if (!st) return;
-            this._scenePreviewSyncServo();
-            st.currentHeadYaw += (st.targetHeadYaw - st.currentHeadYaw) * 0.2;
-            st.currentHeadPitch += (st.targetHeadPitch - st.currentHeadPitch) * 0.2;
-            st.headPivot.rotation.order = "YXZ";
-            st.headPivot.rotation.y = st.currentHeadYaw;
-            st.headPivot.rotation.x = st.currentHeadPitch;
-            st.renderer.render(st.scene, st.camera);
-            this._scenePreviewAnimId = requestAnimationFrame(tick);
-          };
-          tick();
-        },
-
         reconnect() {
           this.dpClear();
+          this.asrClear();
           this.dpDisconnect();
           this.cvResetView();
           this.cvDisconnect();
@@ -5378,7 +4617,6 @@
           this._cvFollowLastSendMs = 0;
           this._cvFollowLastSmileMs = 0;
           this._syncPbAckFromSelectedDevice();
-          void this.exprScenesLoadForPreview();
           this.reconnect();
         },
         pbAckServo: {
@@ -5388,17 +4626,18 @@
             if (!this.absPadDragging) this._syncAbsFromPbAck();
           },
         },
-        servoCfgXReverse() { this._robotSyncServoAngles(); this._scenePreviewSyncServo(); },
-        servoCfgYReverse() { this._robotSyncServoAngles(); this._scenePreviewSyncServo(); },
+        servoCfgXReverse() { this._robotSyncServoAngles(); },
+        servoCfgYReverse() { this._robotSyncServoAngles(); },
         robotViewYawDeg() { this._robotSyncViewYaw(); },
-        scenePreviewViewYawDeg() { this._scenePreviewSyncViewYaw(); },
-        activeTab(tab) {
-          if (tab === "scene") {
-            this.$nextTick(() => { void this.scenePreviewInit3d(); });
-          }
-        },
       },
       async mounted() {
+        this._onGlobalDeviceChange = (e) => {
+          const id = (e && e.detail && e.detail.device_id) || window.__CURRENT_DEVICE_ID__ || "";
+          if (id === this.selected) return;
+          this.selected = id;
+          void this.onGlobalDeviceChange();
+        };
+        window.addEventListener("deskbot:device-changed", this._onGlobalDeviceChange);
         this._onPageHide = () => {
           this.dpStopReconnectForever();
           this.cvStopReconnectForever();
@@ -5437,8 +4676,6 @@
         this.servoLoadPresets();
         await this.servoLoadCfgFromFile();
         this.servoLoadHistory();
-        await this.exprScenesLoadForPreview();
-        await this.spLoadFromFile();
         this._syncAbsFromPbAck();
         void this.cvFetchSavedProfiles();
         // 人脸跟随舵机由服务端 /asr_chat camera_frame + debug.camera_servo_auto_mode 下发
@@ -5453,17 +4690,18 @@
         }
       },
       unmounted() {
+        if (this._onGlobalDeviceChange) {
+          window.removeEventListener("deskbot:device-changed", this._onGlobalDeviceChange);
+        }
         if (this._onPageHide) window.removeEventListener("pagehide", this._onPageHide);
         if (this._onVisibilityChange) document.removeEventListener("visibilitychange", this._onVisibilityChange);
         this.dpStopReconnectForever();
         this.cvStopReconnectForever();
-        this._spStopPlayback();
         if (this._cvFpsTimer) clearInterval(this._cvFpsTimer);
         if (this._cvFollowTickTimer) clearInterval(this._cvFollowTickTimer);
         if (this._cvServoStatusTimer) clearTimeout(this._cvServoStatusTimer);
         if (this._manualServoStatusTimer) clearTimeout(this._manualServoStatusTimer);
         this._robotDispose3d();
-        this.scenePreviewDispose3d();
         if (this.cvImgUrl) { try { URL.revokeObjectURL(this.cvImgUrl); } catch (e) {} }
       },
     }).mount("#app");

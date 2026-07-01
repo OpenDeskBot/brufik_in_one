@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -16,9 +15,26 @@ DEVICE_DATA_ROOT = DATA_DIR / "device"
 LLM_SYSTEM_FILENAME = "llm_system.txt"
 _DEVICE_ID_SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
 
+# 所有设备共用 ``data/global/``，不再复制到 ``data/device/{id}/``。
+SHARED_CONFIG_NAMES = frozenset(
+    {
+        "deskbot-face.json",
+        "camera_face.json",
+        LLM_SYSTEM_FILENAME,
+    }
+)
+
 
 def _normalize_device_id(device_id: Optional[str]) -> str:
     return str(device_id or "").strip()
+
+
+def global_config_dir() -> Path:
+    return DATA_DIR / "global"
+
+
+def is_shared_config_basename(name: str) -> bool:
+    return name in SHARED_CONFIG_NAMES
 
 
 def device_data_dir(device_id: str) -> Path:
@@ -31,65 +47,42 @@ def device_data_dir(device_id: str) -> Path:
 
 
 def global_llm_system_path() -> Path:
-    return DATA_DIR / LLM_SYSTEM_FILENAME
+    return global_config_dir() / LLM_SYSTEM_FILENAME
 
 
 def device_llm_system_path(device_id: str) -> Path:
-    return device_data_dir(device_id) / LLM_SYSTEM_FILENAME
+    """历史兼容：设备级 llm 已废弃，统一读 ``data/global/llm_system.txt``。"""
+    return global_llm_system_path()
 
 
 def list_data_json_files() -> list[Path]:
-    """``data/`` 根目录下的 JSON 模板（不含子目录）。"""
-    return sorted(p for p in DATA_DIR.glob("*.json") if p.is_file())
+    """``data/`` 根目录下的 JSON 模板（不含子目录与 ``data/global/``）。"""
+    return sorted(
+        p
+        for p in DATA_DIR.glob("*.json")
+        if p.is_file() and not is_shared_config_basename(p.name)
+    )
 
 
 def list_data_seed_files() -> list[Path]:
-    """设备目录初始化时从 ``data/`` 复制的模板（JSON + LLM system prompt）。"""
-    files = list_data_json_files()
-    llm = global_llm_system_path()
-    if llm.is_file():
-        files.append(llm)
-    return files
+    """设备目录初始化时从 ``data/`` 复制的模板（不含 ``data/global/`` 共用项）。"""
+    return list_data_json_files()
 
 
 def resolve_json_path(global_path: str, device_id: Optional[str] = None) -> str:
-    """有 ``device_id`` 时解析到 ``data/device/{id}/``，否则保持全局路径。"""
+    """共用配置解析到 ``data/global/``；其余有 ``device_id`` 时解析到 ``data/device/{id}/``。"""
+    base = os.path.basename(global_path)
+    if is_shared_config_basename(base):
+        return str(global_config_dir() / base)
     did = _normalize_device_id(device_id)
     if not did:
         return global_path
-    base = os.path.basename(global_path)
     return str(device_data_dir(did) / base)
 
 
-def ensure_device_llm_system_file(device_id: str) -> Path | None:
-    """设备 ``llm_system.txt`` 缺失时从 ``data/llm_system.txt`` 复制；返回设备侧路径。"""
-    did = _normalize_device_id(device_id)
-    if not did:
-        return None
-    global_path = global_llm_system_path()
-    if not global_path.is_file():
-        return None
-    path = device_llm_system_path(did)
-    if path.is_file():
-        return path
-    ddir = device_data_dir(did)
-    ddir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(global_path, path)
-    logger.info(
-        "[device_data] 复制 llm_system.txt device_id=%s src=%s",
-        did,
-        global_path,
-    )
-    return path
-
-
 def load_llm_system_prompt(device_id: Optional[str] = None) -> str:
-    """读取 LLM system prompt：设备目录优先，否则 ``data/llm_system.txt``，再回退 config。"""
-    did = _normalize_device_id(device_id)
-    if did:
-        path = ensure_device_llm_system_file(did) or device_llm_system_path(did)
-        if path.is_file():
-            return path.read_text(encoding="utf-8").strip()
+    """读取 LLM system prompt：统一 ``data/global/llm_system.txt``，再回退 config。"""
+    del device_id
     global_path = global_llm_system_path()
     if global_path.is_file():
         return global_path.read_text(encoding="utf-8").strip()
@@ -99,11 +92,12 @@ def load_llm_system_prompt(device_id: Optional[str] = None) -> str:
     return str((cfg.get("llm") or {}).get("system_prompt") or "").strip()
 
 
-def save_llm_system_prompt(content: str, *, device_id: str) -> Path:
-    """保存设备级 LLM system prompt 到 ``data/device/{device_id}/llm_system.txt``。"""
-    ddir = device_data_dir(device_id)
-    ddir.mkdir(parents=True, exist_ok=True)
-    path = ddir / LLM_SYSTEM_FILENAME
+def save_llm_system_prompt(content: str, *, device_id: str = "") -> Path:
+    """保存共用 LLM system prompt 到 ``data/global/llm_system.txt``。"""
+    del device_id
+    gdir = global_config_dir()
+    gdir.mkdir(parents=True, exist_ok=True)
+    path = global_llm_system_path()
     text = (content or "").strip()
     path.write_text(text + ("\n" if text else ""), encoding="utf-8")
     return path
@@ -121,6 +115,8 @@ def ensure_device_data_initialized(device_id: str) -> bool:
         dst = ddir / src.name
         if dst.exists():
             continue
+        import shutil
+
         shutil.copy2(src, dst)
         copied += 1
     if copied:

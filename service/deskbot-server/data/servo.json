@@ -1,6 +1,6 @@
 {
-  "xMin": 60,
-  "xMax": 120,
+  "xMin": 0,
+  "xMax": 180,
   "yMin": 70,
   "yMax": 110,
   "xReverse": 1,

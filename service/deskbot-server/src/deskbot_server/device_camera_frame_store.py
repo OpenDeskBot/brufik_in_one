@@ -55,7 +55,7 @@ def capture_camera_for_device(device_id: str) -> dict[str, Any]:
     if not row:
         return {
             "ok": False,
-            "error": "暂无相机帧，请确认 ESP32 已上传 camera_frame 且 cam_fps>0",
+            "error": "暂无相机帧，请确认 ESP32 已上传 camera_frame",
         }
     jpeg = row["jpeg"]
     return {

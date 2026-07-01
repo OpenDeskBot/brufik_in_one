@@ -13,7 +13,7 @@ from deskbot_server.device_data import resolve_json_path
 from deskbot_server.face_design_store import resolve_face_design_path
 from deskbot_server.face_expr_scenes_store import load_face_expr_scenes_file
 from deskbot_server.pb.llm_display import parse_llm_images
-from deskbot_server.pb.servo_pcm import parse_pb_cam_fps, parse_pb_volume
+from deskbot_server.pb.servo_pcm import parse_pb_volume
 from deskbot_server.servo_config_store import load_servo_cfg_file
 
 _LLM_APPENDIX_CACHE: dict[str, tuple[float, str]] = {}
@@ -180,7 +180,7 @@ def llm_tools_prompt_appendix() -> str:
         "  - capture_camera: {\"tool\":\"capture_camera\"}\n"
         "    获取 ESP32 **最近上传**的一帧相机 JPEG（返回 ``jpeg_base64`` 与尺寸）。"
         "用于：给主人「拍照」后在屏幕 ``images`` 展示；或结合画面内容做判断。"
-        "若返回无帧，请提示主人确认相机上行已开启（可提高 ``cam_fps``）。\n"
+        "若返回无帧，请提示主人确认相机上行已开启。\n"
         "  - memory_add: {\"tool\":\"memory_add\",\"text\":\"要记住的内容\"}\n"
         "  - memory_delete: {\"tool\":\"memory_delete\",\"id\":\"记忆id\"}\n"
         "  - schedule_task: cron 定时任务增删改查（北京时间东八区）。"
@@ -382,7 +382,6 @@ def _coerce_llm_reply_object(obj: Any) -> Optional[dict[str, Any]]:
                 "moves",
                 "anims",
                 "volume",
-                "cam_fps",
                 "screen_text",
                 "screen_text_color",
                 "images",
@@ -399,7 +398,7 @@ def _coerce_llm_reply_object(obj: Any) -> Optional[dict[str, Any]]:
 def parse_llm_reply(raw: str) -> dict:
     """把 LLM 输出尝试解析为约定 JSON。
 
-    格式 ``{"need_reply", "tts", "volume?", "cam_fps?", "moves", "anims", "tools": [...]}``；
+    格式 ``{"need_reply", "tts", "volume?", "moves", "anims", "tools": [...]}``；
     仍兼容旧版 ``servo`` / ``scenes`` 与 ``reply`` 字段。
 
     失败时把整段文本当作 ``reply`` 返回，**不抛异常**。
@@ -475,7 +474,6 @@ def parse_llm_reply(raw: str) -> dict:
                     if v:
                         scenes_out.append(v)
         vol = parse_pb_volume(parsed.get("volume"))
-        fps = parse_pb_cam_fps(parsed.get("cam_fps"))
         screen_raw = parsed.get("screen_text")
         if screen_raw is None and isinstance(parsed.get("screen"), dict):
             screen_raw = parsed["screen"].get("text")
@@ -492,7 +490,6 @@ def parse_llm_reply(raw: str) -> dict:
             "scenes": scenes_out,
             "servo": servo_out,
             "volume": vol,
-            "cam_fps": fps,
             "screen_text": screen_text,
             "screen_text_color": st_color,
             "images": images_out,
@@ -509,7 +506,6 @@ def parse_llm_reply(raw: str) -> dict:
         "scenes": [],
         "servo": [],
         "volume": None,
-        "cam_fps": None,
         "screen_text": None,
         "screen_text_color": None,
         "images": [],

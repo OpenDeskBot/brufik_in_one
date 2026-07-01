@@ -46,6 +46,8 @@ class PendingUplinkBinary:
     kind: PendingKind
     length: int
     codec: Optional[str] = None
+    sample_rate: Optional[int] = None
+    channels: Optional[int] = None
 
 
 @dataclass

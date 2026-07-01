@@ -32,8 +32,7 @@
     <p style="margin:0 0 14px;">已选择 <code class="mono">{{ current_device_id }}</code></p>
     <a class="agent-btn" href="{{ url_for('debug.debug_devices') }}">进入设备调试</a>
     {% else %}
-    <p class="muted" style="margin:0 0 14px;">尚未选择设备，请先绑定。</p>
-    <a class="agent-btn secondary" href="{{ url_for('app.devices_page') }}">添加设备</a>
+    <p class="muted" style="margin:0 0 14px;">尚未选择设备，请先在顶部绑定并选择设备。</p>
     {% endif %}
   </div>
 

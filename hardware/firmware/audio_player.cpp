@@ -5,6 +5,7 @@
 
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <math.h>
 #include <string.h>
 
 #include "audio_capture.h"
@@ -81,16 +82,35 @@ void record(int16_t* data, size_t length) {
   mic_consumer_read(data, length, portMAX_DELAY);
 }
 
-void enhanceVoice(int16_t* data, size_t length) {
-  const float a0 = 0.2;
-  const float a1 = 0.8;
-  static int16_t prev_sample = 0;
-  const int gain = 5; /* 配合 asr EMA 门限；固定高门限时 ×3 说话 mean 仍≈底噪 */
+namespace {
 
-  for (size_t i = 0; i < length; i++) {
-    int16_t filtered = a0 * data[i] + a1 * prev_sample;
-    prev_sample = filtered;
-    data[i] = constrain(filtered * gain, -32768, 32767);
+int16_t s_hpf_prev_in = 0;
+float s_hpf_prev_out = 0.0f;
+
+}  // namespace
+
+void enhanceVoice_reset(void) {
+  s_hpf_prev_in = 0;
+  s_hpf_prev_out = 0.0f;
+}
+
+void enhanceVoice(int16_t* data, size_t length) {
+  /* 一阶高通（RC）：去掉 PDM 大 DC 偏置；fc≈80Hz @16kHz → alpha≈0.969 */
+  constexpr float kAlpha = 0.969f;
+  constexpr int kGain = 5;
+
+  if (data == nullptr || length == 0) {
+    return;
+  }
+
+  for (size_t i = 0; i < length; ++i) {
+    const int16_t x = data[i];
+    const float y =
+        kAlpha * (s_hpf_prev_out + static_cast<float>(x) - static_cast<float>(s_hpf_prev_in));
+    s_hpf_prev_in = x;
+    s_hpf_prev_out = y;
+    data[i] = static_cast<int16_t>(constrain(static_cast<int>(lroundf(y * static_cast<float>(kGain))),
+                                             -32768, 32767));
   }
 }
 
@@ -99,9 +119,29 @@ void enhanceVoice(int16_t* data, size_t length) {
    hook 仍可 pump ws + 推舵机——主 loop 可同时跑不再被整段 WAV 卡住。 */
 extern "C" __attribute__((weak)) void audio_yield_hook() {}
 
+size_t calculate_mean(const int16_t* data, size_t length);
+
+static bool s_i2s_play_in_progress = false;
+static bool s_audible_play_in_progress = false;
+
+static bool pcm_chunk_audible(const int16_t* data, size_t length, float volume_ratio) {
+  if (data == nullptr || length == 0) {
+    return false;
+  }
+  const size_t mean = calculate_mean(data, length);
+  const size_t effective =
+      static_cast<size_t>(static_cast<float>(mean) * ((volume_ratio < 0.0f) ? 0.0f : volume_ratio));
+  return effective >= (size_t)DESKBOT_SPEAKER_AUDIBLE_MEAN_ABS;
+}
+
 static void play(const int16_t* data, size_t length, float volume_ratio, bool yield_after_chunk = false) {
   if (!data || length == 0) {
     return;
+  }
+  const bool audible = pcm_chunk_audible(data, length, volume_ratio);
+  s_i2s_play_in_progress = true;
+  if (audible) {
+    s_audible_play_in_progress = true;
   }
   constexpr size_t kBlock = 256;
   int16_t scratch[kBlock];
@@ -122,6 +162,10 @@ static void play(const int16_t* data, size_t length, float volume_ratio, bool yi
     size_t bytes_written = 0;
     i2s_write(I2S_NUM_1, out, n * sizeof(int16_t), &bytes_written, portMAX_DELAY);
     off += n;
+  }
+  s_i2s_play_in_progress = false;
+  if (audible) {
+    s_audible_play_in_progress = false;
   }
   if (yield_after_chunk) {
     audio_yield_hook();
@@ -690,6 +734,16 @@ unsigned audio_play_input_queue_depth() {
 bool audio_play_stream_pcm_active() {
   ensure_audio_play_task();
   return s_stream_pcm_active;
+}
+
+/** 扬声器是否正在输出可听 PCM（chunk mean-abs×volume ≥ DESKBOT_SPEAKER_AUDIBLE_MEAN_ABS）。
+ * 不含：stream begin、队列里仅有 Begin/End job、静音 tail flush、stream_open 空窗。 */
+bool audio_play_speaker_busy() {
+  return s_audible_play_in_progress;
+}
+
+bool audio_play_i2s_in_progress() {
+  return s_i2s_play_in_progress;
 }
 
 bool audio_play_is_on_play_task() {

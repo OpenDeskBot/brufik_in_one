@@ -24,15 +24,10 @@
   {% raw %}
   <div id="app" class="llm-debug">
     <div class="card meta">
-      <div class="meta-row controls">
-        <label class="lbl">设备</label>
-        <select v-model="deviceId" class="device-select" @change="onDeviceChange">
-          <option value="" disabled>请选择设备</option>
-          <option v-for="d in ownedDevices" :key="d.device_id" :value="d.device_id">
-            {{ d.display_name }} ({{ d.device_id }})
-          </option>
-        </select>
-        <span v-if="!deviceId" class="muted sm warn-tag">请先选择设备</span>
+      <div class="meta-row">
+        <span class="lbl">当前设备</span>
+        <span class="val mono">{{ deviceId || "（未选择）" }}</span>
+        <span v-if="!deviceId" class="muted sm warn-tag">请先在顶部「我的设备」中选择</span>
       </div>
       <div class="meta-row">
         <span class="lbl">模型</span>
@@ -380,6 +375,22 @@
             this.pending = false;
           }
         },
+      },
+      mounted() {
+        if (this.deviceId) void this.onDeviceChange();
+        this._onGlobalDeviceChange = (e) => {
+          const id = (e && e.detail && e.detail.device_id) || window.__CURRENT_DEVICE_ID__ || "";
+          if (id === this.deviceId) return;
+          this.deviceId = id;
+          this.turns = [];
+          void this.onDeviceChange();
+        };
+        window.addEventListener("deskbot:device-changed", this._onGlobalDeviceChange);
+      },
+      unmounted() {
+        if (this._onGlobalDeviceChange) {
+          window.removeEventListener("deskbot:device-changed", this._onGlobalDeviceChange);
+        }
       },
     }).mount("#app");
     }

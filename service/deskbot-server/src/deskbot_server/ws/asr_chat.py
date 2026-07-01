@@ -14,6 +14,7 @@ from deskbot_server.application.asr_chat_uplink import (
     PendingUplinkBinary,
     coerce_next_bin_len,
 )
+from deskbot_server.application.boot_wake import deliver_boot_wake_scene
 from deskbot_server.application.interaction_feedback import (
     schedule_listen_feedback,
     start_llm_wait_nod_feedback,
@@ -32,6 +33,7 @@ from deskbot_server.util import (
     _normalize_incoming_pb_ack,
     _peer_str,
     format_exc_detail,
+    pcm_to_wav_bytes,
 )
 from deskbot_server.vision.undistort import CameraFaceRuntime
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
@@ -41,6 +43,26 @@ from deskbot_server.ws.api_key_gate import record_turn_usage
 from deskbot_server.ws.ws_send import _safe_send
 
 logger = logging.getLogger("deskbot-server")
+
+
+async def _feed_rom_uplink(
+    payload: bytes,
+    codec: Optional[str],
+    *,
+    session: ConnectionSession,
+    asr_chat_hub: AsrChatHub,
+    device_id: Optional[str],
+    sample_rate: Optional[int] = None,
+    channels: Optional[int] = None,
+) -> None:
+    _pcm, uplink_started, _ = await session.feed_audio(
+        payload,
+        codec,
+        sample_rate=sample_rate,
+        channels=channels,
+    )
+    if uplink_started:
+        schedule_listen_feedback(asr_chat_hub, device_id)
 
 
 async def _schedule_asr_turn(
@@ -56,6 +78,9 @@ async def _schedule_asr_turn(
     asr_chat_hub: AsrChatHub,
     turn_task_holder: list,
     api_key_id: Optional[str] = None,
+    uplink_sample_rate: Optional[int] = None,
+    uplink_channels: int = 1,
+    uplink_codec: str = "pcm16",
 ) -> None:
     """``device_pb_only`` 下后台跑一轮，避免阻塞 WS 读循环（否则收不到 ``pb_ack``）。"""
     prev = turn_task_holder[0] if turn_task_holder else None
@@ -79,6 +104,9 @@ async def _schedule_asr_turn(
                 registry=registry,
                 asr_chat_hub=asr_chat_hub,
                 api_key_id=api_key_id,
+                uplink_sample_rate=uplink_sample_rate,
+                uplink_channels=uplink_channels,
+                uplink_codec=uplink_codec,
             )
         except Exception:
             logger.exception(
@@ -89,6 +117,51 @@ async def _schedule_asr_turn(
     task = asyncio.create_task(_job())
     turn_task_holder.clear()
     turn_task_holder.append(task)
+
+
+async def _publish_asr_capture(
+    dp_broker: Optional[DevicePipelineBroker],
+    device_id: Optional[str],
+    *,
+    request_id: str,
+    pcm_segment: bytes,
+    sample_rate: int,
+    asr_text: Optional[str],
+    asr_ms: Optional[float],
+    asr_valid: bool,
+    error: Optional[str] = None,
+    channels: int = 1,
+    codec: str = "pcm16",
+) -> None:
+    """向 device_pipeline 订阅者推送 ASR 收音调试事件（ROM 首帧～flush 整段 WAV）。"""
+    if not device_id or dp_broker is None or not pcm_segment:
+        return
+    pcm_bytes = len(pcm_segment)
+    audio_ms = int(pcm_bytes / 2 / max(1, sample_rate) * 1000)
+    wav_b64 = base64.b64encode(pcm_to_wav_bytes(pcm_segment, sample_rate)).decode("ascii")
+    now_ts = time.time()
+    await dp_broker.broadcast_to_device(
+        device_id,
+        {
+            "type": "asr_capture",
+            "event": {
+                "device_id": device_id,
+                "request_id": request_id,
+                "received_ts": now_ts,
+                "received_at": _format_ts(now_ts),
+                "asr_text": asr_text,
+                "asr_valid": asr_valid,
+                "asr_ms": asr_ms,
+                "audio_ms": audio_ms,
+                "pcm_bytes": pcm_bytes,
+                "sample_rate": sample_rate,
+                "channels": channels,
+                "codec": codec,
+                "error": error,
+                "wav_base64": wav_b64,
+            },
+        },
+    )
 
 
 async def _publish_asr_terminal(
@@ -125,6 +198,34 @@ async def _publish_asr_terminal(
     )
 
 
+async def _send_mic_open_signal(
+    asr_chat_hub: Optional[AsrChatHub],
+    device_id: Optional[str],
+    *,
+    reason: str,
+) -> None:
+    if not asr_chat_hub or not device_id:
+        return
+    from deskbot_server.pb.mic_signal import build_mic_signal_pb
+
+    payload = build_mic_signal_pb(mic="open")
+    try:
+        n = await asr_chat_hub.send(device_id, payload)
+        logger.info(
+            "[ASR] mic=open pb_single device_id=%s reason=%s delivered=%d req=%s",
+            device_id,
+            reason,
+            n,
+            payload.get("req"),
+        )
+    except Exception:
+        logger.exception(
+            "[ASR] mic=open pb_single 下发失败 device_id=%s reason=%s",
+            device_id,
+            reason,
+        )
+
+
 async def _run_asr_turn(
     websocket,
     *,
@@ -137,11 +238,15 @@ async def _run_asr_turn(
     registry: DeviceRegistry,
     asr_chat_hub: Optional[AsrChatHub] = None,
     api_key_id: Optional[str] = None,
+    uplink_sample_rate: Optional[int] = None,
+    uplink_channels: int = 1,
+    uplink_codec: str = "pcm16",
 ) -> None:
     request_id = _new_request_id()
-    seg_duration_ms = int(len(pcm_segment) / 2 / audio_cfg.sample_rate * 1000)
+    sample_rate = uplink_sample_rate or audio_cfg.sample_rate
+    seg_duration_ms = int(len(pcm_segment) / 2 / sample_rate * 1000)
     t_asr_start = time.monotonic()
-    text = await pipeline.asr(pcm_segment, sample_rate=audio_cfg.sample_rate)
+    text = await pipeline.asr(pcm_segment, sample_rate=sample_rate)
     if api_key_id:
         record_turn_usage(api_key_id, device_id=device_id, asr_bytes=len(pcm_segment))
     t_asr_text = time.monotonic()
@@ -153,6 +258,19 @@ async def _run_asr_turn(
             request_id,
             seg_duration_ms,
             asr_ms,
+        )
+        await _publish_asr_capture(
+            dp_broker,
+            device_id,
+            request_id=request_id,
+            pcm_segment=pcm_segment,
+            sample_rate=sample_rate,
+            asr_text=None,
+            asr_ms=asr_ms,
+            asr_valid=False,
+            error="asr_empty",
+            channels=uplink_channels,
+            codec=uplink_codec,
         )
         await _publish_asr_terminal(
             dp_broker,
@@ -166,6 +284,7 @@ async def _run_asr_turn(
             status="error",
             error="asr_empty",
         )
+        await _send_mic_open_signal(asr_chat_hub, device_id, reason="asr_empty")
         return
     if not pipeline.is_valid_asr_text(text):
         logger.info(
@@ -175,6 +294,19 @@ async def _run_asr_turn(
             seg_duration_ms,
             asr_ms,
             text,
+        )
+        await _publish_asr_capture(
+            dp_broker,
+            device_id,
+            request_id=request_id,
+            pcm_segment=pcm_segment,
+            sample_rate=sample_rate,
+            asr_text=text,
+            asr_ms=asr_ms,
+            asr_valid=False,
+            error="asr_filtered",
+            channels=uplink_channels,
+            codec=uplink_codec,
         )
         await _publish_asr_terminal(
             dp_broker,
@@ -188,6 +320,7 @@ async def _run_asr_turn(
             status="error",
             error="asr_filtered",
         )
+        await _send_mic_open_signal(asr_chat_hub, device_id, reason="asr_filtered")
         return
     logger.info(
         "[ASR] 识别成功 device_id=%s req=%s audio_ms=%d asr_ms=%s text=%r",
@@ -196,6 +329,18 @@ async def _run_asr_turn(
         seg_duration_ms,
         asr_ms,
         text,
+    )
+    await _publish_asr_capture(
+        dp_broker,
+        device_id,
+        request_id=request_id,
+        pcm_segment=pcm_segment,
+        sample_rate=sample_rate,
+        asr_text=text,
+        asr_ms=asr_ms,
+        asr_valid=True,
+        channels=uplink_channels,
+        codec=uplink_codec,
     )
     downlink = WsDownlinkAdapter(
         websocket,
@@ -271,6 +416,59 @@ async def _run_asr_turn(
         llm_bytes = len(text.encode("utf-8")) + len(str(llm_out).encode("utf-8"))
         tts_bytes = len(str(flow.get("llm_text") or "").encode("utf-8")) * 48
         record_turn_usage(api_key_id, device_id=device_id, llm_bytes=llm_bytes, tts_bytes=tts_bytes)
+
+
+async def _dispatch_rom_flush(
+    websocket,
+    *,
+    pipeline: ChatService,
+    audio_cfg: AudioConfig,
+    session: ConnectionSession,
+    device_id: Optional[str],
+    dp_broker: DevicePipelineBroker,
+    registry: DeviceRegistry,
+    asr_chat_hub: AsrChatHub,
+    device_pb_only: bool,
+    turn_task_holder: list,
+    api_key_id: Optional[str] = None,
+) -> None:
+    flushed = session.flush()
+    if flushed is None:
+        logger.info("[/asr_chat] flush 空上行 device_id=%s", device_id)
+        return
+    if device_pb_only:
+        await _schedule_asr_turn(
+            websocket,
+            pipeline=pipeline,
+            audio_cfg=audio_cfg,
+            session=session,
+            pcm_segment=flushed.pcm,
+            device_id=device_id,
+            dp_broker=dp_broker,
+            registry=registry,
+            asr_chat_hub=asr_chat_hub,
+            turn_task_holder=turn_task_holder,
+            api_key_id=api_key_id,
+            uplink_sample_rate=flushed.sample_rate,
+            uplink_channels=flushed.channels,
+            uplink_codec=flushed.codec,
+        )
+    else:
+        await _run_asr_turn(
+            websocket,
+            pipeline=pipeline,
+            audio_cfg=audio_cfg,
+            session=session,
+            pcm_segment=flushed.pcm,
+            device_id=device_id,
+            dp_broker=dp_broker,
+            registry=registry,
+            asr_chat_hub=asr_chat_hub,
+            api_key_id=api_key_id,
+            uplink_sample_rate=flushed.sample_rate,
+            uplink_channels=flushed.channels,
+            uplink_codec=flushed.codec,
+        )
 
 
 async def handle_asr_chat(
@@ -349,6 +547,8 @@ async def handle_asr_chat(
                         continue
                     kind = pending.kind
                     codec = pending.codec
+                    uplink_sr = pending.sample_rate
+                    uplink_ch = pending.channels
                     pending = None
 
                     if kind == "camera_frame":
@@ -368,75 +568,27 @@ async def handle_asr_chat(
                         )
                         continue
 
-                    pcm_segment, speech_started = await session.feed_audio(payload, codec)
-                    if speech_started:
-                        schedule_listen_feedback(asr_chat_hub, device_id)
-                    if pcm_segment is None:
-                        continue
-                    if device_pb_only:
-                        await _schedule_asr_turn(
-                            websocket,
-                            pipeline=pipeline,
-                            audio_cfg=audio_cfg,
-                            session=session,
-                            pcm_segment=pcm_segment,
-                            device_id=device_id,
-                            dp_broker=dp_broker,
-                            registry=registry,
-                            asr_chat_hub=asr_chat_hub,
-                            turn_task_holder=turn_task_holder,
-                            api_key_id=api_key_id,
-                        )
-                    else:
-                        await _run_asr_turn(
-                            websocket,
-                            pipeline=pipeline,
-                            audio_cfg=audio_cfg,
-                            session=session,
-                            pcm_segment=pcm_segment,
-                            device_id=device_id,
-                            dp_broker=dp_broker,
-                            registry=registry,
-                            asr_chat_hub=asr_chat_hub,
-                            api_key_id=api_key_id,
-                        )
+                    await _feed_rom_uplink(
+                        payload,
+                        codec,
+                        session=session,
+                        asr_chat_hub=asr_chat_hub,
+                        device_id=device_id,
+                        sample_rate=uplink_sr,
+                        channels=uplink_ch,
+                    )
                     continue
 
                 # --- 裸 binary：兼容旧固件（仅音频）---
                 if isinstance(message, (bytes, bytearray)):
                     payload = bytes(message)
-                    pcm_segment, speech_started = await session.feed_audio(payload, None)
-                    if speech_started:
-                        schedule_listen_feedback(asr_chat_hub, device_id)
-                    if pcm_segment is None:
-                        continue
-                    if device_pb_only:
-                        await _schedule_asr_turn(
-                            websocket,
-                            pipeline=pipeline,
-                            audio_cfg=audio_cfg,
-                            session=session,
-                            pcm_segment=pcm_segment,
-                            device_id=device_id,
-                            dp_broker=dp_broker,
-                            registry=registry,
-                            asr_chat_hub=asr_chat_hub,
-                            turn_task_holder=turn_task_holder,
-                            api_key_id=api_key_id,
-                        )
-                    else:
-                        await _run_asr_turn(
-                            websocket,
-                            pipeline=pipeline,
-                            audio_cfg=audio_cfg,
-                            session=session,
-                            pcm_segment=pcm_segment,
-                            device_id=device_id,
-                            dp_broker=dp_broker,
-                            registry=registry,
-                            asr_chat_hub=asr_chat_hub,
-                            api_key_id=api_key_id,
-                        )
+                    await _feed_rom_uplink(
+                        payload,
+                        None,
+                        session=session,
+                        asr_chat_hub=asr_chat_hub,
+                        device_id=device_id,
+                    )
                     continue
 
                 data = json.loads(message)
@@ -445,6 +597,11 @@ async def handle_asr_chat(
                 if msg_type == "ping":
                     if not getattr(pipeline, "asr_chat_device_pb_only", False):
                         await _safe_send(websocket, _json_msg({"type": "pong"}))
+                    continue
+
+                if msg_type == "boot_connect":
+                    if device_id:
+                        await deliver_boot_wake_scene(asr_chat_hub, device_id)
                     continue
 
                 if msg_type == "pb_ack":
@@ -535,36 +692,23 @@ async def handle_asr_chat(
                     continue
 
                 if msg_type == "flush":
-                    pcm_segment = session.flush()
-                    if pcm_segment is None:
-                        continue
-                    if device_pb_only:
-                        await _schedule_asr_turn(
-                            websocket,
-                            pipeline=pipeline,
-                            audio_cfg=audio_cfg,
-                            session=session,
-                            pcm_segment=pcm_segment,
-                            device_id=device_id,
-                            dp_broker=dp_broker,
-                            registry=registry,
-                            asr_chat_hub=asr_chat_hub,
-                            turn_task_holder=turn_task_holder,
-                            api_key_id=api_key_id,
-                        )
-                    else:
-                        await _run_asr_turn(
-                            websocket,
-                            pipeline=pipeline,
-                            audio_cfg=audio_cfg,
-                            session=session,
-                            pcm_segment=pcm_segment,
-                            device_id=device_id,
-                            dp_broker=dp_broker,
-                            registry=registry,
-                            asr_chat_hub=asr_chat_hub,
-                            api_key_id=api_key_id,
-                        )
+                    await _dispatch_rom_flush(
+                        websocket,
+                        pipeline=pipeline,
+                        audio_cfg=audio_cfg,
+                        session=session,
+                        device_id=device_id,
+                        dp_broker=dp_broker,
+                        registry=registry,
+                        asr_chat_hub=asr_chat_hub,
+                        device_pb_only=device_pb_only,
+                        turn_task_holder=turn_task_holder,
+                        api_key_id=api_key_id,
+                    )
+                    continue
+
+                if msg_type == "audio_cancel":
+                    session.cancel_rom_uplink()
                     continue
 
                 if msg_type == "camera_frame":
@@ -584,48 +728,47 @@ async def handle_asr_chat(
                 if msg_type == "audio":
                     nbl = coerce_next_bin_len(data)
                     if nbl > 0:
+                        sr_raw = data.get("sr")
+                        ch_raw = data.get("ch")
+                        try:
+                            uplink_sr = int(sr_raw) if sr_raw is not None else audio_cfg.sample_rate
+                        except (TypeError, ValueError):
+                            uplink_sr = audio_cfg.sample_rate
+                        try:
+                            uplink_ch = int(ch_raw) if ch_raw is not None else audio_cfg.channels
+                        except (TypeError, ValueError):
+                            uplink_ch = audio_cfg.channels
                         pending = PendingUplinkBinary(
                             kind="audio",
                             length=nbl,
                             codec=data.get("codec"),
+                            sample_rate=uplink_sr,
+                            channels=uplink_ch,
                         )
                         continue
                     raw_b64 = data.get("data")
                     if raw_b64:
                         payload = base64.b64decode(raw_b64)
                         codec = data.get("codec")
-                        pcm_segment, speech_started = await session.feed_audio(payload, codec)
-                        if speech_started:
-                            schedule_listen_feedback(asr_chat_hub, device_id)
-                        if pcm_segment is None:
-                            continue
-                        if device_pb_only:
-                            await _schedule_asr_turn(
-                                websocket,
-                                pipeline=pipeline,
-                                audio_cfg=audio_cfg,
-                                session=session,
-                                pcm_segment=pcm_segment,
-                                device_id=device_id,
-                                dp_broker=dp_broker,
-                                registry=registry,
-                                asr_chat_hub=asr_chat_hub,
-                                turn_task_holder=turn_task_holder,
-                                api_key_id=api_key_id,
-                            )
-                        else:
-                            await _run_asr_turn(
-                                websocket,
-                                pipeline=pipeline,
-                                audio_cfg=audio_cfg,
-                                session=session,
-                                pcm_segment=pcm_segment,
-                                device_id=device_id,
-                                dp_broker=dp_broker,
-                                registry=registry,
-                                asr_chat_hub=asr_chat_hub,
-                                api_key_id=api_key_id,
-                            )
+                        sr_raw = data.get("sr")
+                        ch_raw = data.get("ch")
+                        try:
+                            uplink_sr = int(sr_raw) if sr_raw is not None else None
+                        except (TypeError, ValueError):
+                            uplink_sr = None
+                        try:
+                            uplink_ch = int(ch_raw) if ch_raw is not None else None
+                        except (TypeError, ValueError):
+                            uplink_ch = None
+                        await _feed_rom_uplink(
+                            payload,
+                            codec,
+                            session=session,
+                            asr_chat_hub=asr_chat_hub,
+                            device_id=device_id,
+                            sample_rate=uplink_sr,
+                            channels=uplink_ch,
+                        )
                     continue
 
             except Exception as exc:

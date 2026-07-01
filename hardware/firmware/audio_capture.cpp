@@ -53,8 +53,8 @@ void mic_capture_setup() {
     return;
   }
   if (!s_mic_q) {
-    /* ~1s 量级缓冲：空闲时会被 flush；长阻塞时尽量不丢太近的历史 */
-    constexpr UBaseType_t kDepth = 50;
+    /* 与 VADNet 10s ring 同量级；burst 改流式后仍留余量防 WS 发送偏慢时丢帧。 */
+    constexpr UBaseType_t kDepth = 600;
     s_mic_q = xQueueCreate(kDepth, sizeof(MicCaptureFrame));
   }
   if (!s_consumer_mutex) {
@@ -73,7 +73,7 @@ void mic_capture_setup() {
     if (rc != pdPASS) {
       log_error("[MIC] mic_capture_task create failed rc=%d", (int)rc);
     } else {
-      log_info("[MIC] PDM capture task OK %uHz %u samp/frame queue_depth=50",
+      log_info("[MIC] PDM capture task OK %uHz %u samp/frame queue_depth=600",
                (unsigned)SAMPLE_RATE, (unsigned)kMicCaptureFrameSamples);
     }
   }

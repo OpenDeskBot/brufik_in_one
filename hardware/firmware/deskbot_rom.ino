@@ -6,6 +6,7 @@
 #include "camera_ws.h"
 #include "deskbot_config.h"
 #include "wifi_provision.h"
+#include "vadnet_gate.h"
 #include "common.h"
 #include "oled.h"
 #include "audio_player.h"
@@ -103,7 +104,6 @@ void setup() {
   static bool s_camera_ok = false;
   s_camera_ok = setup_camera();
   head_servo_boot_attach();
-  log_set_level(LOG_LEVEL_WARN);
   deskbot_lcd_backlight_on();
   if (!s_camera_ok) {
     log_warn("[BOOT] Camera absent or failed — continuing without camera");
@@ -116,6 +116,9 @@ void setup() {
   }
 
   setup_audio();
+  if (!vadnet_gate_setup()) {
+    log_warn("[BOOT] VADNet unavailable — ASR uplink falls back to energy gate");
+  }
   mic_capture_setup();
   audio_play_task_setup();
   display_task_setup();
@@ -134,6 +137,10 @@ void setup() {
 
   oled_boot_show_ready();
   log_info("%s is Ready. http://%s", PRODUCT_NAME, WiFi.localIP().toString().c_str());
+  log_warn("[BOOT] ready device=%s ws=%s:%u wifi_ip=%s",
+           get_device_id(), DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT,
+           WiFi.localIP().toString().c_str());
+  log_set_level(LOG_LEVEL_WARN);
   loop_start_time = millis();
   start_chat = true;
 }
@@ -147,25 +154,28 @@ void loop() {
     start_chat = false;
     loop_start_time = millis();
     if (CHAT_LOOP_MAX_MS > 0) {
-      log_info("[CHAT] enter asr_chat loop (max %lu ms)", (unsigned long)CHAT_LOOP_MAX_MS);
+      log_warn("[CHAT] enter asr_chat loop (max %lu ms)", (unsigned long)CHAT_LOOP_MAX_MS);
     } else {
-      log_info("[CHAT] enter asr_chat loop (no auto exit)");
+      log_warn("[CHAT] enter asr_chat loop (no auto exit)");
     }
     for (;;) {
-      /* 长会话内也要读串口，否则 factory 等命令无响应 */
       handle_cmd();
       log_task_tick();
+      asrChatClient.loop();
+
       if (CHAT_LOOP_MAX_MS > 0 && (millis() - loop_start_time >= (unsigned long)CHAT_LOOP_MAX_MS)) {
         break;
       }
+
+      if (!asrChatClient.canStartVoiceRound()) {
+        continue;
+      }
+
       if (!asrChatClient.runVoiceRound(RECORD_TIME)) {
         log_error("[CHAT] asr_chat round failed, reconnect retry in 2s");
         blink_led(COLOR_RED, 3);
         delay(2000);
-        continue;
       }
-      websocket_loop();
-      delay(500);
     }
     log_info("[CHAT] leave chat loop");
   }
