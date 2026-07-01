@@ -2,16 +2,19 @@
 {% block page_title %}我的设备 · 小歪{% endblock %}
 {% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
 {% block content %}
-<div class="pagehd"><div><h1>我的设备</h1><p>绑定与切换你的 Brufik 机器人。</p></div></div>
 <div id="app">
+  <div class="pagehd"><div><div class="eyebrow">DEVICES · [[ devices.length ]] BOUND</div><h1>我的设备</h1><p>绑定与切换你的 Brufik 机器人。</p></div></div>
   <div class="dev" v-for="d in devices" :key="d.device_id">
-    <div class="di">🤖</div>
-    <div style="flex:1"><b>[[ d.display_name ]]</b><br><small>[[ d.device_id ]]</small></div>
-    <button class="btn" :class="d.device_id===current?'primary':'ghost'" @click="select(d)">[[ d.device_id===current?'当前':'切换' ]]</button>
+    <div class="di"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg></div>
+    <div style="flex:1"><b>[[ d.display_name ]]</b><small><span class="led" :class="{off: d.device_id!==current}"></span>[[ d.device_id===current?'当前':'已绑定' ]] · [[ d.device_id ]]</small></div>
+    <div class="btngroup">
+      <button class="btn" :class="d.device_id===current?'primary':'ghost'" @click="select(d)">[[ d.device_id===current?'当前':'切换' ]]</button>
+      <button class="btn ghost" @click="unbind(d)">解绑</button>
+    </div>
   </div>
-  <div style="display:flex;gap:8px;margin-top:14px;max-width:560px">
-    <input v-model="newId" placeholder="设备 ID" style="flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:12px">
-    <button class="btn primary" @click="bind">绑定</button>
+  <div style="display:flex;gap:8px;margin-top:16px;max-width:560px">
+    <input class="tinput" v-model="newId" placeholder="设备 ID" @keyup.enter="bind">
+    <button class="btn primary" @click="bind">＋ 绑定新设备</button>
   </div>
   <p class="lead" v-if="msg">[[ msg ]]</p>
 </div>
@@ -21,9 +24,10 @@
 const { createApp } = Vue;
 createApp({ delimiters:['[[',']]'], data(){return{devices:[],current:'',newId:'',msg:''};},
   methods:{
-    async load(){ const r=await (await fetch('/app/api/devices')).json(); if(r.ok){ this.devices=r.devices||[]; this.current=r.current_device_id||''; } },
-    async select(d){ const r=await (await fetch('/app/api/devices/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:d.device_id})})).json(); if(r.ok){ this.current=r.current_device_id; } },
-    async bind(){ const id=this.newId.trim(); if(!id) return; const r=await (await fetch('/app/api/devices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:id})})).json(); if(r.ok){ this.newId=''; this.load(); } else this.msg=r.error||'绑定失败'; } },
+    async load(){ const r=await (await fetch('/app/api/devices')).json(); if(r.ok){ this.devices=r.devices||[]; this.current=r.current_device_id||''; } else this.msg=r.error||'加载失败'; },
+    async select(d){ const r=await (await fetch('/app/api/devices/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:d.device_id})})).json(); if(r.ok){ this.current=r.current_device_id; this.msg='已切换到 '+d.device_id; } else this.msg=r.error||'切换失败'; },
+    async bind(){ const id=this.newId.trim(); if(!id) return; const r=await (await fetch('/app/api/devices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:id})})).json(); if(r.ok){ this.newId=''; this.msg='已绑定 '+id; this.load(); } else this.msg=r.error||'绑定失败'; },
+    async unbind(d){ if(!confirm('确定解绑这台设备？')) return; const r=await (await fetch('/app/api/devices/'+encodeURIComponent(d.device_id),{method:'DELETE'})).json(); if(r.ok){ this.msg='已解绑 '+d.device_id; this.load(); } else this.msg=r.error||'解绑失败'; } },
   mounted(){ this.load(); } }).mount('#app');
 </script>
 {% endblock %}

@@ -2,17 +2,28 @@
 {% block page_title %}它记得的事 · 小歪{% endblock %}
 {% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
 {% block content %}
-<div class="pagehd"><div><h1>它记得的事</h1><p>机器人记住的关于你的小事，随时可改可删。</p></div></div>
 <div id="app">
-  <div style="display:flex;gap:8px;margin-bottom:14px;max-width:560px">
-    <input v-model="draft" placeholder="加一条它该记住的事…" style="flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:12px">
-    <button class="btn primary" @click="add">添加</button>
+  <div class="pagehd"><div><div class="eyebrow">MEMORY · [[ items.length ]] ENTRIES</div><h1>它记得的事</h1><p>机器人记住的关于你的小事，随时可改可删。</p></div></div>
+  <div style="display:flex;gap:8px;margin-bottom:18px;max-width:560px">
+    <input class="tinput" v-model="draft" placeholder="加一条它该记住的事…" @keyup.enter="add">
+    <button class="btn primary" @click="add">＋ 加一条</button>
   </div>
   <div class="colwrap">
-    <div class="note" v-for="m in items" :key="m.id">
-      <p>[[ m.text ]]</p>
+    <div class="note" v-for="(m,i) in items" :key="m.id">
+      <span class="memtag">MEM_[[ String(i+1).padStart(2,'0') ]]</span>
+      <textarea v-if="editing===m.id" class="tinput editarea" v-model="editText" @keyup.meta.enter="saveEdit(m)" @keyup.ctrl.enter="saveEdit(m)"></textarea>
+      <p v-else>[[ m.text ]]</p>
       <small>[[ m.created_at_fmt || '' ]]</small>
-      <button class="btn ghost" style="margin-top:8px" @click="del(m)">删除</button>
+      <div class="btngroup" style="margin-top:12px">
+        <template v-if="editing===m.id">
+          <button class="btn primary" @click="saveEdit(m)">保存</button>
+          <button class="btn ghost" @click="cancelEdit">取消</button>
+        </template>
+        <template v-else>
+          <button class="btn ghost" @click="startEdit(m)">编辑</button>
+          <button class="btn ghost" @click="del(m)">删除</button>
+        </template>
+      </div>
     </div>
   </div>
   <p class="lead" v-if="msg">[[ msg ]]</p>
@@ -23,15 +34,20 @@
 const { createApp } = Vue;
 createApp({
   delimiters:['[[',']]'],
-  data(){ return { items:[], draft:'', msg:'' }; },
+  data(){ return { items:[], draft:'', msg:'', editing:'', editText:'' }; },
   methods:{
     async load(){ const r=await (await fetch('/app/api/memories')).json();
       if(r.ok) this.items=r.memories||[]; else this.msg=r.error||'加载失败'; },
     async add(){ const t=this.draft.trim(); if(!t) return;
       const r=await (await fetch('/app/api/memories',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})})).json();
-      if(r.ok){ this.draft=''; this.load(); } else this.msg=r.error||'添加失败'; },
+      if(r.ok){ this.draft=''; this.msg='已添加记忆'; this.load(); } else this.msg=r.error||'添加失败'; },
+    startEdit(m){ this.editing=m.id; this.editText=m.text||''; },
+    cancelEdit(){ this.editing=''; this.editText=''; },
+    async saveEdit(m){ const t=this.editText.trim(); if(!t){ this.msg='记忆内容不能为空'; return; }
+      const r=await (await fetch('/app/api/memories/'+m.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})})).json();
+      if(r.ok){ this.cancelEdit(); this.msg='已保存记忆'; this.load(); } else this.msg=r.error||'保存失败'; },
     async del(m){ const r=await (await fetch('/app/api/memories/'+m.id,{method:'DELETE'})).json();
-      if(r.ok) this.load(); else this.msg=r.error||'删除失败'; },
+      if(r.ok){ this.msg='已删除记忆'; this.load(); } else this.msg=r.error||'删除失败'; },
   },
   mounted(){ this.load(); },
 }).mount('#app');

@@ -198,9 +198,16 @@ def debug_tts():
 
 @bp.get("/api/doubao_tts/speakers")
 def api_doubao_tts_speakers():
-    from deskbot_server.tts.speakers import list_doubao_tts_speaker_presets
+    from deskbot_server.tts.speakers import (
+        list_doubao_tts_consumer_speaker_presets,
+        list_doubao_tts_speaker_presets,
+    )
 
-    return jsonify({"ok": True, "speakers": list_doubao_tts_speaker_presets(), "t": time.time()})
+    if request.args.get("scope") == "consumer":
+        speakers = list_doubao_tts_consumer_speaker_presets()
+    else:
+        speakers = list_doubao_tts_speaker_presets()
+    return jsonify({"ok": True, "speakers": speakers, "t": time.time()})
 
 
 @bp.get("/api/doubao_tts/config")
@@ -556,6 +563,132 @@ def llm_chat():
         )
     except Exception as exc:
         return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
+
+
+def _json_object_from_llm(raw: str) -> dict:
+    text = str(raw or "").strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("LLM did not return a JSON object")
+    parsed = json.loads(text[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM JSON must be an object")
+    return parsed
+
+
+def _normalize_generated_design(raw: dict) -> dict:
+    def _items(value: object) -> list[dict]:
+        if not isinstance(value, list):
+            return []
+        out: list[dict] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            frames = item.get("frames")
+            if not isinstance(frames, list):
+                frames = []
+            clean_frames: list[dict] = []
+            for frame in frames:
+                if not isinstance(frame, dict):
+                    continue
+                elements = frame.get("elements")
+                if not isinstance(elements, dict):
+                    continue
+                try:
+                    ms = int(frame.get("ms") or 320)
+                except (TypeError, ValueError):
+                    ms = 320
+                clean_frames.append({"ms": max(40, min(ms, 5000)), "elements": elements})
+            name = str(item.get("name") or item.get("title") or "").strip()
+            if not name or not clean_frames:
+                continue
+            alias = item.get("alias") if isinstance(item.get("alias"), list) else []
+            out.append(
+                {
+                    "name": name[:64],
+                    "title": str(item.get("title") or name).strip()[:80],
+                    "alias": [str(v).strip() for v in alias if str(v).strip()],
+                    "frames": clean_frames,
+                }
+            )
+        return out
+
+    design = {
+        "name": str(raw.get("name") or raw.get("title") or "ai-face-design").strip()[:80],
+        "description": str(raw.get("description") or "").strip()[:240],
+        "phonemes": _items(raw.get("phonemes")),
+        "emotions": _items(raw.get("emotions") if isinstance(raw.get("emotions"), list) else raw.get("scenes")),
+    }
+    if not design["phonemes"] and not design["emotions"]:
+        raise ValueError("generated design has no usable phonemes or emotions")
+    return design
+
+
+@bp.post("/api/face_design/generate")
+def api_face_design_generate():
+    device_id, err = _require_device_id()
+    if err:
+        return err
+    payload = request.get_json(silent=True) or {}
+    prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"ok": False, "error": "请先输入想要的表情风格", "t": time.time()}), 400
+    try:
+        temperature = float(payload.get("temperature", 0.7))
+    except (TypeError, ValueError):
+        temperature = 0.7
+    temperature = max(0.1, min(temperature, 1.2))
+
+    system_prompt = (
+        "你是 Deskbot 小歪的 VisemeSync JSON 表情设计助手。"
+        "只输出一个 JSON object，不要 Markdown，不要解释。"
+        "JSON schema: {name, description, phonemes, emotions}。"
+        "phonemes/emotions 的每一项必须包含 name, title, alias[], frames[]；"
+        "frames[] 每项包含 ms 和 elements；elements 可以包含 mouth/eye_l/eye_r/nose/extra 数组。"
+        "坐标范围基于 284x240 OLED，嘴部大致在 x=90..194, y=135..180。"
+        "至少生成 5 个 emotions 和 8 个常用中文拼音/音素 phonemes。"
+    )
+    user_prompt = (
+        "根据这段描述生成 VisemeSync JSON：\n"
+        f"{prompt}\n\n"
+        "优先使用这些 shape: ellipse_fill, circle_fill, line, round_rect_outline, round_rect_fill。"
+        "请让表情适合 2C 用户配置，名字简短稳定，alias 可以包含中文拼音或英文 mood。"
+    )
+
+    try:
+        from deskbot_server.llm.runtime import litellm_completion
+
+        t0 = time.monotonic()
+        raw, meta = litellm_completion(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            device_id=device_id,
+            temperature=temperature,
+            json_mode=True,
+        )
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        design = _normalize_generated_design(_json_object_from_llm(raw))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 400
+    except json.JSONDecodeError as exc:
+        return jsonify({"ok": False, "error": f"LLM JSON 解析失败: {exc}", "t": time.time()}), 502
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}", "t": time.time()}), 500
+
+    return jsonify(
+        {
+            "ok": True,
+            "design": design,
+            "raw": raw,
+            "model": meta.get("model"),
+            "model_source": meta.get("source"),
+            "model_display_name": meta.get("display_name"),
+            "usage": meta.get("usage"),
+            "elapsed_ms": elapsed_ms,
+            "device_id": device_id,
+            "t": time.time(),
+        }
+    )
 
 
 @bp.get("/api/servo_config")
@@ -961,5 +1094,3 @@ def health():
             "tts_target": f"{tts_host}:{tts_port}",
         }
     )
-
-

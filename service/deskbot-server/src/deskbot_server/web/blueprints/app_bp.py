@@ -23,6 +23,7 @@ from deskbot_server.auth.service import change_password, get_user_by_id, update_
 from deskbot_server.face_profiles_store import (
     delete_face_profile,
     list_face_profiles_summary,
+    update_face_profile_name,
 )
 from deskbot_server.memory_store import (
     add_memory,
@@ -456,6 +457,28 @@ def api_delete_face_profile(person_id: int):
     if not delete_face_profile(person_id, device_id=device_id):
         return jsonify({"ok": False, "error": "人脸档案不存在"}), 404
     return jsonify({"ok": True})
+
+
+@bp.put("/api/face-profiles/<int:person_id>")
+@bp.patch("/api/face-profiles/<int:person_id>")
+@login_required
+def api_update_face_profile(person_id: int):
+    device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
+    if not device_id:
+        return jsonify({"ok": False, "error": "请先选择设备"}), 400
+    if not user_owns_device(current_user.id, device_id):
+        return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "name 不能为空"}), 400
+    try:
+        profile = update_face_profile_name(person_id, name, device_id=device_id)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    if profile is None:
+        return jsonify({"ok": False, "error": "人脸档案不存在"}), 404
+    return jsonify({"ok": True, "profile": profile})
 
 
 def _require_owned_device_id() -> tuple[str | None, tuple | None]:

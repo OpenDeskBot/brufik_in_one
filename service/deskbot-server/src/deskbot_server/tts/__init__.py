@@ -7,6 +7,7 @@ from deskbot_server.tts.doubao import (
     synthesize_doubao_tts,
 )
 from deskbot_server.tts.speakers import (
+    list_doubao_tts_consumer_speaker_presets,
     list_doubao_tts_speaker_presets,
     suggest_resource_id,
 )
@@ -14,6 +15,7 @@ from deskbot_server.tts.speakers import (
 __all__ = [
     "DoubaoTtsConfig",
     "DoubaoTtsResult",
+    "list_doubao_tts_consumer_speaker_presets",
     "list_doubao_tts_speaker_presets",
     "load_doubao_tts_config",
     "suggest_resource_id",

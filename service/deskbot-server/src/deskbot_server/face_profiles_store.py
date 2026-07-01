@@ -165,6 +165,32 @@ def delete_face_profile(person_id: int, *, device_id: Optional[str] = None) -> b
     return True
 
 
+def update_face_profile_name(
+    person_id: int, name: str, *, device_id: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    """更新已注册人脸档案名称，返回摘要；档案不存在时返回 ``None``。"""
+    try:
+        pid = int(person_id)
+    except (TypeError, ValueError):
+        return None
+    clean_name = str(name or "").strip()
+    if pid <= 0:
+        return None
+    if not clean_name:
+        raise ValueError("name required")
+    profiles = load_face_profiles(device_id=device_id)
+    for p in profiles:
+        if int(p["person_id"]) == pid:
+            p["name"] = clean_name
+            save_face_profiles(profiles, device_id=device_id)
+            return {
+                "person_id": int(p["person_id"]),
+                "name": str(p["name"]),
+                "descriptor_kind": str(p.get("descriptor_kind") or ""),
+            }
+    return None
+
+
 def upsert_profile(
     profiles: list[dict[str, Any]],
     *,

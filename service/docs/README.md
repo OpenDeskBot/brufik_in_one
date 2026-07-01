@@ -6,6 +6,7 @@
 
 | 文档 | 内容 |
 |------|------|
+| [api_interfaces.md](./api_interfaces.md) | Web 控制台、deskbot 设备服务、TTS 侧车接口清单 |
 | [esp32_pb_protocol.md](./esp32_pb_protocol.md) | ESP32 WebSocket 鉴权、上行 / 下行、pb v2 图元与表情 |
 
 ## 服务

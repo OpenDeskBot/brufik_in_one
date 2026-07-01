@@ -1,30 +1,165 @@
 {% extends "base_2c.html" %}
 {% block page_title %}表情 · 小歪{% endblock %}
-{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block extra_head %}
+<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+<script src="{{ url_for('static', filename='face_preview_2c.js') }}?v=20260701-expr-editor"></script>
+{% endblock %}
 {% block content %}
-<div class="pagehd"><div><h1>表情</h1><p>挑一个面孔风格，右侧大屏实时预览；再给情绪配表情。</p></div>
-  <button class="btn primary" @click="save" id="saveBtn">保存表情</button></div>
 <div id="app">
+  <div class="pagehd"><div><div class="eyebrow">FACE · CONFIG</div><h1>表情</h1><p>捏一张脸，保存后家页和设备都会使用同一套表情。</p></div>
+    <div class="page-actions">
+      <button class="btn ghost" type="button" @click="sendPreviewToDevice" :disabled="sending">[[ sending ? '发送中…' : '设备预览' ]]</button>
+      <button class="btn primary" type="button" @click="save" id="saveBtn">保存表情</button>
+    </div>
+  </div>
   <div class="exprgrid">
-    <div class="stage" style="min-height:280px">
-      <div class="face" style="width:260px;height:200px">
-        <svg width="220" height="170" viewBox="0 0 120 80" v-html="previewSvg"></svg>
+    <div class="stage expr-stage">
+      <div class="brackets"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
+      <div class="stage-hd">
+        <span class="unit">FACE · [[ previewTitle ]]</span>
+        <span class="uid">[[ deviceId || '未绑定' ]]</span>
+      </div>
+      <div class="face">
+        <div class="scanline"></div>
+        <svg width="240" height="200" viewBox="0 0 284 240" v-html="customPreviewSvg" aria-hidden="true"></svg>
+      </div>
+      <div class="expr-stage-actions">
+        <button type="button" class="btn ghost" @click="resetCustomFace">重置</button>
+        <button type="button" class="btn" @click="applyPreset('smile')">微笑</button>
+        <button type="button" class="btn" @click="applyPreset('sleepy')">困困</button>
+        <button type="button" class="btn" @click="applyPreset('surprised')">惊讶</button>
       </div>
     </div>
-    <div>
-      <div class="blocktitle" style="margin-top:0">面孔风格（场景）</div>
-      <div class="thumbs">
-        <div class="thumb" :class="{sel: i===selected}" v-for="(s,i) in scenes" :key="s.name"
-             @click="selected=i">[[ s.title || s.name ]]</div>
+    <div class="expr-editor">
+      <div class="expr-tabs" role="tablist" aria-label="表情编辑模式">
+        <button type="button" :class="{on: exprTab==='face'}" @click="exprTab='face'" role="tab" :aria-selected="String(exprTab==='face')">基础捏脸</button>
+        <button type="button" :class="{on: exprTab==='professional'}" @click="exprTab='professional'" role="tab" :aria-selected="String(exprTab==='professional')">专业设计</button>
       </div>
-      <div class="blocktitle">情绪 → 表情</div>
-      <div class="maprow" v-for="[k,label] in emotions" :key="k">
-        <div class="lab">[[ label ]]</div>
-        <select v-model="map[k]">
-          <option value="">（不指定）</option>
-          <option v-for="s in scenes" :key="s.name" :value="s.name">[[ s.title || s.name ]]</option>
-        </select>
-      </div>
+      <section v-show="exprTab==='face'" class="expr-tabpane" role="tabpanel">
+        <div class="blocktitle top">捏脸参数 / FACE</div>
+        <div class="editor-grid">
+          <label class="slider-card">
+            <span>眼距</span><b>[[ customFace.eyeGap ]]</b>
+            <input type="range" min="64" max="132" step="2" v-model.number="customFace.eyeGap" @input="activateCustom">
+          </label>
+          <label class="slider-card">
+            <span>眼高</span><b>[[ customFace.eyeY ]]</b>
+            <input type="range" min="64" max="132" step="2" v-model.number="customFace.eyeY" @input="activateCustom">
+          </label>
+          <label class="slider-card">
+            <span>眼睛</span><b>[[ customFace.eyeSize ]]</b>
+            <input type="range" min="8" max="26" step="1" v-model.number="customFace.eyeSize" @input="activateCustom">
+          </label>
+          <label class="slider-card">
+            <span>眯眼</span><b>[[ customFace.eyeSquint ]]</b>
+            <input type="range" min="0" max="18" step="1" v-model.number="customFace.eyeSquint" @input="activateCustom">
+          </label>
+          <label class="slider-card">
+            <span>嘴宽</span><b>[[ customFace.mouthWidth ]]</b>
+            <input type="range" min="24" max="92" step="2" v-model.number="customFace.mouthWidth" @input="activateCustom">
+          </label>
+          <label class="slider-card">
+            <span>嘴高</span><b>[[ customFace.mouthY ]]</b>
+            <input type="range" min="126" max="184" step="2" v-model.number="customFace.mouthY" @input="activateCustom">
+          </label>
+          <label class="slider-card">
+            <span>嘴型</span><b>[[ customFace.mouthCurve ]]</b>
+            <input type="range" min="-18" max="18" step="1" v-model.number="customFace.mouthCurve" @input="activateCustom">
+          </label>
+          <label class="slider-card">
+            <span>脸颊</span><b>[[ customFace.blush ]]</b>
+            <input type="range" min="0" max="14" step="1" v-model.number="customFace.blush" @input="activateCustom">
+          </label>
+        </div>
+
+        <div class="blocktitle top">面孔风格 / SKIN</div>
+        <div class="thumbs">
+          <button type="button" class="thumb" :class="{sel: i===selected}" v-for="(s,i) in scenes" :key="s.name"
+               @click="selectScene(i)">[[ s.title || s.name ]]</button>
+        </div>
+        <div class="blocktitle">情绪 → 表情 / MAP</div>
+        <div class="maprow" v-for="[k,emoji,label] in emotions" :key="k">
+          <div class="lab"><span class="e">[[ emoji ]]</span>[[ label ]]</div>
+          <select v-model="map[k]" @change="syncSelectedMood(k)">
+            <option value="">（不指定）</option>
+            <option v-for="s in scenes" :key="s.name" :value="s.name">[[ s.title || s.name ]]</option>
+          </select>
+        </div>
+      </section>
+      <section v-show="exprTab==='professional'" class="expr-tabpane professional-design" role="tabpanel">
+        <div class="blocktitle top">专业设计 / VISEMESYNC</div>
+        <div class="design-loader design-ai">
+          <div>
+            <b>AI 辅助生成</b>
+            <small>输入一句风格描述，调用当前 LLM 生成 VisemeSync JSON，生成后仍需手动应用保存。</small>
+          </div>
+          <button type="button" class="btn ghost" @click="professionalAiOpen=!professionalAiOpen">
+            [[ professionalAiOpen ? '收起配置' : '展开配置' ]]
+          </button>
+        </div>
+        <div class="design-ai-body" v-show="professionalAiOpen">
+          <textarea class="tinput debug-textarea" v-model="professionalPrompt" placeholder="例如：生成一套开心、困困、惊讶、思考、待机的圆润表情，嘴型适合中文说话"></textarea>
+          <div class="debug-actionbar">
+            <button type="button" class="btn primary" @click="generateProfessionalDesign" :disabled="generatingProfessional || !professionalPrompt.trim()">[[ generatingProfessional ? '生成中…' : 'AI 生成设计' ]]</button>
+            <button type="button" class="btn ghost" @click="professionalPrompt='做一套小歪默认表情：开心、困困、惊讶、思考、待机，风格圆润，嘴型适合中文拼音。'">默认表情</button>
+            <button type="button" class="btn ghost" @click="professionalPrompt='做一套可爱夸张的儿童向表情，强调大眼睛、微笑、惊讶和打哈欠。'">可爱夸张</button>
+          </div>
+        </div>
+        <div class="design-loader">
+          <input ref="professionalFile" class="file-input-hidden" type="file" accept=".json,application/json" @change="importProfessionalFile">
+          <div>
+            <b>VisemeSync JSON</b>
+            <small>导入 phonemes / emotions 后，可把情绪表情写入当前表情库，嘴型会同步到拼音口型配置。</small>
+          </div>
+          <div class="design-actions">
+            <button type="button" class="btn" @click="$refs.professionalFile && $refs.professionalFile.click()">选择 JSON</button>
+            <button type="button" class="btn ghost" @click="loadProfessionalFromCurrent">从当前生成</button>
+            <button type="button" class="btn ghost" @click="exportProfessionalDesign">导出 JSON</button>
+            <button type="button" class="btn primary" @click="saveProfessionalDesign" :disabled="savingProfessional || !professionalDesign">[[ savingProfessional ? '保存中…' : '应用并保存' ]]</button>
+          </div>
+        </div>
+        <div class="metric-grid pro-metrics">
+          <div class="metric accent">
+            <span>设计名</span>
+            <b>[[ professionalStats.name ]]</b>
+            <small>[[ professionalFileName || '当前页面' ]]</small>
+          </div>
+          <div class="metric">
+            <span>PHONEMES</span>
+            <b>[[ professionalStats.phonemes ]]</b>
+            <small>拼音/音素嘴型</small>
+          </div>
+          <div class="metric">
+            <span>EMOTIONS</span>
+            <b>[[ professionalStats.emotions ]]</b>
+            <small>可导入表情</small>
+          </div>
+          <div class="metric">
+            <span>FRAMES</span>
+            <b>[[ professionalStats.frames ]]</b>
+            <small>动画帧总数</small>
+          </div>
+        </div>
+        <div class="design-warnings" v-if="professionalWarnings.length">
+          <b>配置状态</b>
+          <ul>
+            <li v-for="w in professionalWarnings" :key="w">[[ w ]]</li>
+          </ul>
+        </div>
+        <div class="adv-table-wrap pro-table" v-if="professionalPreviewRows.length">
+          <table class="adv-table">
+            <thead><tr><th>类型</th><th>名称</th><th>别名</th><th>帧数</th></tr></thead>
+            <tbody>
+              <tr v-for="row in professionalPreviewRows" :key="row.kind + row.name">
+                <td>[[ row.kind ]]</td>
+                <td><b>[[ row.title ]]</b><small>[[ row.name ]]</small></td>
+                <td><small>[[ row.alias || '-' ]]</small></td>
+                <td>[[ row.frames ]]</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   </div>
   <p class="lead" v-if="msg">[[ msg ]]</p>
@@ -33,41 +168,445 @@
 {% block scripts %}
 <script>
 const { createApp } = Vue;
+const DEFAULT_CUSTOM_FACE = Object.freeze({
+  eyeGap:112, eyeY:96, eyeSize:17, eyeSquint:0,
+  mouthY:156, mouthWidth:54, mouthHeight:14, mouthCurve:8, blush:5
+});
 createApp({
   delimiters:['[[',']]'],
-  data(){ return { scenes:[], selected:0, deviceId:'', emotions:[['happy','开心'],['surprised','惊讶'],['thinking','思考'],['sleepy','困'],['idle','待机']], map:{}, msg:'' }; },
+  data(){ return {
+    scenes:[], selected:0, mode:'custom', exprTab:'face', deviceId:'', sending:false, savingProfessional:false,
+    emotions:[['happy','😄','开心'],['surprised','😲','惊讶'],['thinking','🤔','思考'],['sleepy','😴','困'],['idle','😐','待机']],
+    map:{}, msg:'', customFace:{...DEFAULT_CUSTOM_FACE}, professionalDesign:null, professionalFileName:'',
+    professionalAiOpen:false, generatingProfessional:false,
+    professionalPrompt:'做一套小歪默认表情：开心、困困、惊讶、思考、待机，风格圆润，嘴型适合中文拼音。'
+  }; },
   computed:{
-    previewSvg(){
-      const s=this.scenes[this.selected]; if(!s||!s.frames||!s.frames[0]) return '';
-      const el=s.frames[0].elements||{}; let out='';
-      const draw=(arr,color)=>{ for(const p of (arr||[])){
-        if(p.shape&&p.shape.indexOf('ellipse')===0) out+=`<ellipse cx="${p.x}" cy="${p.y}" rx="${p.rw}" ry="${p.rh}" fill="${color}"/>`;
-        else if(p.shape==='line') out+=`<line x1="${p.x1}" y1="${p.y1}" x2="${p.x2}" y2="${p.y2}" stroke="${color}" stroke-width="2"/>`;
-        else if(p.shape&&p.shape.indexOf('round_rect')===0) out+=`<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="${p.radius||1}" fill="none" stroke="${color}" stroke-width="2"/>`;
-      }};
-      draw(el.eye_l,'#7fe7ff'); draw(el.eye_r,'#7fe7ff'); draw(el.mouth,'#ff9ec4'); draw(el.extra,'#ffd36b');
-      return out;
+    previewScene(){
+      if(this.mode === 'custom') return this.buildCustomScene();
+      const preview = window.DeskbotFacePreview;
+      return this.scenes[this.selected] || (preview && preview.fallbackScene) || this.buildCustomScene();
+    },
+    previewTitle(){
+      const s = this.previewScene || {};
+      return s.title || s.name || '我的表情';
+    },
+    customPreviewSvg(){
+      const preview = window.DeskbotFacePreview;
+      return preview ? preview.sceneToSvg(this.previewScene) : '';
+    },
+    professionalStats(){
+      const design = this.professionalDesign || {};
+      const phonemes = Array.isArray(design.phonemes) ? design.phonemes : [];
+      const emotions = Array.isArray(design.emotions) ? design.emotions : [];
+      const frames = phonemes.concat(emotions).reduce((sum, item) => {
+        return sum + (Array.isArray(item.frames) ? item.frames.length : 0);
+      }, 0);
+      return {
+        name: design.name || '未导入',
+        phonemes: phonemes.length,
+        emotions: emotions.length,
+        frames,
+      };
+    },
+    professionalWarnings(){
+      if(!this.professionalDesign) return ['还没有导入专业设计，也可以先从当前表情生成一份 JSON。'];
+      const warnings = [];
+      if(!this.deviceId) warnings.push('请先在「我的设备」选择一台设备，才能保存到设备配置。');
+      if(!this.professionalStats.phonemes) warnings.push('没有 phonemes，保存时不会更新拼音嘴型。');
+      if(!this.professionalStats.emotions) warnings.push('没有 emotions，保存时不会更新情绪表情库。');
+      return warnings;
+    },
+    professionalPreviewRows(){
+      const design = this.professionalDesign || {};
+      const rows = [];
+      const collect = (items, kind) => {
+        (items || []).slice(0, 8).forEach((item) => {
+          rows.push({
+            kind,
+            name: item.name || '-',
+            title: item.title || item.name || '-',
+            alias: (item.alias || []).join(', '),
+            frames: Array.isArray(item.frames) ? item.frames.length : 0,
+          });
+        });
+      };
+      collect(design.emotions, 'emotion');
+      collect(design.phonemes, 'phoneme');
+      return rows.slice(0, 12);
     }
   },
   methods:{
-    async load(){
-      const d = await (await fetch('/app/api/devices')).json();
-      this.deviceId = d.current_device_id || '';
-      if(!this.deviceId){ this.msg='请先在「我的设备」选择一台设备'; return; }
-      const r = await (await fetch('/api/face_expr_scenes?device_id='+encodeURIComponent(this.deviceId))).json();
-      this.scenes = r.config || [];
-      const m = await (await fetch('/api/emotion_expr_map?device_id='+encodeURIComponent(this.deviceId))).json();
-      this.map = m.map || {};
+    clamp(v, min, max){
+      const n = Number(v);
+      return Math.max(min, Math.min(Number.isFinite(n) ? n : min, max));
     },
-    async save(){
-      if(!this.deviceId){ this.msg='没有当前设备，无法保存'; return; }
+    activateCustom(){ this.mode = 'custom'; },
+    resetCustomFace(){
+      this.customFace = {...DEFAULT_CUSTOM_FACE};
+      this.mode = 'custom';
+      this.msg = '已重置为默认表情';
+    },
+    applyPreset(name){
+      const presets = {
+        smile:{eyeGap:112, eyeY:96, eyeSize:17, eyeSquint:0, mouthY:156, mouthWidth:58, mouthHeight:14, mouthCurve:12, blush:5},
+        sleepy:{eyeGap:108, eyeY:102, eyeSize:17, eyeSquint:14, mouthY:160, mouthWidth:42, mouthHeight:10, mouthCurve:-2, blush:1},
+        surprised:{eyeGap:116, eyeY:88, eyeSize:22, eyeSquint:0, mouthY:148, mouthWidth:34, mouthHeight:30, mouthCurve:0, blush:0},
+      };
+      this.customFace = {...DEFAULT_CUSTOM_FACE, ...(presets[name] || {})};
+      this.mode = 'custom';
+    },
+    buildCustomScene(){
+      const f = this.customFace || DEFAULT_CUSTOM_FACE;
+      const cx = 142;
+      const eyeGap = this.clamp(f.eyeGap, 64, 132);
+      const eyeY = this.clamp(f.eyeY, 64, 132);
+      const eyeSize = this.clamp(f.eyeSize, 8, 26);
+      const eyeSquint = this.clamp(f.eyeSquint, 0, 18);
+      const eyeRh = Math.max(2, eyeSize - eyeSquint);
+      const mouthW = this.clamp(f.mouthWidth, 24, 92);
+      const mouthH = this.clamp(f.mouthHeight, 8, 28);
+      const mouthY = this.clamp(f.mouthY, 126, 184);
+      const curve = this.clamp(f.mouthCurve, -18, 18);
+      const blush = this.clamp(f.blush, 0, 14);
+      const mouthX = Math.round(cx - mouthW / 2);
+      const mouthMid = Math.round(mouthY + mouthH / 2);
+      const mouthCenterY = Math.round(mouthMid + curve);
+      const mouth = [
+        {shape:'round_rect_outline', x:mouthX, y:Math.round(mouthY), w:Math.round(mouthW), h:Math.round(mouthH), radius:Math.max(2, Math.round(mouthH / 2))},
+        {shape:'line', x1:mouthX + 6, y1:mouthMid, x2:cx, y2:mouthCenterY},
+        {shape:'line', x1:cx, y1:mouthCenterY, x2:mouthX + Math.round(mouthW) - 6, y2:mouthMid},
+      ];
+      const extra = blush > 0 ? [
+        {shape:'ellipse_fill', x:Math.round(cx - eyeGap / 2 - 28), y:Math.round(mouthY - 10), rw:Math.round(blush), rh:Math.max(2, Math.round(blush / 2))},
+        {shape:'ellipse_fill', x:Math.round(cx + eyeGap / 2 + 28), y:Math.round(mouthY - 10), rw:Math.round(blush), rh:Math.max(2, Math.round(blush / 2))},
+      ] : [];
+      return {
+        name:'custom_face',
+        title:'我的表情',
+        frames:[{
+          ms:900,
+          elements:{
+            eye_l:[{shape:'ellipse_fill', x:Math.round(cx - eyeGap / 2), y:Math.round(eyeY), rw:Math.round(eyeSize), rh:Math.round(eyeRh)}],
+            eye_r:[{shape:'ellipse_fill', x:Math.round(cx + eyeGap / 2), y:Math.round(eyeY), rw:Math.round(eyeSize), rh:Math.round(eyeRh)}],
+            nose:[{shape:'circle_fill', x:cx, y:Math.round((eyeY + mouthY) / 2), r:4}],
+            mouth,
+            extra,
+          },
+        }],
+      };
+    },
+    faceFromScene(scene){
+      const preview = window.DeskbotFacePreview;
+      const base = {...DEFAULT_CUSTOM_FACE};
+      if(!scene || !preview) return base;
+      const elements = preview.frameElements ? preview.frameElements(scene) : null;
+      if(!elements) return base;
+      const eyeL = elements.eye_l && elements.eye_l[0] || null;
+      const eyeR = elements.eye_r && elements.eye_r[0] || null;
+      const mouthRect = (elements.mouth || []).find(p => String(p.shape || '').indexOf('round_rect') >= 0) || null;
+      const mouthLine = (elements.mouth || []).find(p => String(p.shape || '') === 'line' && Number.isFinite(Number(p.y2))) || null;
+      const blush = elements.extra && elements.extra[0] || null;
+      if(eyeL && eyeR){
+        base.eyeGap = Math.round(Math.abs(Number(eyeR.x || 0) - Number(eyeL.x || 0))) || base.eyeGap;
+        base.eyeY = Math.round(((Number(eyeL.y || base.eyeY) + Number(eyeR.y || base.eyeY)) / 2)) || base.eyeY;
+        base.eyeSize = Math.round(((Number(eyeL.rw || base.eyeSize) + Number(eyeR.rw || base.eyeSize)) / 2)) || base.eyeSize;
+        const rh = ((Number(eyeL.rh || base.eyeSize) + Number(eyeR.rh || base.eyeSize)) / 2);
+        base.eyeSquint = Math.max(0, Math.round(base.eyeSize - rh));
+      }
+      if(mouthRect){
+        base.mouthWidth = Math.round(Number(mouthRect.w || base.mouthWidth)) || base.mouthWidth;
+        base.mouthHeight = Math.round(Number(mouthRect.h || base.mouthHeight)) || base.mouthHeight;
+        base.mouthY = Math.round(Number(mouthRect.y || base.mouthY)) || base.mouthY;
+        if(mouthLine){
+          const mid = base.mouthY + base.mouthHeight / 2;
+          base.mouthCurve = Math.round(Number(mouthLine.y2 || mid) - mid);
+        }
+      }
+      if(blush) base.blush = Math.round(Number(blush.rw || base.blush)) || base.blush;
+      return base;
+    },
+    copyJson(value, fallback){
+      if(value === undefined || value === null) return fallback;
+      try{ return JSON.parse(JSON.stringify(value)); }
+      catch(e){ return fallback; }
+    },
+    slugName(value, fallback){
+      const raw = String(value || fallback || '').trim();
+      const slug = raw.toLowerCase()
+        .replace(/[^a-z0-9_\-\u4e00-\u9fa5]+/gi, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 64);
+      return slug || fallback || 'item';
+    },
+    aliasList(value){
+      if(Array.isArray(value)) return value.map(v => String(v || '').trim()).filter(Boolean);
+      if(typeof value === 'string') return value.split(/[,\s/]+/).map(v => v.trim()).filter(Boolean);
+      return [];
+    },
+    normalizeDesignItem(item, prefix, index){
+      const source = item && typeof item === 'object' ? item : {};
+      const alias = this.aliasList(source.alias);
+      const name = this.slugName(source.name || alias[0], prefix + '_' + (index + 1));
+      const title = String(source.title || source.label || source.name || name);
+      const frameSource = Array.isArray(source.frames)
+        ? source.frames
+        : (source.elements ? [{ms: source.ms || 320, elements: source.elements}] : []);
+      const frames = frameSource.map((frame) => {
+        const row = frame && typeof frame === 'object' ? frame : {};
+        const elements = row.elements && typeof row.elements === 'object' ? this.copyJson(row.elements, {}) : {};
+        if(!Object.keys(elements).length) return null;
+        return {ms:this.clamp(row.ms || row.duration || 320, 40, 5000), elements};
+      }).filter(Boolean);
+      return {name, title, alias, frames};
+    },
+    normalizeProfessionalDesign(raw){
+      const source = raw && typeof raw === 'object' ? raw : {};
+      const phonemeSource = Array.isArray(source.phonemes) ? source.phonemes : [];
+      const emotionSource = Array.isArray(source.emotions) ? source.emotions : (Array.isArray(source.scenes) ? source.scenes : []);
+      return {
+        name: String(source.name || source.title || 'deskbot-face-design'),
+        description: String(source.description || ''),
+        phonemes: phonemeSource.map((item, index) => this.normalizeDesignItem(item, 'phoneme', index)).filter(item => item.frames.length),
+        emotions: emotionSource.map((item, index) => this.normalizeDesignItem(item, 'emotion', index)).filter(item => item.frames.length),
+      };
+    },
+    setProfessionalDesign(raw, fileName){
+      const design = this.normalizeProfessionalDesign(raw);
+      this.professionalDesign = design;
+      this.professionalFileName = fileName || '';
+      this.exprTab = 'professional';
+      this.msg = '已载入专业设计：' + design.name;
+      return design;
+    },
+    async importProfessionalFile(event){
+      const input = event && event.target;
+      const file = input && input.files && input.files[0];
+      if(!file) return;
+      try{
+        const text = await file.text();
+        this.setProfessionalDesign(JSON.parse(text), file.name);
+      }catch(e){
+        this.msg = '专业设计导入失败：' + (e && e.message ? e.message : e);
+      }finally{
+        if(input) input.value = '';
+      }
+    },
+    async generateProfessionalDesign(){
+      if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }
+      const prompt = String(this.professionalPrompt || '').trim();
+      if(!prompt){ this.msg = '请先输入想要的表情风格'; return; }
+      this.generatingProfessional = true;
+      try{
+        const res = await (await fetch('/api/face_design/generate', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({device_id:this.deviceId, prompt})
+        })).json();
+        if(!res.ok) throw new Error(res.error || 'AI 生成失败');
+        this.setProfessionalDesign(res.design, 'ai-generated.json');
+        this.msg = 'AI 已生成专业设计，检查后可应用保存';
+      }catch(e){
+        this.msg = 'AI 生成失败：' + (e && e.message ? e.message : e);
+      }finally{
+        this.generatingProfessional = false;
+      }
+    },
+    loadProfessionalFromCurrent(){
+      const sourceScenes = (this.scenes && this.scenes.length) ? this.scenes : [this.buildCustomScene()];
+      const currentPhonemes = this.professionalDesign && Array.isArray(this.professionalDesign.phonemes)
+        ? this.professionalDesign.phonemes
+        : [];
+      this.setProfessionalDesign({
+        name:'deskbot-current-face',
+        description:'Generated from current Deskbot 2C face scenes',
+        phonemes:currentPhonemes,
+        emotions:sourceScenes.map((scene) => ({
+          name:scene.name,
+          title:scene.title || scene.name,
+          frames:this.copyJson(scene.frames || [], []),
+        })),
+      }, 'current-face.json');
+    },
+    designItemToScene(item){
+      if(!item || !Array.isArray(item.frames) || !item.frames.length) return null;
+      return {
+        name:this.slugName(item.name, 'emotion'),
+        title:item.title || item.name,
+        frames:this.copyJson(item.frames, []),
+      };
+    },
+    emotionMapFromDesign(design){
+      const next = {};
+      const rules = [
+        ['happy', ['happy','joy','smile','开心','高兴','微笑']],
+        ['surprised', ['surprised','shock','wow','惊讶','吃惊']],
+        ['thinking', ['thinking','think','疑惑','思考']],
+        ['sleepy', ['sleepy','sleep','tired','困','睡']],
+        ['idle', ['idle','neutral','default','standby','待机','默认']],
+      ];
+      (design.emotions || []).forEach((item) => {
+        const hay = [item.name, item.title].concat(item.alias || []).join(' ').toLowerCase();
+        rules.forEach(([mood, keys]) => {
+          if(!next[mood] && keys.some(key => hay.indexOf(String(key).toLowerCase()) >= 0)) next[mood] = item.name;
+        });
+      });
+      if(!next.idle && design.emotions && design.emotions[0]) next.idle = design.emotions[0].name;
+      return next;
+    },
+    designToMouthGroups(design){
+      return (design.phonemes || []).map((item) => {
+        const frame = item.frames && item.frames[0] || null;
+        const mouth = frame && frame.elements && Array.isArray(frame.elements.mouth) ? frame.elements.mouth : [];
+        if(!mouth.length) return null;
+        const states = [item.name].concat(item.alias || []).map(v => String(v || '').trim()).filter(Boolean);
+        return {states, elements:this.copyJson(mouth, []), offset:{x:0, y:0}};
+      }).filter(Boolean);
+    },
+    mergeProfessionalScenes(design){
+      const imported = (design.emotions || []).map(item => this.designItemToScene(item)).filter(Boolean);
+      if(!imported.length) return [];
+      const rows = Array.isArray(this.scenes) ? this.scenes.slice() : [];
+      imported.forEach((scene) => {
+        const hit = rows.findIndex(row => row && row.name === scene.name);
+        if(hit >= 0) rows.splice(hit, 1, scene);
+        else rows.push(scene);
+      });
+      this.scenes = rows;
+      this.map = Object.assign({}, this.map, this.emotionMapFromDesign(design));
+      this.selectSceneByName(imported[0].name);
+      this.mode = 'preset';
+      return imported;
+    },
+    exportProfessionalDesign(){
+      const design = this.professionalDesign || this.normalizeProfessionalDesign({
+        name:'deskbot-current-face',
+        description:'Generated from current Deskbot 2C face scenes',
+        phonemes:[],
+        emotions:(this.scenes || []).map(scene => ({
+          name:scene.name,
+          title:scene.title || scene.name,
+          frames:this.copyJson(scene.frames || [], []),
+        })),
+      });
+      const blob = new Blob([JSON.stringify(design, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = (this.slugName(design.name, 'deskbot-face-design') || 'deskbot-face-design') + '.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      this.msg = '已导出专业设计 JSON';
+    },
+    async saveProfessionalDesign(){
+      if(!this.professionalDesign){ this.msg = '请先导入或生成专业设计'; return; }
+      if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }
+      this.savingProfessional = true;
+      try{
+        const design = this.normalizeProfessionalDesign(this.professionalDesign);
+        this.professionalDesign = design;
+        const importedScenes = this.mergeProfessionalScenes(design);
+        const mouthGroups = this.designToMouthGroups(design);
+        let mouthOk = true;
+        let mouthError = '';
+        if(mouthGroups.length){
+          const mouthResp = await (await fetch('/api/face_mouth_by_phoneme', {method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({device_id:this.deviceId, mouth_by_phoneme_groups:mouthGroups})})).json();
+          mouthOk = !!mouthResp.ok;
+          mouthError = mouthResp.error || '';
+        }
+        const savedScene = await this.save({silent:true, preserveMap:true});
+        if(mouthOk && savedScene !== null){
+          this.msg = '专业设计已保存：' + importedScenes.length + ' 个情绪表情，' + mouthGroups.length + ' 组拼音嘴型';
+        }else{
+          this.msg = '专业设计部分保存失败：' + (mouthError || '表情库保存失败');
+        }
+      }catch(e){
+        this.msg = '专业设计保存失败：' + (e && e.message ? e.message : e);
+      }finally{
+        this.savingProfessional = false;
+      }
+    },
+    upsertScene(scene){
+      const rows = Array.isArray(this.scenes) ? this.scenes.slice() : [];
+      const idx = rows.findIndex(s => s && s.name === scene.name);
+      if(idx >= 0) rows.splice(idx, 1, scene);
+      else rows.unshift(scene);
+      this.scenes = rows;
+      this.selectSceneByName(scene.name);
+      return scene;
+    },
+    selectScene(i){
+      if(!this.scenes.length){ this.selected = 0; return; }
+      this.selected = Math.max(0, Math.min(Number(i) || 0, this.scenes.length - 1));
+      this.mode = 'preset';
+    },
+    selectSceneByName(name){
+      const hit = (this.scenes || []).findIndex(s => s && s.name === name);
+      if(hit >= 0) this.selected = hit;
+    },
+    syncHomePreviewScene(){
+      const preview = window.DeskbotFacePreview;
+      const scene = preview ? preview.pickScene(this.scenes, this.map, 'idle') : null;
+      if(scene && scene.name) this.selectSceneByName(scene.name);
+    },
+    syncSelectedMood(k){
+      if(k === 'idle') this.syncHomePreviewScene();
+    },
+    async load(){
+      try{
+        const d = await (await fetch('/app/api/devices')).json();
+        this.deviceId = d.current_device_id || '';
+        if(!this.deviceId){ this.scenes = [this.buildCustomScene()]; this.msg='请先在「我的设备」选择一台设备'; return; }
+        const q = '?device_id='+encodeURIComponent(this.deviceId);
+        const r = await (await fetch('/api/face_expr_scenes'+q)).json();
+        this.scenes = (r.config && r.config.length) ? r.config : [this.buildCustomScene()];
+        const m = await (await fetch('/api/emotion_expr_map'+q)).json();
+        this.map = m.map || {};
+        const custom = (this.scenes || []).find(s => s && s.name === 'custom_face');
+        if(custom) this.customFace = this.faceFromScene(custom);
+        this.syncHomePreviewScene();
+        const selectedScene = this.scenes[this.selected] || null;
+        this.mode = selectedScene && selectedScene.name === 'custom_face' ? 'custom' : 'preset';
+      }catch(e){
+        this.scenes = [this.buildCustomScene()];
+        this.msg = '表情数据加载失败：' + (e && e.message ? e.message : e);
+      }
+    },
+    async save(opts){
+      const options = opts || {};
+      if(!this.deviceId){ this.msg='没有当前设备，无法保存'; return null; }
+      const selectedScene = this.mode === 'custom' ? this.upsertScene(this.buildCustomScene()) : this.scenes[this.selected];
+      if(selectedScene && selectedScene.name && !options.preserveMap){
+        this.map = Object.assign({}, this.map, { idle: selectedScene.name });
+      }
       const r = await (await fetch('/api/face_expr_scenes', {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({device_id:this.deviceId, scenes:this.scenes})})).json();
       const r2 = await (await fetch('/api/emotion_expr_map', {method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({device_id:this.deviceId, map:this.map})})).json();
-      this.msg = (r.ok && r2.ok) ? '表情与情绪映射已保存到这台设备' : ('保存失败：'+((r.error||r2.error)||''));
+      if(r.ok && Array.isArray(r.config)) this.scenes = r.config;
+      if(!options.silent) this.msg = (r.ok && r2.ok) ? '当前表情已保存，并会同步到「家」页' : ('保存失败：'+((r.error||r2.error)||''));
+      return (r.ok && r2.ok && selectedScene) ? selectedScene : null;
+    },
+    async sendPreviewToDevice(){
+      if(!this.deviceId){ this.msg='请先在「我的设备」选择一台设备'; return; }
+      this.sending = true;
+      try{
+        const scene = await this.save({silent:true});
+        if(!scene || !scene.name){ this.msg='表情保存失败，未发送'; return; }
+        const q = '?device_id=' + encodeURIComponent(this.deviceId) + '&scene=' + encodeURIComponent(scene.name);
+        const r = await (await fetch('/api/device_pb_expr_scene' + q)).json();
+        this.msg = r.ok ? '已发送到设备预览' : ('设备预览失败：' + (r.error || r.hint || '设备未在线'));
+      }catch(e){
+        this.msg = '设备预览失败：' + (e && e.message ? e.message : e);
+      }finally{
+        this.sending = false;
+      }
     },
   },
   mounted(){ this.load(); },

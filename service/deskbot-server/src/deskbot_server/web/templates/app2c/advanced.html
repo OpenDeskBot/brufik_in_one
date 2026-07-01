@@ -1,13 +1,532 @@
 {% extends "base_2c.html" %}
 {% block page_title %}高级 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
 {% block content %}
-<div class="pagehd"><div><h1>高级</h1><p>开发者与进阶设置，普通使用一般用不到。</p></div></div>
-<a class="adv-item" href="/app/usage"><div class="l">用量与账单</div><span>›</span></a>
-<a class="adv-item" href="/app/llm-models"><div class="l">LLM 模型</div><span>›</span></a>
-<a class="adv-item" href="/app/settings"><div class="l">账号 / API Key</div><span>›</span></a>
-<a class="adv-item" href="/debug/devices"><div class="l">调试 · 设备</div><span>›</span></a>
-<a class="adv-item" href="/debug/tts"><div class="l">调试 · TTS</div><span>›</span></a>
-<a class="adv-item" href="/debug/llm"><div class="l">调试 · LLM</div><span>›</span></a>
-<a class="adv-item" href="/debug/simulation"><div class="l">调试 · 模拟</div><span>›</span></a>
-<p class="lead" style="margin-top:16px">＊ 这些都是既有控制台页面，功能不变，只是默认收起。</p>
+<div id="advancedApp">
+  <div class="pagehd">
+    <div>
+      <div class="eyebrow">ADVANCED · API</div>
+      <h1>高级</h1>
+      <p>用量、API Key、账号和 LLM 模型都在这里直接处理。</p>
+    </div>
+  </div>
+
+  <div class="adv-tabs">
+    <button type="button" :class="{on: active==='usage'}" @click="setActive('usage')">用量</button>
+    <button type="button" :class="{on: active==='keys'}" @click="setActive('keys')">API Key</button>
+    <button type="button" :class="{on: active==='llm'}" @click="setActive('llm')">LLM 模型</button>
+    <button type="button" :class="{on: active==='account'}" @click="setActive('account')">账号</button>
+    <button type="button" :class="{on: active==='debug'}" @click="setActive('debug')">调试</button>
+  </div>
+
+  <div class="adv-panel" v-if="active==='usage'">
+    <div class="panel-head">
+      <div><b>用量与账单</b><small>ASR / 人脸 / LLM / TTS 字节消耗</small></div>
+      <button type="button" class="btn ghost" @click="load">刷新</button>
+    </div>
+    <div class="metric-grid">
+      <div class="metric"><span>今日 ASR</span><b>[[ fmtBytes(usage.today.asr_bytes) ]]</b></div>
+      <div class="metric"><span>今日人脸</span><b>[[ fmtBytes(usage.today.face_bytes) ]]</b></div>
+      <div class="metric"><span>今日 LLM</span><b>[[ fmtBytes(usage.today.llm_bytes) ]]</b></div>
+      <div class="metric"><span>今日 TTS</span><b>[[ fmtBytes(usage.today.tts_bytes) ]]</b></div>
+      <div class="metric accent"><span>今日合计</span><b>[[ fmtBytes(usage.today.total_bytes) ]]</b></div>
+      <div class="metric"><span>14 日合计</span><b>[[ fmtBytes(usage.fourteen_day.total_bytes) ]]</b></div>
+    </div>
+    <div class="blocktitle">今日设备用量</div>
+    <div class="adv-table-wrap">
+      <table class="adv-table">
+        <thead><tr><th>设备</th><th>ASR</th><th>人脸</th><th>LLM</th><th>TTS</th><th>合计</th></tr></thead>
+        <tbody>
+          <tr v-for="d in usage.today_by_device" :key="d.device_id">
+            <td><b>[[ d.display_name || d.device_id ]]</b><small>[[ d.device_id ]]</small></td>
+            <td>[[ fmtBytes(d.asr_bytes) ]]</td>
+            <td>[[ fmtBytes(d.face_bytes) ]]</td>
+            <td>[[ fmtBytes(d.llm_bytes) ]]</td>
+            <td>[[ fmtBytes(d.tts_bytes) ]]</td>
+            <td><b>[[ fmtBytes(d.total_bytes) ]]</b></td>
+          </tr>
+          <tr v-if="!usage.today_by_device.length"><td colspan="6">暂无设备用量</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="adv-panel" v-if="active==='keys'">
+    <div class="panel-head">
+      <div><b>API Key</b><small>设备连接时携带 ?api_key=odk_...</small></div>
+      <button type="button" class="btn ghost" @click="toggleAdvanced('keys')">[[ advancedOpen.keys ? '收起配置' : '展开配置' ]]</button>
+    </div>
+    <div v-show="advancedOpen.keys">
+      <form class="inline-form" @submit.prevent="createApiKey">
+        <input class="tinput" v-model="newKeyName" placeholder="Key 名称，例如 production">
+        <button type="submit" class="btn primary">生成新 Key</button>
+      </form>
+      <div class="new-key-box" v-if="rawKey">
+        <span>新 Key 仅显示一次</span>
+        <code>[[ rawKey ]]</code>
+        <button type="button" class="btn ghost" @click="copyRawKey">复制</button>
+      </div>
+      <div class="adv-table-wrap">
+        <table class="adv-table">
+          <thead><tr><th>名称</th><th>前缀</th><th>今日用量</th><th>配额</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="k in apiKeys" :key="k.id">
+              <td><b>[[ k.name ]]</b><small>[[ k.created_at ? k.created_at.slice(0,10) : '' ]]</small></td>
+              <td><code>[[ k.prefix ]]...</code></td>
+              <td>[[ fmtBytes(k.today.total_bytes) ]]</td>
+              <td>[[ k.today.quota_bytes ? fmtBytes(k.today.quota_bytes) : '不限' ]]</td>
+              <td><button type="button" class="btn ghost" @click="revokeApiKey(k)">吊销</button></td>
+            </tr>
+            <tr v-if="!apiKeys.length"><td colspan="5">暂无 API Key</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="adv-panel" v-if="active==='llm'">
+    <div class="panel-head">
+      <div><b>LLM 模型</b><small>按当前设备保存模型配置</small></div>
+      <div class="btngroup">
+        <button type="button" class="btn ghost" @click="toggleAdvanced('llm')">[[ advancedOpen.llm ? '收起配置' : '展开配置' ]]</button>
+        <select v-model="currentDeviceId" @change="switchDevice">
+          <option value="">选择设备</option>
+          <option v-for="d in devices" :key="d.device_id" :value="d.device_id">[[ d.display_name ]] · [[ d.device_id ]]</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="llm-current">
+      <div><span>当前生效</span><b>[[ llm.active ? llm.active.display_name : (llm.error || '未配置') ]]</b></div>
+      <small v-if="llm.active">[[ llm.active.model ]] · [[ llm.active.source==='device' ? '设备自定义' : '系统默认' ]]</small>
+      <button type="button" class="btn ghost" @click="useSystemModel" :disabled="!currentDeviceId">切回系统默认</button>
+    </div>
+
+    <div v-show="advancedOpen.llm">
+      <form class="llm-form" @submit.prevent="saveLlmModel">
+        <input class="tinput" v-model="llmForm.name" placeholder="显示名称">
+        <input class="tinput" v-model="llmForm.model_name" placeholder="模型 ID，例如 qwen-flash">
+        <select v-model="llmForm.protocol">
+          <option v-for="p in llm.protocols" :key="p" :value="p">[[ p ]]</option>
+        </select>
+        <input class="tinput" v-model="llmForm.base_url" placeholder="Base URL，可留空">
+        <input class="tinput" v-model="llmForm.api_key" type="password" :placeholder="editingModelId ? 'API Key 留空则不修改' : 'API Key'">
+        <div class="btngroup">
+          <button type="submit" class="btn primary">[[ editingModelId ? '保存模型' : '添加模型' ]]</button>
+          <button type="button" class="btn ghost" v-if="editingModelId" @click="resetLlmForm">取消编辑</button>
+        </div>
+      </form>
+
+      <div class="adv-table-wrap">
+        <table class="adv-table">
+          <thead><tr><th>名称</th><th>模型</th><th>协议</th><th>Base URL</th><th>Key</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="m in llm.models" :key="m.id">
+              <td><b>[[ m.name ]]</b></td>
+              <td><code>[[ m.model_name ]]</code></td>
+              <td>[[ m.protocol ]]</td>
+              <td><small>[[ m.base_url || '—' ]]</small></td>
+              <td><code>[[ m.api_key || (m.api_key_set ? '****' : '—') ]]</code></td>
+              <td><span class="tagdev" v-if="m.id===llm.active_model_id">当前</span><span v-else>—</span></td>
+              <td>
+                <div class="btngroup">
+                  <button type="button" class="btn ghost" @click="selectLlmModel(m)" v-if="m.id!==llm.active_model_id">设为当前</button>
+                  <button type="button" class="btn ghost" @click="editLlmModel(m)">编辑</button>
+                  <button type="button" class="btn ghost" @click="deleteLlmModel(m)">删除</button>
+                </div>
+              </td>
+            </tr>
+            <tr v-if="!llm.models.length"><td colspan="7">暂无自定义模型，使用系统默认</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="adv-panel" v-if="active==='account'">
+    <div class="panel-head">
+      <div><b>账号资料</b><small>[[ user.email ]]</small></div>
+      <button type="button" class="btn ghost" @click="toggleAdvanced('account')">[[ advancedOpen.account ? '收起配置' : '展开配置' ]]</button>
+    </div>
+    <div v-show="advancedOpen.account">
+      <form class="inline-form" @submit.prevent="saveProfile">
+        <input class="tinput" v-model="profileName" placeholder="显示名称">
+        <button type="submit" class="btn primary">保存名称</button>
+      </form>
+      <form class="password-form" @submit.prevent="changePassword">
+        <input class="tinput" v-model="password.old_password" type="password" placeholder="旧密码">
+        <input class="tinput" v-model="password.new_password" type="password" placeholder="新密码">
+        <input class="tinput" v-model="password.confirm_password" type="password" placeholder="确认新密码">
+        <button type="submit" class="btn primary">更新密码</button>
+      </form>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <button type="submit" class="btn ghost">退出登录</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="adv-panel" v-if="active==='debug'">
+    <div class="panel-head">
+      <div><b>开发者调试</b><small>设备、LLM、TTS 和模拟器都在本页执行</small></div>
+      <div class="btngroup">
+        <button type="button" class="btn ghost" @click="toggleAdvanced('debug')">[[ advancedOpen.debug ? '收起配置' : '展开配置' ]]</button>
+        <select v-model="currentDeviceId" @change="switchDevice">
+          <option value="">选择设备</option>
+          <option v-for="d in devices" :key="d.device_id" :value="d.device_id">[[ d.display_name ]] · [[ d.device_id ]]</option>
+        </select>
+      </div>
+    </div>
+
+    <div v-show="advancedOpen.debug">
+      <div class="debug-subtabs">
+        <button type="button" :class="{on: debugMode==='devices'}" @click="setDebugMode('devices')">设备</button>
+        <button type="button" :class="{on: debugMode==='llm'}" @click="setDebugMode('llm')">LLM</button>
+        <button type="button" :class="{on: debugMode==='tts'}" @click="setDebugMode('tts')">TTS</button>
+        <button type="button" :class="{on: debugMode==='sim'}" @click="setDebugMode('sim')">模拟器</button>
+      </div>
+
+      <section v-if="debugMode==='devices'">
+      <div class="debug-actionbar">
+        <button type="button" class="btn primary" @click="runDebugHealth">刷新状态</button>
+        <button type="button" class="btn ghost" @click="issueDebugToken">签发调试令牌</button>
+        <button type="button" class="btn ghost" @click="copyDebugToken" :disabled="!debug.token">复制令牌</button>
+      </div>
+      <div class="metric-grid" v-if="debug.health">
+        <div class="metric"><span>DESKBOT</span><b>[[ debug.health.deskbot_server ? '在线' : '离线' ]]</b><small>[[ debug.health.deskbot_target ]]</small></div>
+        <div class="metric"><span>TTS SERVER</span><b>[[ debug.health.tts_server ? '在线' : '离线' ]]</b><small>[[ debug.health.tts_target ]]</small></div>
+        <div class="metric accent"><span>当前设备</span><b>[[ currentDeviceId || '未选择' ]]</b><small>[[ devices.length ]] 台已绑定</small></div>
+      </div>
+      <div class="new-key-box" v-if="debug.token">
+        <span>调试令牌</span>
+        <code>[[ debug.token ]]</code>
+      </div>
+      </section>
+
+      <section v-if="debugMode==='llm'">
+      <div class="debug-actionbar">
+        <button type="button" class="btn ghost" @click="loadDebugSystemPrompt">读取 Prompt</button>
+        <button type="button" class="btn ghost" @click="saveDebugSystemPrompt" :disabled="!currentDeviceId">保存 Prompt</button>
+        <button type="button" class="btn primary" @click="runDebugLlm">运行 LLM 测试</button>
+      </div>
+      <textarea class="tinput debug-textarea" v-model="debug.systemPrompt" placeholder="系统 Prompt"></textarea>
+      <div class="inline-form debug-inline">
+        <input class="tinput" v-model="debug.llmText" placeholder="测试输入">
+        <button type="button" class="btn primary" @click="runDebugLlm">发送</button>
+      </div>
+      <div class="debug-output" v-if="debug.llmResult">
+        <b>[[ debug.llmResult.reply || debug.llmResult.error || '无回复' ]]</b>
+        <small v-if="debug.llmResult.model">[[ debug.llmResult.model_display_name || debug.llmResult.model ]] · [[ debug.llmResult.elapsed_ms ]] ms</small>
+        <pre>[[ json(debug.llmResult) ]]</pre>
+      </div>
+      </section>
+
+      <section v-if="debugMode==='tts'">
+      <div class="debug-actionbar">
+        <button type="button" class="btn ghost" @click="loadDebugTts">读取配置</button>
+        <button type="button" class="btn ghost" @click="saveDebugTtsConfig">保存配置</button>
+        <button type="button" class="btn primary" @click="runDebugTts">试听 TTS</button>
+      </div>
+      <div class="llm-form">
+        <input class="tinput" v-model="debug.tts.api_key" type="password" :placeholder="debug.tts.api_key_set ? 'API Key 已配置，留空不修改' : 'DOUBAO_TTS_API_KEY'">
+        <select v-model="debug.tts.speaker" @change="syncDebugTtsSpeaker">
+          <option value="">选择音色</option>
+          <option v-for="s in debug.ttsSpeakers" :key="s.id" :value="s.id">[[ s.label ]] · [[ s.scene ]]</option>
+        </select>
+        <input class="tinput" v-model="debug.tts.resource_id" placeholder="Resource ID">
+        <input class="tinput" v-model="debug.tts.model" placeholder="模型">
+      </div>
+      <div class="inline-form debug-inline">
+        <input class="tinput" v-model="debug.ttsText" placeholder="试听文本">
+        <button type="button" class="btn primary" @click="runDebugTts">试听</button>
+      </div>
+      <audio ref="debugTtsAudio" class="debug-audio" controls preload="none" :src="debug.ttsAudioUrl"></audio>
+      <div class="debug-output" v-if="debug.ttsResult">
+        <b>[[ debug.ttsResult.error || ('合成完成 · ' + fmtBytes(debug.ttsResult.pcm_total_bytes || 0)) ]]</b>
+        <small v-if="debug.ttsResult.elapsed_ms">[[ debug.ttsResult.elapsed_ms ]] ms · [[ debug.ttsResult.speaker ]]</small>
+      </div>
+      </section>
+
+      <section v-if="debugMode==='sim'">
+      <div class="debug-actionbar">
+        <button type="button" class="btn primary" @click="runDebugSimulation">运行模拟器</button>
+      </div>
+      <div class="inline-form debug-inline">
+        <input class="tinput" v-model="debug.simText" placeholder="模拟文本">
+        <input class="tinput short" v-model.number="debug.simSpkId" type="number" min="0" placeholder="spk">
+        <button type="button" class="btn primary" @click="runDebugSimulation">合成音素</button>
+      </div>
+      <audio ref="debugSimAudio" class="debug-audio" controls preload="none" :src="debug.simAudioUrl"></audio>
+      <div class="debug-output" v-if="debug.simResult">
+        <b>[[ debug.simResult.error || ('音素段 ' + ((debug.simResult.segments || []).length) + ' 个') ]]</b>
+        <small v-if="debug.simResult.ws_url_used">[[ debug.simResult.ws_url_used ]]</small>
+        <pre>[[ json(debug.simResult.segments || debug.simResult) ]]</pre>
+      </div>
+      </section>
+    </div>
+  </div>
+
+  <p class="lead" v-if="msg">[[ msg ]]</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({
+  delimiters:['[[',']]'],
+  data(){ return {
+    active:'usage', debugMode:'devices', msg:'', loading:false,
+    user:{email:'',display_name:''}, profileName:'',
+    password:{old_password:'',new_password:'',confirm_password:''},
+    devices:[], currentDeviceId:'',
+    advancedOpen:{keys:false,llm:false,account:false,debug:false},
+    usage:{today:{}, fourteen_day:{}, today_by_device:[]},
+    apiKeys:[], newKeyName:'', rawKey:'',
+    llm:{protocols:['openai'], models:[], active_model_id:null, active:null, system_default:null, error:''},
+    editingModelId:'',
+    llmForm:{name:'', model_name:'', protocol:'openai', base_url:'', api_key:''},
+    debug:{
+      health:null, token:'', tokenExpires:0,
+      systemPrompt:'', llmText:'你好，做一个简短自检。', llmResult:null,
+      ttsSpeakers:[], ttsText:'你好，我是小歪调试台。', ttsResult:null, ttsAudioUrl:'',
+      tts:{api_key:'', api_key_set:false, speaker:'', resource_id:'seed-tts-2.0', model:'seed-tts-2.0-expressive', ws_url:'wss://openspeech.bytedance.com/api/v3/tts/bidirection', sample_rate:24000, audio_format:'pcm'},
+      simText:'你好，我是小歪模拟器。', simSpkId:0, simResult:null, simAudioUrl:'',
+    },
+  }; },
+  methods:{
+    toggleAdvanced(key){
+      this.advancedOpen[key]=!this.advancedOpen[key];
+      if(key==='debug' && this.advancedOpen.debug) this.prepareDebug();
+    },
+    setActive(tab){
+      this.active=tab;
+      this.msg='';
+      if(tab==='debug' && this.advancedOpen.debug) this.prepareDebug();
+    },
+    setDebugMode(mode){
+      this.debugMode=mode;
+      this.msg='';
+      if(mode==='devices') this.runDebugHealth();
+      if(mode==='llm') this.loadDebugSystemPrompt();
+      if(mode==='tts') this.loadDebugTts();
+    },
+    json(value){ return JSON.stringify(value || {}, null, 2); },
+    fmtBytes(n){
+      n=Number(n)||0;
+      if(n>=1073741824) return (n/1073741824).toFixed(2)+' GB';
+      if(n>=1048576) return (n/1048576).toFixed(1)+' MB';
+      if(n>=1024) return (n/1024).toFixed(1)+' KB';
+      return n+' B';
+    },
+    async api(url, opts){
+      const r=await fetch(url, opts||{});
+      const d=await r.json().catch(()=>({ok:false,error:'响应解析失败'}));
+      if(!r.ok || d.ok===false) throw new Error(d.error||('HTTP '+r.status));
+      return d;
+    },
+    applyPayload(d){
+      this.user=d.user||this.user;
+      this.profileName=this.user.display_name||'';
+      this.devices=d.devices||[];
+      this.currentDeviceId=d.current_device_id||'';
+      this.usage=d.usage||this.usage;
+      this.apiKeys=d.api_keys||[];
+      this.llm=Object.assign({protocols:['openai'],models:[]}, d.llm||{});
+      if(!this.llmForm.protocol) this.llmForm.protocol=(this.llm.protocols&&this.llm.protocols[0])||'openai';
+    },
+    async load(){
+      this.loading=true; this.msg='';
+      try{ this.applyPayload(await this.api('/api/advanced')); }
+      catch(e){ this.msg=e.message||'加载失败'; }
+      finally{ this.loading=false; }
+    },
+    async saveProfile(){
+      try{
+        const d=await this.api('/api/advanced/profile',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({display_name:this.profileName})});
+        this.user=d.user; this.profileName=d.user.display_name||''; this.msg='名称已保存';
+      }catch(e){ this.msg=e.message||'保存失败'; }
+    },
+    async changePassword(){
+      try{
+        await this.api('/api/advanced/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.password)});
+        this.password={old_password:'',new_password:'',confirm_password:''}; this.msg='密码已更新';
+      }catch(e){ this.msg=e.message||'更新失败'; }
+    },
+    async createApiKey(){
+      try{
+        const d=await this.api('/api/advanced/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:this.newKeyName||'default'})});
+        this.rawKey=d.raw_key; this.newKeyName=''; await this.load(); this.active='keys'; this.msg='API Key 已生成';
+      }catch(e){ this.msg=e.message||'生成失败'; }
+    },
+    async revokeApiKey(k){
+      if(!confirm('确定吊销这个 API Key？')) return;
+      try{ await this.api('/api/advanced/api-keys/'+encodeURIComponent(k.id),{method:'DELETE'}); await this.load(); this.active='keys'; this.msg='API Key 已吊销'; }
+      catch(e){ this.msg=e.message||'吊销失败'; }
+    },
+    async copyRawKey(){
+      try{ await navigator.clipboard.writeText(this.rawKey); this.msg='已复制 API Key'; }
+      catch(_){ this.msg='复制失败，请手动选择复制'; }
+    },
+    async switchDevice(){
+      try{
+        await this.api('/app/api/devices/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:this.currentDeviceId||null})});
+        this.resetLlmForm(); await this.load(); this.active='llm';
+      }catch(e){ this.msg=e.message||'切换失败'; }
+    },
+    resetLlmForm(){
+      this.editingModelId='';
+      this.llmForm={name:'',model_name:'',protocol:(this.llm.protocols&&this.llm.protocols[0])||'openai',base_url:'',api_key:''};
+    },
+    editLlmModel(m){
+      this.editingModelId=m.id;
+      this.llmForm={name:m.name||'',model_name:m.model_name||'',protocol:m.protocol||'openai',base_url:m.base_url||'',api_key:''};
+    },
+    async saveLlmModel(){
+      if(!this.currentDeviceId){ this.msg='请先选择设备'; return; }
+      const payload=Object.assign({}, this.llmForm);
+      if(this.editingModelId && !payload.api_key) delete payload.api_key;
+      try{
+        const url=this.editingModelId ? '/app/api/llm-models/'+encodeURIComponent(this.editingModelId)+'?device_id='+encodeURIComponent(this.currentDeviceId) : '/app/api/llm-models?device_id='+encodeURIComponent(this.currentDeviceId);
+        const method=this.editingModelId ? 'PUT' : 'POST';
+        await this.api(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        this.resetLlmForm(); await this.load(); this.active='llm'; this.msg='模型已保存';
+      }catch(e){ this.msg=e.message||'保存失败'; }
+    },
+    async selectLlmModel(m){
+      try{
+        await this.api('/app/api/llm-models/select?device_id='+encodeURIComponent(this.currentDeviceId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:m.id})});
+        await this.load(); this.active='llm'; this.msg='已设为当前模型';
+      }catch(e){ this.msg=e.message||'操作失败'; }
+    },
+    async useSystemModel(){
+      if(!this.currentDeviceId){ this.msg='请先选择设备'; return; }
+      try{
+        await this.api('/app/api/llm-models/select?device_id='+encodeURIComponent(this.currentDeviceId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:null})});
+        await this.load(); this.active='llm'; this.msg='已切回系统默认';
+      }catch(e){ this.msg=e.message||'操作失败'; }
+    },
+    async deleteLlmModel(m){
+      if(!confirm('确定删除这个模型？')) return;
+      try{
+        await this.api('/app/api/llm-models/'+encodeURIComponent(m.id)+'?device_id='+encodeURIComponent(this.currentDeviceId),{method:'DELETE'});
+        await this.load(); this.active='llm'; this.msg='模型已删除';
+      }catch(e){ this.msg=e.message||'删除失败'; }
+    },
+    async prepareDebug(){
+      if(this.debugMode==='devices') await this.runDebugHealth();
+      if(this.debugMode==='llm') await this.loadDebugSystemPrompt();
+      if(this.debugMode==='tts') await this.loadDebugTts();
+    },
+    async runDebugHealth(){
+      try{ this.debug.health=await this.api('/api/health'); }
+      catch(e){ this.msg=e.message||'状态刷新失败'; }
+    },
+    async issueDebugToken(){
+      try{
+        const d=await this.api('/api/debug/ws_token');
+        this.debug.token=d.token||'';
+        this.debug.tokenExpires=d.expires_in||0;
+        this.msg='调试令牌已签发';
+      }catch(e){ this.msg=e.message||'令牌签发失败'; }
+    },
+    async copyDebugToken(){
+      try{ await navigator.clipboard.writeText(this.debug.token); this.msg='调试令牌已复制'; }
+      catch(_){ this.msg='复制失败，请手动选择复制'; }
+    },
+    async loadDebugSystemPrompt(){
+      if(!this.currentDeviceId){ this.debug.systemPrompt=''; return; }
+      try{
+        const d=await this.api('/api/llm/system_prompt?device_id='+encodeURIComponent(this.currentDeviceId));
+        this.debug.systemPrompt=d.system_prompt||'';
+      }catch(e){ this.msg=e.message||'Prompt 读取失败'; }
+    },
+    async saveDebugSystemPrompt(){
+      if(!this.currentDeviceId){ this.msg='请先选择设备'; return; }
+      try{
+        await this.api('/api/llm/system_prompt?device_id='+encodeURIComponent(this.currentDeviceId),{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({system_prompt:this.debug.systemPrompt})
+        });
+        this.msg='Prompt 已保存';
+      }catch(e){ this.msg=e.message||'Prompt 保存失败'; }
+    },
+    async runDebugLlm(){
+      try{
+        this.debug.llmResult=await this.api('/api/llm/chat',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({device_id:this.currentDeviceId||'', text:this.debug.llmText, system_prompt:this.debug.systemPrompt})
+        });
+      }catch(e){
+        this.debug.llmResult={ok:false,error:e.message||'LLM 测试失败'};
+      }
+    },
+    applyDebugTtsConfig(config){
+      this.debug.tts=Object.assign({}, this.debug.tts, config || {}, {api_key:''});
+      if(!this.debug.tts.resource_id) this.debug.tts.resource_id='seed-tts-2.0';
+      if(!this.debug.tts.model) this.debug.tts.model='seed-tts-2.0-expressive';
+      if(!this.debug.tts.ws_url) this.debug.tts.ws_url='wss://openspeech.bytedance.com/api/v3/tts/bidirection';
+      if(!this.debug.tts.sample_rate) this.debug.tts.sample_rate=24000;
+      if(!this.debug.tts.audio_format) this.debug.tts.audio_format='pcm';
+    },
+    async loadDebugTts(){
+      try{
+        const speakers=await this.api('/api/doubao_tts/speakers');
+        this.debug.ttsSpeakers=speakers.speakers||[];
+        const cfg=await this.api('/api/doubao_tts/config');
+        this.applyDebugTtsConfig(cfg.config||{});
+      }catch(e){ this.msg=e.message||'TTS 配置读取失败'; }
+    },
+    syncDebugTtsSpeaker(){
+      const s=(this.debug.ttsSpeakers||[]).find(x=>x.id===this.debug.tts.speaker);
+      if(s && s.resource_id) this.debug.tts.resource_id=s.resource_id;
+    },
+    async saveDebugTtsConfig(){
+      try{
+        const d=await this.api('/api/doubao_tts/config',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(this.debug.tts)
+        });
+        this.applyDebugTtsConfig(d.config||{});
+        this.msg='TTS 配置已保存';
+      }catch(e){ this.msg=e.message||'TTS 配置保存失败'; }
+    },
+    revokeDebugAudio(key){
+      const url=this.debug[key];
+      if(url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+      this.debug[key]='';
+    },
+    async setDebugAudio(refName, key, wavBase64){
+      this.revokeDebugAudio(key);
+      const bin=Uint8Array.from(atob(wavBase64), c=>c.charCodeAt(0));
+      this.debug[key]=URL.createObjectURL(new Blob([bin], {type:'audio/wav'}));
+      await this.$nextTick();
+      const a=this.$refs[refName];
+      if(a){ a.load(); try{ await a.play(); }catch(_){} }
+    },
+    async runDebugTts(){
+      try{
+        this.debug.ttsResult=await this.api('/api/doubao_tts/synthesize',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(Object.assign({}, this.debug.tts, {text:this.debug.ttsText}))
+        });
+        if(this.debug.ttsResult.wav_base64) await this.setDebugAudio('debugTtsAudio', 'ttsAudioUrl', this.debug.ttsResult.wav_base64);
+      }catch(e){
+        this.debug.ttsResult={ok:false,error:e.message||'TTS 试听失败'};
+      }
+    },
+    async runDebugSimulation(){
+      try{
+        this.debug.simResult=await this.api('/api/paddlespeech/phoneme_tts',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({text:this.debug.simText, spk_id:this.debug.simSpkId})
+        });
+        if(this.debug.simResult.wav_base64) await this.setDebugAudio('debugSimAudio', 'simAudioUrl', this.debug.simResult.wav_base64);
+      }catch(e){
+        this.debug.simResult={ok:false,error:e.message||'模拟器运行失败'};
+      }
+    },
+  },
+  mounted(){ this.load(); },
+  beforeUnmount(){ this.revokeDebugAudio('ttsAudioUrl'); this.revokeDebugAudio('simAudioUrl'); },
+}).mount('#advancedApp');
+</script>
 {% endblock %}
