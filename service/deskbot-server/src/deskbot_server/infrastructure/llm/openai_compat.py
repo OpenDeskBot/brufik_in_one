@@ -11,7 +11,7 @@ except ImportError:
     ZoneInfo = None  # type: ignore[misc, assignment]
 
 from deskbot_server.core.settings import AppSettings
-from deskbot_server.llm.runtime import litellm_acompletion
+from deskbot_server.llm.runtime import chat_acompletion
 from deskbot_server.llm.user_message import build_llm_user_message
 from deskbot_server.llm.utils import (
     llm_device_screen_appendix,
@@ -24,7 +24,7 @@ logger = logging.getLogger("deskbot-server")
 
 
 class OpenAiLlmAdapter:
-    """LiteLLM 适配器：支持设备级模型配置，未设置时回退系统默认。"""
+    """OpenAI-compatible 适配器：支持设备级模型配置，未设置时回退系统默认。"""
 
     def __init__(self, settings: AppSettings) -> None:
         self._settings = settings
@@ -92,7 +92,7 @@ class OpenAiLlmAdapter:
             json_mode: bool = True,
             stream_tts: bool = False,
         ) -> str:
-            content, _meta = await litellm_acompletion(
+            content, _meta = await chat_acompletion(
                 msgs,
                 device_id=device_id,
                 temperature=0.7,

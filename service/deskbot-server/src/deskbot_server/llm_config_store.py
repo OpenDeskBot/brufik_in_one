@@ -12,7 +12,11 @@ from deskbot_server.device_data import device_data_dir
 LLM_MODELS_FILENAME = "llm_models.json"
 
 SUPPORTED_PROTOCOLS = (
+    "ark",
+    "doubao",
+    "volcengine",
     "openai",
+    "dashscope",
     "anthropic",
     "azure",
     "gemini",

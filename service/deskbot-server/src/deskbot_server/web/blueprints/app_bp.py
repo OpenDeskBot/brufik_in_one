@@ -49,8 +49,8 @@ from deskbot_server.llm_config_store import (
 )
 from deskbot_server.llm.runtime import (
     ResolvedLlmConfig,
-    build_litellm_model,
-    litellm_completion,
+    build_chat_model,
+    chat_completion,
     resolve_llm_config,
     resolve_system_llm_config,
 )
@@ -788,14 +788,14 @@ def api_test_llm_model():
 
     try:
         config = ResolvedLlmConfig(
-            model=build_litellm_model(protocol, model_name),
+            model=build_chat_model(protocol, model_name),
             api_key=api_key,
             api_base=base_url or None,
             protocol=protocol,
             source="test",
             display_name=name or model_name,
         )
-        reply, meta = litellm_completion(
+        reply, meta = chat_completion(
             [{"role": "user", "content": prompt}],
             config=config,
             json_mode=False,

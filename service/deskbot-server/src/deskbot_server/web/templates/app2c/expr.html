@@ -600,7 +600,7 @@ createApp({
         const scene = await this.save({silent:true});
         if(!scene || !scene.name){ this.msg='表情保存失败，未发送'; return; }
         const q = '?device_id=' + encodeURIComponent(this.deviceId) + '&scene=' + encodeURIComponent(scene.name);
-        const r = await (await fetch('/api/device_pb_expr_scene' + q)).json();
+        const r = await (await fetch('/proxy/deskbot/api/device_pb_expr_scene' + q)).json();
         this.msg = r.ok ? '已发送到设备预览' : ('设备预览失败：' + (r.error || r.hint || '设备未在线'));
       }catch(e){
         this.msg = '设备预览失败：' + (e && e.message ? e.message : e);

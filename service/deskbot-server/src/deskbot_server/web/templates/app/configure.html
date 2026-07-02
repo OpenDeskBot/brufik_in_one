@@ -40,7 +40,7 @@
       </div>
       <div>
         <label for="llmModelName">模型 ID</label>
-        <input id="llmModelName" class="agent-input" value="{{ llm_form.model_name }}" placeholder="qwen-flash" required />
+        <input id="llmModelName" class="agent-input" value="{{ llm_form.model_name }}" placeholder="ep-xxxxxxxx 或 doubao 模型 ID" required />
       </div>
       <div>
         <label for="llmProtocol">协议</label>
@@ -52,11 +52,11 @@
       </div>
       <div>
         <label for="llmBaseUrl">Base URL</label>
-        <input id="llmBaseUrl" class="agent-input" value="{{ llm_form.base_url }}" placeholder="https://..." />
+        <input id="llmBaseUrl" class="agent-input" value="{{ llm_form.base_url }}" placeholder="默认：https://ark.cn-beijing.volces.com/api/v3" />
       </div>
       <div style="grid-column:1 / -1;">
         <label for="llmApiKey">API Key</label>
-        <input id="llmApiKey" class="agent-input" type="password" placeholder="{% if llm_form.api_key_set %}留空则不修改{% else %}sk-...{% endif %}" autocomplete="off" />
+        <input id="llmApiKey" class="agent-input" type="password" placeholder="{% if llm_form.api_key_set %}留空则不修改{% else %}ARK_API_KEY{% endif %}" autocomplete="off" />
       </div>
       <div style="grid-column:1 / -1;">
         <label for="llmTestPrompt">测试 Prompt</label>

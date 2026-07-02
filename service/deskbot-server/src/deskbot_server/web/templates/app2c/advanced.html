@@ -104,13 +104,13 @@
 
     <div v-show="advancedOpen.llm">
       <form class="llm-form" @submit.prevent="saveLlmModel">
-        <input class="tinput" v-model="llmForm.name" placeholder="显示名称">
-        <input class="tinput" v-model="llmForm.model_name" placeholder="模型 ID，例如 qwen-flash">
+        <input class="tinput" v-model="llmForm.name" placeholder="显示名称，例如 火山方舟 豆包">
+        <input class="tinput" v-model="llmForm.model_name" placeholder="模型 ID，例如 ep-xxxxxxxx">
         <select v-model="llmForm.protocol">
           <option v-for="p in llm.protocols" :key="p" :value="p">[[ p ]]</option>
         </select>
-        <input class="tinput" v-model="llmForm.base_url" placeholder="Base URL，可留空">
-        <input class="tinput" v-model="llmForm.api_key" type="password" :placeholder="editingModelId ? 'API Key 留空则不修改' : 'API Key'">
+        <input class="tinput" v-model="llmForm.base_url" placeholder="Base URL，Ark 可留空">
+        <input class="tinput" v-model="llmForm.api_key" type="password" :placeholder="editingModelId ? 'API Key 留空则不修改' : 'ARK_API_KEY'">
         <div class="btngroup">
           <button type="submit" class="btn primary">[[ editingModelId ? '保存模型' : '添加模型' ]]</button>
           <button type="button" class="btn ghost" v-if="editingModelId" @click="resetLlmForm">取消编辑</button>
@@ -281,9 +281,9 @@ createApp({
     advancedOpen:{keys:false,llm:false,account:false,debug:false},
     usage:{today:{}, fourteen_day:{}, today_by_device:[]},
     apiKeys:[], newKeyName:'', rawKey:'',
-    llm:{protocols:['openai'], models:[], active_model_id:null, active:null, system_default:null, error:''},
+    llm:{protocols:['ark','openai'], models:[], active_model_id:null, active:null, system_default:null, error:''},
     editingModelId:'',
-    llmForm:{name:'', model_name:'', protocol:'openai', base_url:'', api_key:''},
+    llmForm:{name:'', model_name:'', protocol:'ark', base_url:'', api_key:''},
     debug:{
       health:null, token:'', tokenExpires:0,
       systemPrompt:'', llmText:'你好，做一个简短自检。', llmResult:null,
@@ -330,8 +330,8 @@ createApp({
       this.currentDeviceId=d.current_device_id||'';
       this.usage=d.usage||this.usage;
       this.apiKeys=d.api_keys||[];
-      this.llm=Object.assign({protocols:['openai'],models:[]}, d.llm||{});
-      if(!this.llmForm.protocol) this.llmForm.protocol=(this.llm.protocols&&this.llm.protocols[0])||'openai';
+      this.llm=Object.assign({protocols:['ark','openai'],models:[]}, d.llm||{});
+      if(!this.llmForm.protocol) this.llmForm.protocol=(this.llm.protocols&&this.llm.protocols[0])||'ark';
     },
     async load(){
       this.loading=true; this.msg='';
@@ -374,11 +374,11 @@ createApp({
     },
     resetLlmForm(){
       this.editingModelId='';
-      this.llmForm={name:'',model_name:'',protocol:(this.llm.protocols&&this.llm.protocols[0])||'openai',base_url:'',api_key:''};
+      this.llmForm={name:'',model_name:'',protocol:(this.llm.protocols&&this.llm.protocols[0])||'ark',base_url:'',api_key:''};
     },
     editLlmModel(m){
       this.editingModelId=m.id;
-      this.llmForm={name:m.name||'',model_name:m.model_name||'',protocol:m.protocol||'openai',base_url:m.base_url||'',api_key:''};
+      this.llmForm={name:m.name||'',model_name:m.model_name||'',protocol:m.protocol||'ark',base_url:m.base_url||'',api_key:''};
     },
     async saveLlmModel(){
       if(!this.currentDeviceId){ this.msg='请先选择设备'; return; }
@@ -515,7 +515,7 @@ createApp({
     },
     async runDebugSimulation(){
       try{
-        this.debug.simResult=await this.api('/api/paddlespeech/phoneme_tts',{
+        this.debug.simResult=await this.api('/api/tts/phoneme_tts',{
           method:'POST', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({text:this.debug.simText, spk_id:this.debug.simSpkId})
         });

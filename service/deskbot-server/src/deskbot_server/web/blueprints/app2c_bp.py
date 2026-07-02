@@ -18,6 +18,14 @@ from deskbot_server.emotion_expr_map_store import (
     load_emotion_expr_map,
     save_emotion_expr_map,
 )
+from deskbot_server.face_expr_scenes_store import (
+    load_face_expr_scenes_file,
+    save_face_expr_scenes_file,
+)
+from deskbot_server.face_mouth_config_store import (
+    load_face_mouth_cfg_file,
+    save_face_mouth_cfg_file,
+)
 from deskbot_server.llm.runtime import resolve_llm_config, resolve_system_llm_config
 from deskbot_server.llm_config_store import (
     SUPPORTED_PROTOCOLS,
@@ -229,7 +237,13 @@ def advanced_api_key_delete(key_id: str):
 
 
 def _owned_device_or_error():
-    device_id = (request.args.get("device_id") or get_current_device_id() or "").strip()
+    device_id = (request.args.get("device_id") or "").strip()
+    if not device_id and request.is_json:
+        payload = request.get_json(silent=True) or {}
+        if isinstance(payload, dict):
+            device_id = str(payload.get("device_id") or "").strip()
+    if not device_id:
+        device_id = (get_current_device_id() or "").strip()
     if not device_id:
         return None, (jsonify({"ok": False, "error": "请先选择设备"}), 400)
     if not user_owns_device(current_user.id, device_id):
@@ -261,3 +275,69 @@ def emotion_expr_map_post():
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify({"ok": True, "map": saved})
+
+
+@bp.get("/api/face_expr_scenes")
+@login_required
+def face_expr_scenes_get():
+    device_id, err = _owned_device_or_error()
+    if err:
+        return err
+    try:
+        rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id) or []
+    except (FileNotFoundError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "device_id": device_id, "config": rows})
+
+
+@bp.post("/api/face_expr_scenes")
+@login_required
+def face_expr_scenes_post():
+    device_id, err = _owned_device_or_error()
+    if err:
+        return err
+    payload = request.get_json(silent=True) or {}
+    scenes = payload.get("scenes")
+    if scenes is None:
+        scenes = payload.get("config")
+    if not isinstance(scenes, list):
+        return jsonify({"ok": False, "error": "scenes 必须是数组"}), 400
+    try:
+        saved = save_face_expr_scenes_file(scenes, device_id=device_id)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "device_id": device_id, "config": saved})
+
+
+@bp.get("/api/face_mouth_by_phoneme")
+@login_required
+def face_mouth_by_phoneme_get():
+    device_id, err = _owned_device_or_error()
+    if err:
+        return err
+    try:
+        groups = load_face_mouth_cfg_file(seed_if_missing=True, device_id=device_id) or []
+    except (FileNotFoundError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "device_id": device_id, "mouth_by_phoneme_groups": groups})
+
+
+@bp.post("/api/face_mouth_by_phoneme")
+@login_required
+def face_mouth_by_phoneme_post():
+    device_id, err = _owned_device_or_error()
+    if err:
+        return err
+    payload = request.get_json(silent=True) or {}
+    groups = payload.get("mouth_by_phoneme_groups")
+    if not isinstance(groups, list):
+        return jsonify({"ok": False, "error": "mouth_by_phoneme_groups 必须是数组"}), 400
+    try:
+        save_face_mouth_cfg_file(groups, device_id=device_id)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "device_id": device_id, "mouth_by_phoneme_groups": groups})

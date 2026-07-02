@@ -71,7 +71,7 @@ def test_api_test_llm_returns_429_when_quota_exhausted(temp_db, monkeypatch):
         return "ok", {"model": "test", "display_name": "test", "usage": {}}
 
     monkeypatch.setattr(
-        "deskbot_server.web.blueprints.app_bp.litellm_completion",
+        "deskbot_server.web.blueprints.app_bp.chat_completion",
         fake_completion,
     )
 

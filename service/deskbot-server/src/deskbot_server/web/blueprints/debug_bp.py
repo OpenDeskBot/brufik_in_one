@@ -57,10 +57,29 @@ bp = Blueprint("debug", __name__)
 logger = logging.getLogger("deskbot-server")
 
 
+_CONSUMER_API_PATHS = frozenset(
+    {
+        "/api/debug/ws_token",
+        "/api/face_design/generate",
+        "/api/health",
+        "/api/llm/chat",
+        "/api/llm/system_prompt",
+        "/api/tts/phoneme_tts",
+    }
+)
+_CONSUMER_API_PREFIXES = ("/api/doubao_tts/",)
+
+
+def _is_consumer_api(path: str) -> bool:
+    return path in _CONSUMER_API_PATHS or any(path.startswith(p) for p in _CONSUMER_API_PREFIXES)
+
+
 @bp.before_request
 def _require_developer_for_debug():
     path = request.path or ""
     if path == "/health":
+        return None
+    if _is_consumer_api(path):
         return None
     if not current_user.is_authenticated:
         return None
@@ -507,7 +526,7 @@ def llm_chat():
             jsonify(
                 {
                     "ok": False,
-                    "error": "LLM API Key 未配置（设备 LLM 管理或环境变量 LLM_API_KEY / DASHSCOPE_API_KEY）",
+                    "error": "LLM API Key 未配置（设备 LLM 管理或环境变量 LLM_API_KEY / ARK_API_KEY / VOLCENGINE_API_KEY / DASHSCOPE_API_KEY）",
                 }
             ),
             400,
@@ -565,13 +584,10 @@ def llm_chat():
     )
 
     try:
-        from deskbot_server.llm.runtime import litellm_completion
-    except Exception as exc:  # pragma: no cover
-        return jsonify({"ok": False, "error": f"litellm 未安装: {exc}"}), 500
+        from deskbot_server.llm.runtime import chat_completion
 
-    try:
         t0 = time.monotonic()
-        raw, meta = litellm_completion(
+        raw, meta = chat_completion(
             messages,
             device_id=debug_device_id or None,
             temperature=float(payload.get("temperature", 0.7)),
@@ -694,10 +710,10 @@ def api_face_design_generate():
     )
 
     try:
-        from deskbot_server.llm.runtime import litellm_completion
+        from deskbot_server.llm.runtime import chat_completion
 
         t0 = time.monotonic()
-        raw, meta = litellm_completion(
+        raw, meta = chat_completion(
             [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
             device_id=device_id,
             temperature=temperature,

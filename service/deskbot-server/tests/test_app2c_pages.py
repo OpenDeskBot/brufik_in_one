@@ -318,6 +318,74 @@ def test_2c_expr_page_exposes_professional_design_tab(temp_db):
     assert "/api/face_mouth_by_phoneme" in html
 
 
+def test_2c_face_config_apis_are_available_to_regular_user(
+    temp_db, tmp_path, monkeypatch
+):
+    import json
+
+    from deskbot_server.auth.device_service import bind_device
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", tmp_path)
+    monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", tmp_path / "device")
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    (global_dir / "deskbot-face.json").write_text(
+        json.dumps({"name": "qa", "phonemes": [], "emotions": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    from deskbot_server.face_design_store import clear_face_design_cache
+
+    clear_face_design_cache()
+    create_user("face-admin2c@example.com", "password1234")
+    user = create_user("face-member2c@example.com", "password1234")
+    bind_device(user.id, "deskbot_face_api")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "face-member2c@example.com", "password": "password1234"})
+    client.post("/app/api/devices/select", json={"device_id": "deskbot_face_api"})
+
+    get_scenes = client.get("/api/face_expr_scenes")
+    assert get_scenes.status_code == 200
+    assert get_scenes.get_json()["ok"] is True
+
+    scene = {
+        "name": "happy",
+        "title": "开心",
+        "frames": [
+            {
+                "ms": 300,
+                "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []},
+            }
+        ],
+    }
+    save_scenes = client.post(
+        "/api/face_expr_scenes",
+        json={"device_id": "deskbot_face_api", "scenes": [scene]},
+    )
+    assert save_scenes.status_code == 200
+    assert save_scenes.get_json()["config"][0]["name"] == "happy"
+
+    save_mouth = client.post(
+        "/api/face_mouth_by_phoneme",
+        json={
+            "device_id": "deskbot_face_api",
+            "mouth_by_phoneme_groups": [
+                {
+                    "states": ["a"],
+                    "elements": [
+                        {"shape": "round_rect_outline", "x": 112, "y": 148, "w": 60, "h": 28}
+                    ],
+                    "offset": {"x": 0, "y": 0},
+                }
+            ],
+        },
+    )
+    assert save_mouth.status_code == 200
+    assert save_mouth.get_json()["mouth_by_phoneme_groups"][0]["states"] == ["a"]
+
+
 def test_2c_advanced_keeps_heavy_features_collapsed(temp_db):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
@@ -339,6 +407,70 @@ def test_2c_advanced_keeps_heavy_features_collapsed(temp_db):
     assert "v-show=\"advancedOpen.debug\"" in html
     assert "展开配置" in html
     assert "收起配置" in html
+    assert "/api/tts/phoneme_tts" in html
+    assert "/api/paddlespeech/phoneme_tts" not in html
+
+
+def test_2c_consumer_apis_are_not_developer_locked(temp_db, monkeypatch):
+    from deskbot_server.auth.device_service import bind_device
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    def fake_completion(messages, *, device_id=None, temperature=0.7, config=None, json_mode=True):
+        return (
+            '{"name":"friendly","phonemes":[],"emotions":[{"name":"happy","title":"开心",'
+            '"frames":[{"ms":300,"elements":{"mouth":[]}}]}]}',
+            {"model": "openai/test", "source": "device", "display_name": "Test LLM"},
+        )
+
+    monkeypatch.setattr("deskbot_server.llm.runtime.chat_completion", fake_completion)
+    create_user("consumer-admin2c@example.com", "password1234")
+    user = create_user("consumer-member2c@example.com", "password1234")
+    bind_device(user.id, "deskbot_consumer_api")
+    app = create_app()
+    client = app.test_client()
+    client.post(
+        "/login",
+        data={"email": "consumer-member2c@example.com", "password": "password1234"},
+    )
+    client.post("/app/api/devices/select", json={"device_id": "deskbot_consumer_api"})
+
+    assert client.get("/api/health").status_code == 200
+    assert client.get("/api/debug/ws_token").status_code == 200
+    assert client.get("/api/doubao_tts/speakers?scope=consumer").status_code == 200
+
+    ai = client.post(
+        "/api/face_design/generate",
+        json={"device_id": "deskbot_consumer_api", "prompt": "生成开心表情"},
+    )
+    assert ai.status_code == 200
+    assert ai.get_json()["ok"] is True
+
+
+def test_2c_debug_phoneme_endpoint_returns_json_when_tts_adapter_fails(
+    temp_db, monkeypatch
+):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    from deskbot_server.infrastructure.tts import factory
+
+    def fail_adapter(_settings):
+        raise RuntimeError("no tts adapter")
+
+    monkeypatch.setattr(factory, "build_tts_adapter", fail_adapter)
+    create_user("phoneme-debug2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "phoneme-debug2c@example.com", "password": "password1234"})
+
+    resp = client.post("/api/tts/phoneme_tts", json={"text": "你好"})
+
+    assert resp.status_code == 502
+    assert resp.is_json
+    payload = resp.get_json()
+    assert payload["ok"] is False
+    assert "no tts adapter" in payload["error"]
 
 
 def test_face_design_generate_endpoint_uses_llm_and_returns_design(temp_db, monkeypatch):
@@ -360,7 +492,7 @@ def test_face_design_generate_endpoint_uses_llm_and_returns_design(temp_db, monk
             {"model": "openai/test", "source": "device", "display_name": "Test LLM", "usage": {"total_tokens": 12}},
         )
 
-    monkeypatch.setattr("deskbot_server.llm.runtime.litellm_completion", fake_completion)
+    monkeypatch.setattr("deskbot_server.llm.runtime.chat_completion", fake_completion)
     user = create_user("face-ai2c@example.com", "password1234")
     bind_device(user.id, "deskbot_ai")
     app = create_app()

@@ -3,7 +3,7 @@
 {% block content %}
 <header class="page-header">
   <h1>LLM 管理</h1>
-  <p class="page-lead">为设备配置大模型。未选择自定义模型时，将使用系统默认配置（<code class="mono">{{ system_default.model }}</code>）。后端通过 LiteLLM 适配多种协议。</p>
+  <p class="page-lead">为设备配置大模型。未选择自定义模型时，将使用系统默认配置（<code class="mono">{{ system_default.model }}</code>）。后端直接调用火山方舟 / OpenAI-compatible API。</p>
 </header>
 
 {% if not devices %}
@@ -32,11 +32,11 @@
   <form id="addForm" class="llm-form-grid">
     <div>
       <label>显示名称</label>
-      <input id="addName" class="agent-input" placeholder="例如：通义 Qwen" required />
+      <input id="addName" class="agent-input" placeholder="例如：火山方舟 豆包" required />
     </div>
     <div>
       <label>模型 ID</label>
-      <input id="addModelName" class="agent-input" placeholder="例如：qwen-flash" required />
+      <input id="addModelName" class="agent-input" placeholder="例如：ep-xxxxxxxx 或 doubao 模型 ID" required />
     </div>
     <div>
       <label>协议</label>
@@ -48,11 +48,11 @@
     </div>
     <div>
       <label>Base URL</label>
-      <input id="addBaseUrl" class="agent-input" placeholder="https://..." />
+      <input id="addBaseUrl" class="agent-input" placeholder="默认：https://ark.cn-beijing.volces.com/api/v3" />
     </div>
     <div>
       <label>API Key</label>
-      <input id="addApiKey" class="agent-input" type="password" placeholder="sk-..." autocomplete="off" />
+      <input id="addApiKey" class="agent-input" type="password" placeholder="ARK_API_KEY" autocomplete="off" />
     </div>
     <div style="align-self:end;">
       <button type="submit" class="agent-btn">添加</button>
@@ -133,7 +133,7 @@
         </div>
         <div>
           <label for="editBaseUrl">Base URL</label>
-          <input id="editBaseUrl" class="agent-input" placeholder="https://..." />
+          <input id="editBaseUrl" class="agent-input" placeholder="默认：https://ark.cn-beijing.volces.com/api/v3" />
         </div>
         <div style="grid-column:1 / -1;">
           <label for="editApiKey">API Key</label>

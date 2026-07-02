@@ -1,7 +1,5 @@
 # 与 pyproject.toml [project.dependencies] 同步；torch 仍由 start.sh 单独安装
 funasr==1.2.7
-openai==2.8.1
-litellm>=1.50.0
 websockets==14.2
 PyYAML==6.0.2
 numpy==1.26.4
