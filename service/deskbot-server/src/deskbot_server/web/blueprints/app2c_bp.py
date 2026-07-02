@@ -109,6 +109,25 @@ def _api_key_payload(row) -> dict:
     }
 
 
+def _llm_api_key_set(api_key: str | None) -> bool:
+    key = str(api_key or "").strip()
+    return bool(key) and "请替换" not in key
+
+
+def _llm_config_message(*, device_selected: bool, api_key_set: bool, source: str = "") -> str:
+    if not device_selected:
+        return "请先选择设备，然后在「LLM 模型」里完成大模型配置。"
+    if api_key_set:
+        return ""
+    if source == "system":
+        return (
+            "需要完成大模型配置：当前使用系统默认模型，但没有可用 API Key。"
+            "请展开配置，填写 Ark 模型 ID 与 ARK_API_KEY，保存并设为当前；"
+            "也可以在环境变量里设置 LLM_API_KEY 或 ARK_API_KEY。"
+        )
+    return "需要完成大模型配置：请展开配置，填写模型 ID 与 ARK_API_KEY，保存并设为当前。"
+
+
 @bp.get("/api/advanced")
 @login_required
 def advanced_summary_get():
@@ -128,30 +147,47 @@ def advanced_summary_get():
         "active": None,
         "system_default": None,
         "error": "",
+        "needs_config": True,
+        "config_message": _llm_config_message(device_selected=bool(current_device_id), api_key_set=False),
     }
     system_default = resolve_system_llm_config()
     llm["system_default"] = {
         "display_name": system_default.display_name,
         "model": system_default.model,
         "api_base": system_default.api_base or "",
+        "api_key_set": _llm_api_key_set(system_default.api_key),
     }
     if current_device_id and user_owns_device(current_user.id, current_device_id):
         llm["models"] = list_llm_models(current_device_id, mask_key=True)
         llm["active_model_id"] = get_active_model_id(current_device_id)
         try:
             resolved = resolve_llm_config(current_device_id)
+            api_key_set = _llm_api_key_set(resolved.api_key)
             llm["active"] = {
                 "display_name": resolved.display_name,
                 "model": resolved.model,
                 "source": resolved.source,
                 "api_base": resolved.api_base or "",
+                "api_key_set": api_key_set,
             }
+            llm["needs_config"] = not api_key_set
+            llm["config_message"] = _llm_config_message(
+                device_selected=True,
+                api_key_set=api_key_set,
+                source=resolved.source,
+            )
         except ValueError as exc:
             llm["error"] = str(exc)
+            llm["needs_config"] = True
+            llm["config_message"] = str(exc)
     elif current_device_id:
         llm["error"] = "设备不属于当前账号"
+        llm["needs_config"] = True
+        llm["config_message"] = "设备不属于当前账号，无法配置大模型。"
     else:
         llm["error"] = "请先选择设备"
+        llm["needs_config"] = True
+        llm["config_message"] = _llm_config_message(device_selected=False, api_key_set=False)
 
     return jsonify(
         {

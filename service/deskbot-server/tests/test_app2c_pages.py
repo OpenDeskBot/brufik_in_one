@@ -62,6 +62,8 @@ def test_2c_advanced_json_apis(temp_db):
     payload = summary.get_json()
     assert payload["ok"] is True
     assert payload["current_device_id"] == "deskbot_adv"
+    assert payload["llm"]["needs_config"] is True
+    assert "大模型配置" in payload["llm"]["config_message"]
 
     profile = client.patch("/api/advanced/profile", json={"display_name": "新名字"})
     assert profile.status_code == 200
@@ -90,6 +92,9 @@ def test_2c_advanced_json_apis(temp_db):
         "/app/api/llm-models/select?device_id=deskbot_adv",
         json={"model_id": model_id},
     ).status_code == 200
+    configured = client.get("/api/advanced").get_json()["llm"]
+    assert configured["needs_config"] is False
+    assert configured["active"]["api_key_set"] is True
     assert client.delete(f"/app/api/llm-models/{model_id}?device_id=deskbot_adv").status_code == 200
 
 
@@ -409,6 +414,9 @@ def test_2c_advanced_keeps_heavy_features_collapsed(temp_db):
     assert "收起配置" in html
     assert "/api/tts/phoneme_tts" in html
     assert "/api/paddlespeech/phoneme_tts" not in html
+    assert "需要配置大模型" in html
+    assert "llm.needs_config" in html
+    assert "advancedOpen.llm=true" in html
 
 
 def test_2c_consumer_apis_are_not_developer_locked(temp_db, monkeypatch):
@@ -530,3 +538,22 @@ def test_2c_face_preview_helper_exposes_frame_reader():
     ).read_text(encoding="utf-8")
 
     assert "frameElements," in helper
+
+
+def test_2c_expr_ai_generation_reminds_llm_config_required(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("expr-ai-reminder2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "expr-ai-reminder2c@example.com", "password": "password1234"})
+
+    resp = client.get("/expr")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "需要配置大模型" in html
+    assert "loadLlmConfigStatus" in html
+    assert "llmNeedsConfig" in html
+    assert "/advanced" in html

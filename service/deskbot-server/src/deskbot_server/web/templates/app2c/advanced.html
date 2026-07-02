@@ -101,6 +101,15 @@
       <small v-if="llm.active">[[ llm.active.model ]] · [[ llm.active.source==='device' ? '设备自定义' : '系统默认' ]]</small>
       <button type="button" class="btn ghost" @click="useSystemModel" :disabled="!currentDeviceId">切回系统默认</button>
     </div>
+    <div class="design-warnings" v-if="llm.needs_config">
+      <b>需要配置大模型</b>
+      <ul>
+        <li>[[ llm.config_message || '请展开配置，填写模型 ID 与 ARK_API_KEY，保存并设为当前。' ]]</li>
+      </ul>
+      <div class="debug-actionbar">
+        <button type="button" class="btn primary" @click="advancedOpen.llm=true">展开配置</button>
+      </div>
+    </div>
 
     <div v-show="advancedOpen.llm">
       <form class="llm-form" @submit.prevent="saveLlmModel">
@@ -203,6 +212,15 @@
       </section>
 
       <section v-if="debugMode==='llm'">
+      <div class="design-warnings" v-if="llm.needs_config">
+        <b>需要配置大模型</b>
+        <ul>
+          <li>[[ llm.config_message || '请先在「LLM 模型」里配置大模型，再运行 LLM 调试。' ]]</li>
+        </ul>
+        <div class="debug-actionbar">
+          <button type="button" class="btn primary" @click="active='llm'; advancedOpen.llm=true">去配置大模型</button>
+        </div>
+      </div>
       <div class="debug-actionbar">
         <button type="button" class="btn ghost" @click="loadDebugSystemPrompt">读取 Prompt</button>
         <button type="button" class="btn ghost" @click="saveDebugSystemPrompt" :disabled="!currentDeviceId">保存 Prompt</button>

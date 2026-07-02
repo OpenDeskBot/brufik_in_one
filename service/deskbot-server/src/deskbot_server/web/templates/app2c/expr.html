@@ -98,6 +98,15 @@
           </button>
         </div>
         <div class="design-ai-body" v-show="professionalAiOpen">
+          <div class="design-warnings" v-if="llmNeedsConfig">
+            <b>需要配置大模型</b>
+            <ul>
+              <li>[[ llmConfigMessage || 'AI 生成会调用当前设备的大模型。请先到「高级 · LLM 模型」填写模型 ID 和 ARK_API_KEY，并设为当前。' ]]</li>
+            </ul>
+            <div class="debug-actionbar">
+              <a class="btn ghost" href="{{ url_for('app2c.advanced') }}">去配置大模型</a>
+            </div>
+          </div>
           <textarea class="tinput debug-textarea" v-model="professionalPrompt" placeholder="例如：生成一套开心、困困、惊讶、思考、待机的圆润表情，嘴型适合中文说话"></textarea>
           <div class="debug-actionbar">
             <button type="button" class="btn primary" @click="generateProfessionalDesign" :disabled="generatingProfessional || !professionalPrompt.trim()">[[ generatingProfessional ? '生成中…' : 'AI 生成设计' ]]</button>
@@ -178,6 +187,7 @@ createApp({
     scenes:[], selected:0, mode:'custom', exprTab:'face', deviceId:'', sending:false, savingProfessional:false,
     emotions:[['happy','😄','开心'],['surprised','😲','惊讶'],['thinking','🤔','思考'],['sleepy','😴','困'],['idle','😐','待机']],
     map:{}, msg:'', customFace:{...DEFAULT_CUSTOM_FACE}, professionalDesign:null, professionalFileName:'',
+    llmNeedsConfig:false, llmConfigMessage:'',
     professionalAiOpen:false, generatingProfessional:false,
     professionalPrompt:'做一套小歪默认表情：开心、困困、惊讶、思考、待机，风格圆润，嘴型适合中文拼音。'
   }; },
@@ -393,6 +403,10 @@ createApp({
       }
     },
     async generateProfessionalDesign(){
+      if(this.llmNeedsConfig){
+        this.msg = this.llmConfigMessage || '请先到「高级 · LLM 模型」配置大模型';
+        return;
+      }
       if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }
       const prompt = String(this.professionalPrompt || '').trim();
       if(!prompt){ this.msg = '请先输入想要的表情风格'; return; }
@@ -556,8 +570,20 @@ createApp({
     syncSelectedMood(k){
       if(k === 'idle') this.syncHomePreviewScene();
     },
+    async loadLlmConfigStatus(){
+      try{
+        const d = await (await fetch('/api/advanced')).json();
+        const llm = d && d.llm ? d.llm : {};
+        this.llmNeedsConfig = !!llm.needs_config;
+        this.llmConfigMessage = llm.config_message || '';
+      }catch(_){
+        this.llmNeedsConfig = false;
+        this.llmConfigMessage = '';
+      }
+    },
     async load(){
       try{
+        await this.loadLlmConfigStatus();
         const d = await (await fetch('/app/api/devices')).json();
         this.deviceId = d.current_device_id || '';
         if(!this.deviceId){ this.scenes = [this.buildCustomScene()]; this.msg='请先在「我的设备」选择一台设备'; return; }
