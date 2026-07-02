@@ -53,6 +53,7 @@ FACE_PROFILES_FILE = str(DATA_DIR / "face_profiles.json")
 FACE_DESIGN_FILE = str(GLOBAL_DATA_DIR / "deskbot-face.json")
 USER_MEMORY_FILE = str(DATA_DIR / "user_memory.json")
 DEVICE_VOLUME_FILE = str(DATA_DIR / "device_volume.json")
+EMOTION_EXPR_MAP_FILE = str(DATA_DIR / "emotion_expr_map.json")
 
 CAMERA_VIEW_PATH = "/camera_view"
 DEVICE_PIPELINE_PATH = "/device_pipeline"

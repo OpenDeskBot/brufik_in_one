@@ -10,6 +10,7 @@ from deskbot_server.auth.flask_user import FlaskUser
 from deskbot_server.auth.service import get_user_by_id
 from deskbot_server.db import init_database, remove_session
 from deskbot_server.env import load_dotenv
+from deskbot_server.web.blueprints.app2c_bp import bp as app2c_bp
 from deskbot_server.web.blueprints.app_bp import bp as app_bp
 from deskbot_server.web.blueprints.auth_bp import bp as auth_bp
 from deskbot_server.web.blueprints.debug_bp import bp as debug_bp
@@ -57,6 +58,7 @@ def create_app() -> Flask:
     app.register_blueprint(site_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(app_bp)
+    app.register_blueprint(app2c_bp)
     app.register_blueprint(debug_bp)
     app.register_blueprint(proxy_bp)
 
@@ -70,6 +72,8 @@ def create_app() -> Flask:
             "/register",
             "/health",
         )
+        if path == "/" and current_user.is_authenticated:
+            return redirect(url_for("app2c.home"))
         if path == "/" or path.startswith(public_prefixes) or path.startswith("/static/"):
             return None
         if current_user.is_authenticated:

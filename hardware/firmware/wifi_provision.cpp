@@ -109,196 +109,141 @@ static void oled_show_wifi_connected() {
   oled_boot_show4(line1, line2, line3, line4);
 }
 
+String json_escape(const String& raw) {
+  String out;
+  out.reserve(raw.length() + 8);
+  for (size_t i = 0; i < raw.length(); ++i) {
+    const char c = raw.charAt(i);
+    switch (c) {
+      case '\\': out += "\\\\"; break;
+      case '"': out += "\\\""; break;
+      case '\b': out += "\\b"; break;
+      case '\f': out += "\\f"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if ((uint8_t)c < 0x20) {
+          char buf[7];
+          snprintf(buf, sizeof(buf), "\\u%04x", (unsigned)c);
+          out += buf;
+        } else {
+          out += c;
+        }
+        break;
+    }
+  }
+  return out;
+}
+
 const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE HTML>
-<html>
+<!doctype html>
+<html lang="zh-CN">
 <head>
-  <title>WiFi 配置</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小歪配网</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 20px;
-      background-color: #f5f5f5;
-      color: #333;
-    }
-    .container {
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 20px;
-      background-color: white;
-      border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-    }
-    h1 {
-      color: #0066cc;
-      text-align: center;
-      margin-bottom: 30px;
-    }
-    h2 {
-      color: #009688;
-      border-bottom: 1px solid #eee;
-      padding-bottom: 10px;
-    }
-    .info-section {
-      margin-bottom: 30px;
-    }
-    .status {
-      background-color: #e8f5e9;
-      padding: 15px;
-      border-radius: 5px;
-      margin: 20px 0;
-    }
-    .footer {
-      text-align: center;
-      margin-top: 30px;
-      font-size: 0.9em;
-      color: #666;
-    }
-    button {
-      background-color: #4CAF50;
-      border: none;
-      color: white;
-      padding: 10px 20px;
-      text-align: center;
-      text-decoration: none;
-      display: inline-block;
-      font-size: 16px;
-      margin: 10px 2px;
-      cursor: pointer;
-      border-radius: 4px;
-    }
-    #networks-list {
-      list-style-type: none;
-      padding: 0;
-    }
-    .network-item {
-      padding: 12px 15px;
-      border-bottom: 1px solid #ddd;
-      cursor: pointer;
-      transition: background-color 0.3s;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .network-item:hover {
-      background-color: #f0f0f0;
-    }
-    .network-item.selected {
-      background-color: #e3f2fd;
-    }
-    .wifi-strength {
-      margin-left: 10px;
-      font-size: 0.9em;
-      color: #666;
-    }
-    .password-form {
-      margin-top: 20px;
-      padding: 15px;
-      background-color: #f9f9f9;
-      border-radius: 5px;
-      display: none;
-    }
-    input[type="text"], input[type="password"] {
-      width: 100%;
-      padding: 8px;
-      margin: 8px 0;
-      box-sizing: border-box;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-    }
-    .message {
-      padding: 10px;
-      margin: 10px 0;
-      border-radius: 4px;
-    }
-    .success {
-      background-color: #d4edda;
-      color: #155724;
-    }
-    .error {
-      background-color: #f8d7da;
-      color: #721c24;
-    }
-    .spinner {
-      border: 4px solid rgba(0, 0, 0, 0.1);
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      border-top: 4px solid #007bff;
-      animation: spin 1s linear infinite;
-      display: inline-block;
-      margin-right: 10px;
-      vertical-align: middle;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-    .hidden {
-      display: none;
-    }
-    .scan-btn {
-      background-color: #007bff;
-      margin-bottom: 20px;
-    }
+    :root{--bg:#e9e7de;--panel:#fff;--panel2:#f2f0e8;--ink:#16171b;--dim:#5b5b52;--line:#16171b;--accent:#ff6700;--bw:3px;--shadow:5px 5px 0 var(--line);--r:8px;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);background-image:linear-gradient(rgba(0,0,0,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(0,0,0,.06) 1px,transparent 1px);background-size:28px 28px;padding:16px}
+    .wrap{max-width:760px;margin:0 auto}.top{display:flex;align-items:center;gap:12px;margin:8px 0 14px}.mark{width:42px;height:42px;background:var(--accent);border:var(--bw) solid var(--line);box-shadow:3px 3px 0 var(--line);color:#fff;font-weight:900;display:grid;place-items:center}.brand b{display:block;font-size:18px;letter-spacing:.08em}.brand span{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);font-size:12px}
+    .card{background:var(--panel);border:var(--bw) solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:18px;margin-bottom:16px}.hero{background:#16171b;color:#f8f5ed;position:relative;overflow:hidden}.hero:after{content:"";position:absolute;left:0;right:0;top:0;height:5px;background:var(--accent)}.eyebrow{display:inline-block;background:var(--accent);border:2px solid var(--line);color:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;font-weight:800;letter-spacing:.08em;padding:4px 8px;box-shadow:2px 2px 0 var(--line)}h1{font-size:30px;margin:14px 0 8px;line-height:1.05}.hero p{color:#d8d4ca;margin:0;line-height:1.5}.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:16px}.step{border:2px solid #f8f5ed;padding:10px;min-height:84px}.step b{display:block;color:#fff}.step span{display:block;color:#c8c4ba;font-size:12px;margin-top:5px;line-height:1.35}
+    .status{display:grid;grid-template-columns:1fr 1fr;gap:10px}.pill{border:var(--bw) solid var(--line);background:var(--panel2);padding:10px}.pill span{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--dim);font-weight:800}.pill b{display:block;margin-top:4px;word-break:break-all}
+    .section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.section-title h2{margin:0;font-size:20px}.actions{display:flex;gap:8px;flex-wrap:wrap}button{border:var(--bw) solid var(--line);border-radius:6px;background:var(--panel);box-shadow:3px 3px 0 var(--line);padding:10px 13px;font-weight:800;cursor:pointer;color:var(--ink)}button.primary{background:var(--accent);color:#fff}button:disabled{opacity:.6;cursor:not-allowed}.list{display:grid;gap:8px;margin:10px 0 0}.network{width:100%;display:flex;align-items:center;justify-content:space-between;text-align:left;background:var(--panel2);box-shadow:2px 2px 0 var(--line)}.network.on{background:var(--accent);color:#fff}.network small{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;opacity:.75}
+    label{display:block;font-weight:800;margin:12px 0 6px}.hint{color:var(--dim);font-size:13px;line-height:1.45}input{width:100%;border:var(--bw) solid var(--line);border-radius:6px;padding:12px;background:#fff;font-size:16px;color:var(--ink)}.form-grid{display:grid;gap:10px}.msg{border:var(--bw) solid var(--line);background:var(--panel2);padding:12px;margin-top:12px;font-weight:700}.msg.ok{background:#dff5df}.msg.err{background:#ffe1dc}.footer{text-align:center;color:var(--dim);font-size:12px;margin:18px 0}.hidden{display:none}.spin{display:inline-block;width:14px;height:14px;border:3px solid rgba(0,0,0,.18);border-top-color:var(--line);border-radius:50%;animation:spin .8s linear infinite;margin-right:6px;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:620px){body{padding:10px}.steps,.status{grid-template-columns:1fr}h1{font-size:26px}.card{padding:15px}}
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>WiFi 配置</h1>
-
-    <div class="status">
-      <p><strong>状态:</strong> Deskbot Rom 准备配置 Wi-Fi 网络</p>
-    </div>
-
-    <div class="info-section">
-      <h2>可用 Wi-Fi 网络</h2>
-      <p>请选择一个网络连接：</p>
-
-      <button id="scan-btn" class="scan-btn" onclick="scanNetworks()">
-        <span id="scan-spinner" class="spinner hidden"></span>
-        <span id="scan-text">扫描网络</span>
-      </button>
-
-      <div id="message" class="message hidden"></div>
-
-      <ul id="networks-list"></ul>
-
-      <div id="password-form" class="password-form">
-        <h3 id="selected-network">网络名称</h3>
-        <form id="wifi-form">
-          <input type="hidden" id="ssid-input" name="ssid">
-          <label for="password-input">密码：</label>
-          <input type="password" id="password-input" name="password" placeholder="请输入密码">
-          <button type="submit">保存配置</button>
-        </form>
+  <main class="wrap">
+    <div class="top"><div class="mark">歪</div><div class="brand"><b>BRUFIK</b><span>ONBOARDING</span></div></div>
+    <section class="card hero">
+      <span class="eyebrow">ONBOARDING · WIFI</span>
+      <h1>给小歪连上家里的 Wi‑Fi</h1>
+      <p>按照屏幕上的地址打开本页，选择路由器并输入密码。保存后设备会关闭热点并自动连接新网络。</p>
+      <div class="steps">
+        <div class="step"><b>1 连接小歪热点</b><span>手机或电脑加入 Deskbot_Rom</span></div>
+        <div class="step"><b>2 打开屏幕上的网址</b><span>通常是 http://192.168.4.1</span></div>
+        <div class="step"><b>3 选择家里的 Wi‑Fi</b><span>保存后看设备屏幕上的连接结果</span></div>
       </div>
-    </div>
+    </section>
 
-    <div class="footer">
-      <p>Open-Deskbot | &copy; 2026</p>
-    </div>
-  </div>
+    <section class="card">
+      <div class="status">
+        <div class="pill"><span>设备热点</span><b id="ap-ssid">Deskbot_Rom</b></div>
+        <div class="pill"><span>配网地址</span><b id="ap-ip">http://192.168.4.1</b></div>
+        <div class="pill"><span>设备 ID</span><b id="device-id">读取中</b></div>
+        <div class="pill"><span>连接设备数</span><b id="station-count">0</b></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <h2>选择 Wi‑Fi</h2>
+        <div class="actions">
+          <button type="button" id="scan-btn" onclick="scanNetworks()"><span id="scan-spinner" class="spin hidden"></span><span id="scan-text">扫描网络</span></button>
+          <button type="button" onclick="showManual()">隐藏网络</button>
+        </div>
+      </div>
+      <p class="hint">如果没有看到你的路由器，可以重新扫描，或使用“隐藏网络”手动输入 SSID。</p>
+      <div id="networks-list" class="list"></div>
+      <div id="message" class="msg hidden"></div>
+    </section>
+
+    <section class="card" id="password-card">
+      <h2>填写网络密码</h2>
+      <form id="wifi-form" class="form-grid">
+        <input type="hidden" id="ssid-input" name="ssid">
+        <label for="manual-ssid-input">Wi‑Fi 名称</label>
+        <input type="text" id="manual-ssid-input" placeholder="选择网络后自动填入，也可手动输入">
+        <label for="password-input">Wi‑Fi 密码</label>
+        <input type="password" id="password-input" name="password" autocomplete="current-password" placeholder="留空表示开放网络">
+        <button type="submit" id="save-btn" class="primary">保存并连接</button>
+      </form>
+    </section>
+
+    <p class="footer">Open‑Deskbot · 小歪配网</p>
+  </main>
 
   <script>
     let selectedNetwork = null;
+
+    function setMessage(text, type) {
+      const el = document.getElementById('message');
+      el.textContent = text;
+      el.className = 'msg ' + (type || '');
+      el.classList.remove('hidden');
+    }
+
+    function signalText(rssi) {
+      if (rssi > -50) return '强';
+      if (rssi > -70) return '优';
+      if (rssi > -80) return '中';
+      return '弱';
+    }
+
+    function loadStatus() {
+      fetch('/status')
+        .then(r => r.json())
+        .then(s => {
+          if (s.ap_ssid) document.getElementById('ap-ssid').textContent = s.ap_ssid;
+          if (s.ap_ip) document.getElementById('ap-ip').textContent = 'http://' + s.ap_ip;
+          if (s.device_id) document.getElementById('device-id').textContent = s.device_id;
+          if (typeof s.station_count !== 'undefined') document.getElementById('station-count').textContent = s.station_count;
+        })
+        .catch(() => {});
+    }
 
     function scanNetworks() {
       const scanBtn = document.getElementById('scan-btn');
       const scanSpinner = document.getElementById('scan-spinner');
       const scanText = document.getElementById('scan-text');
-      const messageDiv = document.getElementById('message');
       const networksList = document.getElementById('networks-list');
 
       scanSpinner.classList.remove('hidden');
       scanText.innerText = '扫描中...';
       scanBtn.disabled = true;
-      messageDiv.classList.add('hidden');
       networksList.innerHTML = '';
-      document.getElementById('password-form').style.display = 'none';
+      document.getElementById('message').classList.add('hidden');
 
       fetch('/scan-wifi')
         .then(response => response.json())
@@ -308,35 +253,18 @@ const char index_html[] PROGMEM = R"rawliteral(
           scanBtn.disabled = false;
 
           if (data.length === 0) {
-            messageDiv.innerHTML = '未找到网络';
-            messageDiv.className = 'message error';
-            messageDiv.classList.remove('hidden');
+            setMessage('未找到网络。请靠近路由器后重新扫描，或手动输入隐藏网络。', 'err');
             return;
           }
 
           data.forEach(network => {
-            const listItem = document.createElement('li');
-            listItem.className = 'network-item';
-            listItem.setAttribute('data-ssid', network.ssid);
-
-            let strengthText = '';
-            if (network.rssi > -50) {
-              strengthText = '强';
-            } else if (network.rssi > -70) {
-              strengthText = '优';
-            } else if (network.rssi > -80) {
-              strengthText = '中';
-            } else {
-              strengthText = '弱';
-            }
-
-            listItem.innerHTML = `
-              <span>${network.ssid}</span>
-              <span class="wifi-strength">${strengthText} (${network.rssi} dBm)</span>
-            `;
-
-            listItem.addEventListener('click', () => selectNetwork(network.ssid));
-            networksList.appendChild(listItem);
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'network';
+            btn.setAttribute('data-ssid', network.ssid);
+            btn.innerHTML = '<span>' + network.ssid + '</span><small>' + signalText(network.rssi) + ' · ' + network.rssi + ' dBm</small>';
+            btn.addEventListener('click', () => selectNetwork(network.ssid));
+            networksList.appendChild(btn);
           });
         })
         .catch(error => {
@@ -344,49 +272,49 @@ const char index_html[] PROGMEM = R"rawliteral(
           scanText.innerText = '扫描网络';
           scanBtn.disabled = false;
 
-          messageDiv.innerHTML = '扫描网络错误: ' + error.message;
-          messageDiv.className = 'message error';
-          messageDiv.classList.remove('hidden');
+          setMessage('扫描网络错误: ' + error.message, 'err');
         });
     }
 
     function selectNetwork(ssid) {
       selectedNetwork = ssid;
 
-      const networkItems = document.querySelectorAll('.network-item');
+      const networkItems = document.querySelectorAll('.network');
       networkItems.forEach(item => {
         if (item.getAttribute('data-ssid') === ssid) {
-          item.classList.add('selected');
+          item.classList.add('on');
         } else {
-          item.classList.remove('selected');
+          item.classList.remove('on');
         }
       });
 
-      const passwordForm = document.getElementById('password-form');
-      document.getElementById('selected-network').innerText = ssid;
       document.getElementById('ssid-input').value = ssid;
-      passwordForm.style.display = 'block';
+      document.getElementById('manual-ssid-input').value = ssid;
       document.getElementById('password-input').focus();
+    }
+
+    function showManual() {
+      selectedNetwork = '';
+      document.querySelectorAll('.network').forEach(item => item.classList.remove('on'));
+      document.getElementById('ssid-input').value = '';
+      document.getElementById('manual-ssid-input').focus();
     }
 
     document.getElementById('wifi-form').addEventListener('submit', function(e) {
       e.preventDefault();
 
-      const ssid = document.getElementById('ssid-input').value;
+      const ssid = (document.getElementById('manual-ssid-input').value || document.getElementById('ssid-input').value).trim();
       const password = document.getElementById('password-input').value;
-      const messageDiv = document.getElementById('message');
-      const networksList = document.getElementById('networks-list');
+      const saveBtn = document.getElementById('save-btn');
 
       if (!ssid) {
-        messageDiv.innerHTML = '请选择一个网络';
-        messageDiv.className = 'message error';
-        messageDiv.classList.remove('hidden');
+        setMessage('请选择一个网络，或手动输入 Wi‑Fi 名称。', 'err');
         return;
       }
 
-      messageDiv.innerHTML = '保存配置中...';
-      messageDiv.className = 'message';
-      messageDiv.classList.remove('hidden');
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中...';
+      setMessage('保存配置中，设备马上会尝试连接新网络。', '');
 
       fetch('/save-wifi', {
         method: 'POST',
@@ -398,22 +326,23 @@ const char index_html[] PROGMEM = R"rawliteral(
       .then(response => response.json())
       .then(data => {
         if (data.success) {
-          messageDiv.innerHTML = 'WiFi 设置成功！';
-          messageDiv.className = 'message success';
-          networksList.innerHTML = '';
+          setMessage('WiFi 配置已保存。设备正在连接新 Wi‑Fi，请回到小歪屏幕查看新的 IP 地址。', 'ok');
         } else {
-          messageDiv.innerHTML = '错误: ' + data.message;
-          messageDiv.className = 'message error';
+          setMessage('错误: ' + data.message, 'err');
+          saveBtn.disabled = false;
+          saveBtn.textContent = '保存并连接';
         }
       })
       .catch(error => {
-        messageDiv.innerHTML = '保存配置错误: ' + error.message;
-        messageDiv.className = 'message error';
+        setMessage('保存配置错误: ' + error.message, 'err');
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存并连接';
       });
     });
 
     window.onload = function() {
-      setTimeout(scanNetworks, 1000);
+      loadStatus();
+      setTimeout(scanNetworks, 700);
     };
   </script>
 </body>
@@ -584,6 +513,18 @@ void setup_http_server() {
     server.send(200, "text/html", index_html);
   });
 
+  server.on("/status", HTTP_GET, []() {
+    const IPAddress ip = WiFi.softAPIP();
+    String json = "{";
+    json += "\"ok\":true,";
+    json += "\"ap_ssid\":\"" + json_escape(kApSsid) + "\",";
+    json += "\"ap_ip\":\"" + ip.toString() + "\",";
+    json += "\"device_id\":\"" + json_escape(String(get_device_id())) + "\",";
+    json += "\"station_count\":" + String(WiFi.softAPgetStationNum());
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
   server.on("/scan-wifi", HTTP_GET, []() {
     String json = "[";
     int n = WiFi.scanNetworks();
@@ -591,7 +532,7 @@ void setup_http_server() {
     for (int i = 0; i < n; ++i) {
       if (i > 0) json += ",";
       json += "{";
-      json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
+      json += "\"ssid\":\"" + json_escape(WiFi.SSID(i)) + "\",";
       json += "\"rssi\":" + String(WiFi.RSSI(i));
       json += "}";
     }
@@ -618,6 +559,11 @@ void setup_http_server() {
     Serial.printf("[wifi] credentials saved ssid=%s\r\n", new_ssid.c_str());
     server.send(200, "application/json", "{\"success\":true,\"message\":\"WiFi configuration saved\"}");
     done_config = true;
+  });
+
+  server.onNotFound([]() {
+    server.sendHeader("Location", "/", true);
+    server.send(302, "text/plain", "");
   });
 
   server.begin();

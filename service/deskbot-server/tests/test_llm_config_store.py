@@ -20,6 +20,7 @@ from deskbot_server.llm_config_store import (
 @pytest.fixture
 def device_id(tmp_path, monkeypatch):
     monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", tmp_path)
+    monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", tmp_path / "device")
     return "deskbot_test001"
 
 

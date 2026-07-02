@@ -14,7 +14,7 @@
 
 1. 路由器或手机热点设为 **`deskbot_wifi` / `hello2026`**（与固件默认一致，见 [`firmware/deskbot_config.h`](firmware/deskbot_config.h)）。
 2. 给机器人上电，自动连上该 WiFi 并访问语音后台后即可使用（对话、表情、头部动作）。
-3. 若需改用家里 WiFi：烧录前改 `deskbot_config.h` 里的 `WIFI_DEFAULT_*` 和 `DESKBOT_WS_*`；或连热点 **`Deskbot_Rom`** → **`http://192.168.4.1/`** 配网。
+3. 若需改用家里 WiFi：给小歪上电后按屏幕提示连接热点 **`Deskbot_Rom`**，浏览器打开屏幕上的地址（通常是 **`http://192.168.4.1/`**），按 onboarding 页面选择家里的 WiFi 并保存；也可烧录前改 `deskbot_config.h` 里的 `WIFI_DEFAULT_*` 和 `DESKBOT_WS_*`。
 
 ---
 

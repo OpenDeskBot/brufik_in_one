@@ -78,6 +78,29 @@ def list_doubao_tts_speaker_presets() -> list[dict[str, Any]]:
     return [item.to_dict() for item in items]
 
 
+def _is_consumer_ready_speaker(item: DoubaoTtsSpeakerPreset) -> bool:
+    """2C 声音页只展示新版、有明确场景的生产音色。"""
+    if item.resource_id != "seed-tts-2.0":
+        return False
+    if not item.scene.strip():
+        return False
+    return "_uranus_" in item.id or item.id.startswith("saturn_")
+
+
+def list_doubao_tts_consumer_speaker_presets() -> list[dict[str, Any]]:
+    return [
+        item.to_dict()
+        for item in sorted(
+            (item for item in _load_speaker_presets() if _is_consumer_ready_speaker(item)),
+            key=lambda item: (
+                item.scene,
+                0 if "通用" in item.scene else 1,
+                item.label,
+            ),
+        )
+    ]
+
+
 def find_doubao_tts_speaker_preset(speaker_id: str) -> DoubaoTtsSpeakerPreset | None:
     needle = (speaker_id or "").strip()
     if not needle:

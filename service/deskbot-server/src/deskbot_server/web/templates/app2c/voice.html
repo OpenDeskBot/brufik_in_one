@@ -1,0 +1,241 @@
+{% extends "base_2c.html" %}
+{% block page_title %}声音 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block content %}
+<div id="app">
+  <div class="pagehd"><div><div class="eyebrow">VOICE · LIBRARY</div><h1>声音</h1><p>挑一个喜欢的音色，点试听，满意就设为当前。</p></div></div>
+
+  <section class="tts-config">
+    <div class="panel-head">
+      <div>
+        <b>TTS 服务配置</b>
+        <small>火山引擎豆包语音 · API Key 留空表示沿用已保存配置</small>
+      </div>
+      <button
+        type="button"
+        class="btn ghost config-toggle"
+        @click="configOpen=!configOpen"
+        :aria-expanded="String(configOpen)"
+        aria-controls="ttsConfigForm"
+      >
+        <svg class="chev" :class="{open: configOpen}" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        <span>[[ configOpen ? '收起配置' : '展开配置' ]]</span>
+      </button>
+    </div>
+    <form v-show="configOpen" id="ttsConfigForm" class="tts-form" @submit.prevent="saveTtsConfig">
+      <input class="tinput" v-model.trim="cfg.api_key" type="password" autocomplete="off" :placeholder="cfg.api_key_set ? 'API Key 已配置，留空不修改' : 'DOUBAO_TTS_API_KEY'">
+      <input class="tinput" v-model.trim="cfg.resource_id" placeholder="Resource ID">
+      <input class="tinput" v-model.trim="cfg.model" placeholder="模型">
+      <input class="tinput" v-model.number="cfg.sample_rate" type="number" min="8000" step="1000" placeholder="采样率">
+      <input class="tinput wide" v-model.trim="cfg.ws_url" placeholder="WebSocket URL">
+      <select v-model="cfg.audio_format">
+        <option value="pcm">pcm</option>
+        <option value="wav">wav</option>
+      </select>
+      <button type="submit" class="btn primary" :disabled="savingConfig">[[ savingConfig ? '保存中…' : '保存配置' ]]</button>
+    </form>
+    <div class="config-state">
+      <span :class="['led', cfg.api_key_set ? '' : 'off']"></span>
+      <b>[[ cfg.api_key_set ? 'TTS Key 已配置' : 'TTS Key 未配置' ]]</b>
+      <small>[[ current ? ('当前音色 ' + current) : '未设置当前音色' ]]</small>
+    </div>
+  </section>
+
+  <section class="voice-library">
+    <div class="library-head">
+      <div>
+        <div class="blocktitle top">DOUBAO PRESETS</div>
+        <h2>优选音色</h2>
+        <small>只展示 2.0 可用音色，已过滤旧版、测试和不稳定音色</small>
+        <small>已显示 [[ filteredSpeakers.length ]] / [[ speakers.length ]] 个优选音色</small>
+      </div>
+      <div class="voice-tools">
+        <input class="tinput voice-search" v-model.trim="voiceSearch" type="search" autocomplete="off" placeholder="搜索音色 / ID / 场景">
+        <select class="scene-select" v-model="activeScene" aria-label="按场景筛选">
+          <option value="">全部场景</option>
+          <option v-for="scene in sceneOptions" :key="scene" :value="scene">[[ scene ]]</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="voice-preview-row">
+      <audio ref="previewAudio" class="preview-audio" controls preload="none" :src="audioUrl" @ended="playing=''"></audio>
+      <div class="slider-card">
+        <div class="t">
+          <span class="lab"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/></svg>试听音量</span>
+          <span class="val">[[ vol ]]%</span>
+        </div>
+        <input type="range" min="0" max="100" v-model.number="vol">
+      </div>
+    </div>
+
+    <div class="vgrid">
+      <div class="vcard" :class="{cur: v.id===current}" v-for="v in filteredSpeakers" :key="v.id">
+        <span class="curtag" v-if="v.id===current">当前</span>
+        <b>[[ v.label ]]</b>
+        <small>[[ v.scene || '其他' ]] · [[ v.resource_id ]]</small>
+        <em>[[ v.id ]]</em>
+        <div class="vbtns">
+          <button type="button" class="vbtn play" @click="preview(v)" :disabled="playing===v.id">[[ playing===v.id ? '合成中…' : '▶ 试听' ]]</button>
+          <button type="button" class="vbtn set" @click="setCurrent(v)" :disabled="v.id===current">[[ v.id===current ? '使用中' : '设为当前' ]]</button>
+        </div>
+      </div>
+    </div>
+  </section>
+  <p class="lead" v-if="msg">[[ msg ]]</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({
+  delimiters: ['[[', ']]'],
+  data(){ return {
+    speakers:[], current:'', playing:'', vol:80, msg:'', audioUrl:'',
+    voiceSearch:'', activeScene:'',
+    configOpen:false, savingConfig:false,
+    cfg:{
+      api_key:'', api_key_set:false, speaker:'', resource_id:'seed-tts-2.0',
+      model:'seed-tts-2.0-expressive', ws_url:'wss://openspeech.bytedance.com/api/v3/tts/bidirection',
+      sample_rate:24000, audio_format:'pcm'
+    },
+  }; },
+  computed:{
+    sceneOptions(){
+      return [...new Set(this.speakers.map(v => v.scene || '其他'))].sort((a,b) => a.localeCompare(b, 'zh-Hans-CN'));
+    },
+    filteredSpeakers(){
+      const q = (this.voiceSearch || '').trim().toLowerCase();
+      return this.speakers.filter(v => {
+        const scene = v.scene || '其他';
+        if(this.activeScene && scene !== this.activeScene) return false;
+        if(!q) return true;
+        return [v.label, v.id, scene, v.description, v.resource_id].some(x => String(x || '').toLowerCase().includes(q));
+      });
+    }
+  },
+  watch:{
+    vol(){ const a=this.$refs.previewAudio; if(a) a.volume=this.vol/100; }
+  },
+  methods:{
+    async api(url, options){
+      const res = await fetch(url, options);
+      const data = await res.json().catch(() => ({}));
+      if(!res.ok || data.ok===false){
+        throw new Error(data.error || ('HTTP '+res.status));
+      }
+      return data;
+    },
+    async load(){
+      try{
+        const s = await this.api('/api/doubao_tts/speakers?scope=consumer');
+        this.speakers = s.speakers || [];
+        const c = await this.api('/api/doubao_tts/config');
+        this.applyConfig(c.config || {});
+        if(!this.cfg.api_key_set) {
+          this.configOpen = true;
+          this.msg = '请先填写豆包 TTS API Key，保存后就可以试听。';
+        }
+      }catch(e){
+        this.msg = '声音配置加载失败：' + this.errText(e);
+      }
+    },
+    applyConfig(config){
+      this.cfg = Object.assign({}, this.cfg, config, {api_key:''});
+      this.current = this.cfg.speaker || '';
+      if(!this.cfg.resource_id) this.cfg.resource_id='seed-tts-2.0';
+      if(!this.cfg.model) this.cfg.model='seed-tts-2.0-expressive';
+      if(!this.cfg.ws_url) this.cfg.ws_url='wss://openspeech.bytedance.com/api/v3/tts/bidirection';
+      if(!this.cfg.sample_rate) this.cfg.sample_rate=24000;
+      if(!this.cfg.audio_format) this.cfg.audio_format='pcm';
+    },
+    errText(e){ return (e && e.message) ? e.message : String(e); },
+    ensureTtsReady(){
+      if(this.cfg.api_key_set || this.cfg.api_key) return true;
+      this.configOpen = true;
+      this.msg = '先填写并保存豆包 TTS API Key，再试听或设置音色。';
+      return false;
+    },
+    async saveTtsConfig(){
+      this.savingConfig = true; this.msg = '';
+      try{
+        const data = await this.api('/api/doubao_tts/config', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(this.cfg)});
+        this.applyConfig(data.config || {});
+        this.configOpen = false;
+        this.msg = 'TTS 配置已保存';
+      }catch(e){
+        this.msg = '保存失败：' + this.errText(e);
+      }finally{
+        this.savingConfig = false;
+      }
+    },
+    async setCurrent(v){
+      if(!this.ensureTtsReady()) return;
+      this.msg = '';
+      try{
+        const payload = Object.assign({}, this.cfg, {speaker:v.id, resource_id:v.resource_id || this.cfg.resource_id});
+        const data = await this.api('/api/doubao_tts/config', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)});
+        this.applyConfig(data.config || {});
+        this.current = v.id;
+        this.msg = '已设为当前音色：'+v.label;
+      }catch(e){
+        this.msg = '设置失败：' + this.errText(e);
+      }
+    },
+    revokeAudio(){
+      if(this.audioUrl && this.audioUrl.startsWith('blob:')) URL.revokeObjectURL(this.audioUrl);
+      this.audioUrl = '';
+    },
+    stopAudio(){
+      const a=this.$refs.previewAudio;
+      if(a){ a.pause(); a.removeAttribute('src'); a.load(); }
+      this.revokeAudio();
+    },
+    async playPreviewAudio(wavBase64, label){
+      this.revokeAudio();
+      const bin = Uint8Array.from(atob(wavBase64), c => c.charCodeAt(0));
+      const blob = new Blob([bin], {type:'audio/wav'});
+      this.audioUrl = URL.createObjectURL(blob);
+      await this.$nextTick();
+      const a = this.$refs.previewAudio;
+      if(!a) return;
+      a.volume = this.vol/100;
+      a.load();
+      try{
+        await a.play();
+        this.msg = '正在试听：' + label;
+      }catch(e){
+        this.msg = '音频已生成；浏览器拦截了自动播放，请点下方播放器播放。';
+      }
+    },
+    async preview(v){
+      if(!this.ensureTtsReady()) return;
+      this.playing = v.id; this.msg='';
+      try{
+        this.stopAudio();
+        const payload = Object.assign({}, this.cfg, {
+          text:'你好，我是你的桌搭子小歪。',
+          speaker:v.id,
+          resource_id:v.resource_id || this.cfg.resource_id
+        });
+        const r = await this.api('/api/doubao_tts/synthesize', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)});
+        if(r.wav_base64) await this.playPreviewAudio(r.wav_base64, v.label);
+        else this.msg='试听失败：接口没有返回音频';
+      }catch(e){
+        this.msg='试听失败：'+this.errText(e);
+      }finally{
+        this.playing='';
+      }
+    },
+  },
+  mounted(){ this.load(); },
+  beforeUnmount(){ this.stopAudio(); },
+}).mount('#app');
+</script>
+{% endblock %}

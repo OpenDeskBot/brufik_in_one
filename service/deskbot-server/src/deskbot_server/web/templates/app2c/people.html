@@ -1,0 +1,41 @@
+{% extends "base_2c.html" %}
+{% block page_title %}认识的人 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block content %}
+<div id="app">
+  <div class="pagehd"><div><div class="eyebrow">FACES · [[ profiles.length ]] KNOWN</div><h1>认识的人</h1><p>机器人通过摄像头认识的人，可改名或删除。</p></div></div>
+  <div class="people">
+    <div class="person" v-for="(p,i) in profiles" :key="p.person_id">
+      <div class="pa" :class="{owner: i===0}">[[ (p.name||'?').slice(0,1) ]]</div>
+      <input v-if="editing===p.person_id" class="tinput nameinput" v-model="editName" @keyup.enter="saveName(p)">
+      <b v-else>[[ p.name || ('#'+p.person_id) ]]</b>
+      <div class="btngroup compact">
+        <template v-if="editing===p.person_id">
+          <button class="btn primary" @click="saveName(p)">保存</button>
+          <button class="btn ghost" @click="cancelEdit">取消</button>
+        </template>
+        <template v-else>
+          <button class="btn ghost" @click="startEdit(p)">改名</button>
+          <button class="btn ghost" @click="del(p)">删除</button>
+        </template>
+      </div>
+    </div>
+  </div>
+  <p class="lead" v-if="!profiles.length">还没有认识的人。</p>
+  <p class="lead" v-if="msg">[[ msg ]]</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({ delimiters:['[[',']]'], data(){return{profiles:[], editing:null, editName:'', msg:''};},
+  methods:{ async load(){ const r=await (await fetch('/app/api/face-profiles')).json(); if(r.ok) this.profiles=r.profiles||[]; else this.msg=r.error||'加载失败'; },
+    startEdit(p){ this.editing=p.person_id; this.editName=p.name||''; },
+    cancelEdit(){ this.editing=null; this.editName=''; },
+    async saveName(p){ const name=this.editName.trim(); if(!name){ this.msg='名字不能为空'; return; }
+      const r=await (await fetch('/app/api/face-profiles/'+p.person_id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
+      if(r.ok){ this.cancelEdit(); this.msg='已保存名字'; this.load(); } else this.msg=r.error||'保存失败'; },
+    async del(p){ if(!confirm('确定删除这个人脸档案？')) return; const r=await (await fetch('/app/api/face-profiles/'+p.person_id,{method:'DELETE'})).json(); if(r.ok){ this.msg='已删除'; this.load(); } else this.msg=r.error||'删除失败'; } },
+  mounted(){ this.load(); } }).mount('#app');
+</script>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% macro icon(name) -%}
+{% if name == 'home' %}<svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+{% elif name == 'expr' %}<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg>
+{% elif name == 'voice' %}<svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/><path d="M19 6a8 8 0 010 12"/></svg>
+{% elif name == 'memory' %}<svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg>
+{% elif name == 'remind' %}<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+{% elif name == 'people' %}<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+{% elif name == 'device' %}<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg>
+{% elif name == 'advanced' %}<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7 7 0 000-2l2-1.5-2-3.4-2.3 1a7 7 0 00-1.7-1L15 3h-4l-.7 2.6a7 7 0 00-1.7 1l-2.3-1-2 3.4L4.6 11a7 7 0 000 2l-2 1.5 2 3.4 2.3-1a7 7 0 001.7 1L11 21h4l.7-2.6a7 7 0 001.7-1l2.3 1 2-3.4z"/></svg>
+{% endif %}
+{%- endmacro %}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block page_title %}小歪 · 我的桌搭子{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme_2c.css') }}?v=20260701-pro-design">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+<div class="shell">
+  <!-- ===== topbar ===== -->
+  <div class="topbar">
+    <div class="tb-l">
+      <a class="tb-brand" href="{{ url_for('app2c.home') }}" style="text-decoration:none">
+        <span class="tb-mark">歪</span>
+        <span class="tb-name">BRUFIK</span>
+        <span class="tb-sub">CONSOLE</span>
+      </a>
+      <span class="tb-div"></span>
+      <span class="tb-link"><span class="led"></span><span>LINK·OK</span></span>
+    </div>
+    <div class="tb-r">
+      <span class="tb-clock" id="tbClock">--:--:--</span>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <button type="submit" class="btn ghost" style="padding:7px 12px">退出</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="app">
+    <aside class="side">
+      <div class="brand"><div class="logo">歪</div><div><b>小歪</b><small>我的桌搭子</small></div></div>
+      <nav class="navi">
+        <a href="{{ url_for('app2c.home') }}" class="navlink {{ 'on' if active_nav=='home' }}">{{ icon('home') }}家</a>
+        <div class="lbl">核心玩法</div>
+        <a href="{{ url_for('app2c.expr') }}" class="navlink {{ 'on' if active_nav=='expr' }}">{{ icon('expr') }}表情</a>
+        <a href="{{ url_for('app2c.voice') }}" class="navlink {{ 'on' if active_nav=='voice' }}">{{ icon('voice') }}声音</a>
+        <div class="lbl">日常</div>
+        <a href="{{ url_for('app2c.memories') }}" class="navlink {{ 'on' if active_nav=='memory' }}">{{ icon('memory') }}它记得的事</a>
+        <a href="{{ url_for('app2c.reminders') }}" class="navlink {{ 'on' if active_nav=='remind' }}">{{ icon('remind') }}提醒</a>
+        <a href="{{ url_for('app2c.people') }}" class="navlink {{ 'on' if active_nav=='people' }}">{{ icon('people') }}认识的人</a>
+        <a href="{{ url_for('app2c.devices') }}" class="navlink {{ 'on' if active_nav=='device' }}">{{ icon('device') }}我的设备</a>
+        <div class="gap"></div>
+        <a href="{{ url_for('app2c.advanced') }}" class="navlink {{ 'on' if active_nav=='advanced' }}">{{ icon('advanced') }}高级</a>
+      </nav>
+      <div class="foot"><div class="userchip"><div class="ua">歪</div><div><b>{{ nav_display_name or '我' }}</b><small>{{ nav_user_email or '' }}</small></div></div></div>
+    </aside>
+    <main>{% block content %}{% endblock %}</main>
+  </div>
+</div>
+<script>
+  (function(){
+    var el=document.getElementById('tbClock'); if(!el) return;
+    var p=function(n){return String(n).padStart(2,'0');};
+    var tick=function(){var d=new Date();el.textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());};
+    tick(); setInterval(tick,1000);
+  })();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

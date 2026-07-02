@@ -14,7 +14,7 @@
 
 1. Set your router or phone hotspot to **`deskbot_wifi` / `hello2026`** (defaults in [`firmware/deskbot_config.h`](firmware/deskbot_config.h)).
 2. Power on — the device joins that WiFi and talks to your backend.
-3. To use another SSID: edit `WIFI_DEFAULT_*` and `DESKBOT_WS_*` before flash, or join AP **`Deskbot_Rom`** → **`http://192.168.4.1/`**.
+3. To use another SSID: power on the deskbot, join AP **`Deskbot_Rom`**, then open the address shown on the screen, usually **`http://192.168.4.1/`**. The onboarding page lets you pick or type your home WiFi and save it. You can still edit `WIFI_DEFAULT_*` and `DESKBOT_WS_*` before flashing.
 
 ---
 

@@ -149,6 +149,7 @@ TTS 使用火山引擎豆包（`tts.provider: doubao`），凭证配置见 `desk
 
 | 文档 | 内容 |
 |------|------|
+| [docs/api_interfaces.md](docs/api_interfaces.md) | Web 控制台、deskbot 设备服务、TTS 侧车接口清单 |
 | [docs/esp32_pb_protocol.md](docs/esp32_pb_protocol.md) | ESP32 通信、鉴权、pb 协议 |
 | [deskbot-server/README.md](deskbot-server/README.md) | 主服务 API、配置、LLM 工具 |
 | [deskbot-server/docs/ARCHITECTURE.md](deskbot-server/docs/ARCHITECTURE.md) | 代码分层与模块 |
