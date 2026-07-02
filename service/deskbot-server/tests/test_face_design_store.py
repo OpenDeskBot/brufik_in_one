@@ -59,7 +59,9 @@ def test_pick_expression_elements_multi_frame():
 
 
 def test_save_emotions_to_design_file(tmp_path, monkeypatch):
-    design_path = tmp_path / "deskbot-face.json"
+    global_dir = tmp_path / "global"
+    global_dir.mkdir()
+    design_path = global_dir / "deskbot-face.json"
     design_path.write_text(
         json.dumps(
             {
@@ -77,7 +79,8 @@ def test_save_emotions_to_design_file(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr("deskbot_server.face_design_store.FACE_DESIGN_FILE", str(design_path))
+    monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", tmp_path)
+    monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", tmp_path / "device")
     from deskbot_server.face_design_store import clear_face_design_cache
     from deskbot_server.face_expr_scenes_store import load_face_expr_scenes_file, save_face_expr_scenes_file
 
