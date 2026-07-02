@@ -62,6 +62,14 @@ async def _feed_rom_uplink(
         channels=channels,
     )
     if uplink_started:
+        logger.info(
+            "[/asr_chat] 首包 audio device_id=%s payload_bytes=%d codec=%s sr=%s ch=%s",
+            device_id,
+            len(payload),
+            codec,
+            sample_rate,
+            channels,
+        )
         schedule_listen_feedback(asr_chat_hub, device_id)
 
 
@@ -436,6 +444,18 @@ async def _dispatch_rom_flush(
     if flushed is None:
         logger.info("[/asr_chat] flush 空上行 device_id=%s", device_id)
         return
+    duration_ms = int(
+        len(flushed.pcm) / 2 / max(1, flushed.sample_rate) * 1000
+    )
+    logger.info(
+        "[/asr_chat] flush device_id=%s pcm_bytes=%d sr=%d ch=%d codec=%s duration_ms=%d",
+        device_id,
+        len(flushed.pcm),
+        flushed.sample_rate,
+        flushed.channels,
+        flushed.codec,
+        duration_ms,
+    )
     if device_pb_only:
         await _schedule_asr_turn(
             websocket,

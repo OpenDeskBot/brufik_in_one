@@ -1,8 +1,18 @@
 import logging
 import os
 import sys
+import time
 
 from deskbot_server.constants import LOG_FILE
+
+
+class _MillisecondFormatter(logging.Formatter):
+    """日志时间戳精确到毫秒（3 位）。"""
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        ct = self.converter(record.created)
+        base = time.strftime("%Y-%m-%d %H:%M:%S", ct)
+        return f"{base}.{int(record.msecs):03d}"
 
 
 class _WebsocketsServerNoiseFilter(logging.Filter):
@@ -47,9 +57,8 @@ class _WebsocketsServerNoiseFilter(logging.Filter):
 def setup_logging() -> None:
     log_level = os.environ.get("DESKBOT_SERVER_LOG_LEVEL", "INFO").upper()
     level = getattr(logging, log_level, logging.INFO)
-    formatter = logging.Formatter(
+    formatter = _MillisecondFormatter(
         fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
     )
     root = logging.getLogger()
     root.setLevel(level)
