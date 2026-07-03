@@ -1328,10 +1328,9 @@ bool AsrChatClient::connect() {
   logAsrChatNetContext("connecting");
   deskbot_uplink_set_ws_ready(false);
   ws_.begin(kHost, kPort, path);
-  /* 仅由 maintainWsConnection/connect 手动重连。
-   * 注意：setReconnectInterval(0) 含义是"立即重连"（每次 loop() 都触发 connect()），不是"禁用"。
-   * 设为极大值（~7天）= 实际禁用库的自动重连，由固件自己管理重连时机。 */
-  ws_.setReconnectInterval(7 * 24 * 3600 * 1000UL);
+  /* 连接阶段：每 400ms 重试一次 TCP+WS 握手（10s 窗口内约 25 次）。
+   * 连接成功后设为极大值，禁用库内自动重连（由 maintainWsConnection 管理）。 */
+  ws_.setReconnectInterval(400);
 
   if (!ws_uplink_wait_connected(&ws_, this, (unsigned long)DESKBOT_WS_CONNECT_TIMEOUT_MS)) {
     log_error("[ASR_CHAT] connect timeout ws://%s:%u (check WiFi route to server, API key, firewall)",
@@ -1343,6 +1342,7 @@ bool AsrChatClient::connect() {
     connect_fail_streak_++;
     return false;
   }
+  ws_.setReconnectInterval(7 * 24 * 3600 * 1000UL);
 
   unsigned long start = millis();
   while (!ready_ && millis() - start < 3000) {

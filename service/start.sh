@@ -86,6 +86,8 @@ ensure_local_scripts() {
 ASR_MODEL_DIR="$ROOT/models/SenseVoiceSmall"
 FACE_MODEL_PATH="$ROOT/models/mediapipe/face_landmarker.task"
 FACE_MODEL_URL="https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+SILERO_VAD_MODEL_PATH="$ROOT/models/silero_vad/silero_vad.onnx"
+SILERO_VAD_MODEL_URL="https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
 
 asr_model_ready() {
   local py
@@ -95,6 +97,10 @@ asr_model_ready() {
 
 face_model_ready() {
   [[ -f "$FACE_MODEL_PATH" ]]
+}
+
+silero_vad_model_ready() {
+  [[ -f "$SILERO_VAD_MODEL_PATH" ]]
 }
 
 deskbot_venv_python() {
@@ -143,11 +149,28 @@ download_face_model() {
   fi
 }
 
+download_silero_vad_model() {
+  echo "[setup] 下载 Silero VAD 模型（约 2.3MB）..."
+  mkdir -p "$(dirname "$SILERO_VAD_MODEL_PATH")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -L --fail -o "$SILERO_VAD_MODEL_PATH" "$SILERO_VAD_MODEL_URL"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$SILERO_VAD_MODEL_PATH" "$SILERO_VAD_MODEL_URL"
+  else
+    echo "[warn] 未找到 curl/wget，跳过 Silero VAD 下载；/asr_chat 将无法接入。" >&2
+    return 1
+  fi
+}
+
 ensure_models() {
   if [[ "${SKIP_MODEL_DOWNLOAD:-0}" == "1" ]]; then
     echo "SKIP_MODEL_DOWNLOAD=1，跳过模型下载检查。"
     if ! asr_model_ready; then
       echo "ASR 模型缺失: $ASR_MODEL_DIR" >&2
+      exit 1
+    fi
+    if ! silero_vad_model_ready; then
+      echo "Silero VAD 模型缺失: $SILERO_VAD_MODEL_PATH" >&2
       exit 1
     fi
     return 0
@@ -169,6 +192,12 @@ ensure_models() {
     download_face_model
   else
     echo "[setup] 人脸模型已就绪: $FACE_MODEL_PATH"
+  fi
+
+  if ! silero_vad_model_ready; then
+    download_silero_vad_model
+  else
+    echo "[setup] Silero VAD 模型已就绪: $SILERO_VAD_MODEL_PATH"
   fi
 }
 

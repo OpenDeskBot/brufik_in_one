@@ -33,7 +33,7 @@ OLD = """    unsigned long t = millis();
         if(len) {
             t = millis();"""
 
-NEW = """    unsigned long deadline = millis() + WEBSOCKETS_TCP_TIMEOUT; /* deskbot: absolute write deadline */
+NEW = """    unsigned long deadline = millis() + WEBSOCKETS_TCP_WRITE_TIMEOUT; /* deskbot: absolute write deadline */
     size_t len      = 0;
     size_t total    = 0;
     DEBUG_WEBSOCKETS("[write] n: %zu deadline: %lu\\n", n, deadline);
@@ -49,7 +49,7 @@ NEW = """    unsigned long deadline = millis() + WEBSOCKETS_TCP_TIMEOUT; /* desk
         }
 
         if((long)(millis() - deadline) >= 0) {
-            DEBUG_WEBSOCKETS("[write] write TIMEOUT! elapsed=%lu\\n", WEBSOCKETS_TCP_TIMEOUT);
+            DEBUG_WEBSOCKETS("[write] write TIMEOUT! elapsed=%lu\\n", WEBSOCKETS_TCP_WRITE_TIMEOUT);
             break;
         }
 
@@ -59,7 +59,22 @@ NEW = """    unsigned long deadline = millis() + WEBSOCKETS_TCP_TIMEOUT; /* desk
 if not os.path.isfile(WS_CPP):
     print("==> WebSockets.cpp not found, skip patch: %s" % WS_CPP)
 elif MARKER in open(WS_CPP, "r", encoding="utf-8").read():
-    print("==> WebSockets.cpp write deadline already patched")
+    with open(WS_CPP, "r", encoding="utf-8") as f:
+        content = f.read()
+    if "WEBSOCKETS_TCP_WRITE_TIMEOUT" not in content:
+        content = content.replace(
+            "millis() + WEBSOCKETS_TCP_TIMEOUT; /* deskbot: absolute write deadline */",
+            "millis() + WEBSOCKETS_TCP_WRITE_TIMEOUT; /* deskbot: absolute write deadline */",
+        )
+        content = content.replace(
+            "write TIMEOUT! elapsed=%lu\\n\", WEBSOCKETS_TCP_TIMEOUT);",
+            "write TIMEOUT! elapsed=%lu\\n\", WEBSOCKETS_TCP_WRITE_TIMEOUT);",
+        )
+        with open(WS_CPP, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("==> WebSockets.cpp write deadline upgraded to WEBSOCKETS_TCP_WRITE_TIMEOUT")
+    else:
+        print("==> WebSockets.cpp write deadline already patched")
 elif OLD not in open(WS_CPP, "r", encoding="utf-8").read():
     print("==> WebSockets.cpp: expected write() block not found, skip patch")
 else:
