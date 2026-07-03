@@ -1,4 +1,5 @@
 #include "audio_player.h"
+#include "deskbot_uplink_state.h"
 
 /* I2S1 TX：仅在本文件的 audio_play 任务内执行（static play / wav_impl / pcm16_impl）。
  * 对外只通过 audio_play_* → post_play_job_and_wait 入队。 */
@@ -458,6 +459,7 @@ void audio_play_task_main(void* /*arg*/) {
                         job.pcm_channels == 2 ? I2S_CHANNEL_STEREO : I2S_CHANNEL_MONO);
             s_stream_pcm_active = true;
             s_stream_vol = job.volume;
+            deskbot_uplink_set_speaker_active(true);
             *job.ok_out = true;
           }
         }
@@ -497,6 +499,7 @@ void audio_play_task_main(void* /*arg*/) {
           } else {
             stream_write_tail_and_restore_i2s(job.pcm_channels);
             s_stream_pcm_active = false;
+            deskbot_uplink_set_speaker_active(false);
             xSemaphoreGive(s_pipeline_mutex);
             *job.ok_out = true;
           }
@@ -504,6 +507,7 @@ void audio_play_task_main(void* /*arg*/) {
           if (s_stream_pcm_active) {
             stream_write_tail_and_restore_i2s(job.pcm_channels);
             s_stream_pcm_active = false;
+            deskbot_uplink_set_speaker_active(false);
             xSemaphoreGive(s_pipeline_mutex);
           }
         }
@@ -516,6 +520,7 @@ void audio_play_task_main(void* /*arg*/) {
           i2s_set_clk(I2S_NUM_1, SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
           stop_play();
           s_stream_pcm_active = false;
+          deskbot_uplink_set_speaker_active(false);
           xSemaphoreGive(s_pipeline_mutex);
         }
         s_stream_client_session = false;
@@ -531,6 +536,7 @@ void audio_play_task_main(void* /*arg*/) {
           i2s_set_clk(I2S_NUM_1, SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
           stop_play();
           s_stream_pcm_active = false;
+          deskbot_uplink_set_speaker_active(false);
           xSemaphoreGive(s_pipeline_mutex);
         }
         s_stream_client_session = false;

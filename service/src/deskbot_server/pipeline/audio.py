@@ -2,20 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import opuslib_next
+
+from deskbot_server.pipeline.opus_uplink import decode_opus_uplink
+from deskbot_server.pipeline.silero_vad import SileroVadConfig, SileroVadStream
 
 if TYPE_CHECKING:
     from deskbot_server.application.chat_service import ChatService
 
 logger = logging.getLogger("deskbot-server")
-
-# flush 后丢弃上行 PCM 的窗口（与 ROM ``kNoPbOpenMicMs`` 对齐，防止 post-flush 拼进下一段）
-ROM_POST_FLUSH_DISCARD_SEC = 3.0
-ROM_FLUSH_WARN_DURATION_MS = 11_500
 
 
 @dataclass
@@ -23,16 +22,17 @@ class AudioConfig:
     input_codec: str
     sample_rate: int
     channels: int
-    vad_mode: int
-    frame_ms: int
     min_speech_ms: int
     max_silence_ms: int
     pre_speech_ms: int
+    silero_model_path: str = ""
+    silero_threshold: float = 0.5
+    silero_threshold_low: float = 0.2
 
 
 @dataclass(frozen=True)
 class RomUplinkFlush:
-    """ROM ``audio`` 首帧至 ``flush`` 之间累积的 PCM。"""
+    """flush 时 Silero 收尾得到的 PCM 句段（可能为空）。"""
 
     pcm: bytes
     sample_rate: int
@@ -41,7 +41,7 @@ class RomUplinkFlush:
 
 
 class ConnectionSession:
-    """``/asr_chat`` 音频上行：按 ROM 协议累积 PCM，不在服务端做 VAD 切分。"""
+    """``/asr_chat`` 音频上行：Opus/PCM → PCM → Silero VAD 切句。"""
 
     def __init__(self, pipeline: ChatService, audio_cfg: AudioConfig):
         self.pipeline = pipeline
@@ -51,22 +51,42 @@ class ConnectionSession:
         if audio_cfg.input_codec == "opus":
             self.decoder = opuslib_next.Decoder(audio_cfg.sample_rate, audio_cfg.channels)
 
-        self.rom_pcm = bytearray()
-        self.rom_open = False
         self.rom_sr = audio_cfg.sample_rate
         self.rom_ch = audio_cfg.channels
         self.rom_codec = audio_cfg.input_codec
-        self.rom_discard_until = 0.0
         self.lock = asyncio.Lock()
+        self._uplink_open = False
 
-    def _decode(self, payload: bytes, codec: Optional[str] = None) -> bytes:
+        model_path = audio_cfg.silero_model_path
+        if not model_path:
+            model_path = str(
+                Path(__file__).resolve().parents[3] / "models" / "silero_vad" / "silero_vad.onnx"
+            )
+        elif not Path(model_path).is_absolute():
+            model_path = str(Path(__file__).resolve().parents[3] / model_path)
+        self._silero_cfg = SileroVadConfig(
+            model_path=model_path,
+            threshold=audio_cfg.silero_threshold,
+            threshold_low=audio_cfg.silero_threshold_low,
+            min_silence_ms=audio_cfg.max_silence_ms,
+            min_speech_ms=audio_cfg.min_speech_ms,
+            pre_speech_ms=audio_cfg.pre_speech_ms,
+        )
+        self._vad = SileroVadStream(self._silero_cfg, sample_rate=audio_cfg.sample_rate)
+
+    def _decode(self, payload: bytes, codec: Optional[str] = None, *, opus_frames: Optional[int] = None) -> bytes:
         use_codec = (codec or self.rom_codec or self.audio_cfg.input_codec).lower()
         if use_codec == "pcm16":
             return payload
         if use_codec == "opus":
             if self.decoder is None:
                 self.decoder = opuslib_next.Decoder(self.rom_sr, self.rom_ch)
-            return self.decoder.decode(payload, self.rom_sr // 100)
+            return decode_opus_uplink(
+                self.decoder,
+                payload,
+                sample_rate=self.rom_sr,
+                opus_frames=opus_frames,
+            )
         raise ValueError(f"unsupported codec: {use_codec}")
 
     async def feed_audio(
@@ -76,20 +96,19 @@ class ConnectionSession:
         *,
         sample_rate: Optional[int] = None,
         channels: Optional[int] = None,
+        opus_frames: Optional[int] = None,
     ) -> tuple[Optional[bytes], bool, Optional[bytes]]:
-        """追加 ROM 上行 PCM。返回 ``(None, uplink_started, None)``。"""
+        """返回 ``(utterance_pcm_or_none, uplink_started, None)``。"""
         async with self.lock:
-            now = time.monotonic()
-            if now < self.rom_discard_until:
-                return None, False, None
-
             try:
-                pcm = self._decode(payload, codec)
+                pcm = self._decode(payload, codec, opus_frames=opus_frames)
             except Exception as exc:
-                logger.debug(
-                    "audio decode skip codec=%s len=%d: %s",
+                logger.warning(
+                    "[ROM uplink] audio decode skip codec=%s len=%d sr=%d frames=%s: %s",
                     codec or self.rom_codec,
                     len(payload),
+                    self.rom_sr,
+                    opus_frames,
                     exc,
                 )
                 return None, False, None
@@ -102,61 +121,54 @@ class ConnectionSession:
                 self.rom_codec = codec.lower()
 
             uplink_started = False
-            if pcm:
-                if not self.rom_open:
-                    self.rom_open = True
-                    uplink_started = True
-                    logger.info(
-                        "[ROM uplink] 首帧 PCM device sr=%d ch=%d codec=%s chunk=%d",
-                        self.rom_sr,
-                        self.rom_ch,
-                        self.rom_codec,
-                        len(pcm),
-                    )
-                self.rom_pcm.extend(pcm)
+            if pcm and not self._uplink_open:
+                self._uplink_open = True
+                uplink_started = True
+                logger.info(
+                    "[ROM uplink] 首帧 PCM sr=%d ch=%d codec=%s chunk=%d opus_frames=%s",
+                    self.rom_sr,
+                    self.rom_ch,
+                    self.rom_codec,
+                    len(pcm),
+                    opus_frames,
+                )
 
-            return None, uplink_started, None
+            utterance = self._vad.feed_pcm(pcm) if pcm else None
+            return utterance, uplink_started, None
 
     def flush(self) -> Optional[RomUplinkFlush]:
-        if not self.rom_pcm:
-            self._reset_rom()
+        utterance = self._vad.flush()
+        self._reset_rom()
+        if not utterance:
             return None
-        pcm = bytes(self.rom_pcm)
         out = RomUplinkFlush(
-            pcm=pcm,
+            pcm=utterance,
             sample_rate=self.rom_sr,
             channels=self.rom_ch,
             codec=self.rom_codec,
         )
-        duration_ms = int(len(pcm) / 2 / max(1, self.rom_sr) * 1000)
-        if duration_ms > ROM_FLUSH_WARN_DURATION_MS:
-            logger.warning(
-                "[ROM uplink] flush duration_ms=%d exceeds ~10s cap — "
-                "check device post-flush uplink or missed flush boundary",
-                duration_ms,
-            )
+        duration_ms = int(len(utterance) / 2 / max(1, self.rom_sr) * 1000)
         logger.info(
-            "[ROM uplink] flush pcm_bytes=%d sr=%d ch=%d codec=%s duration_ms=%d",
-            len(pcm),
+            "[ROM uplink] flush utterance pcm_bytes=%d sr=%d ch=%d codec=%s duration_ms=%d",
+            len(utterance),
             self.rom_sr,
             self.rom_ch,
             self.rom_codec,
             duration_ms,
         )
-        self._reset_rom()
-        self.rom_discard_until = time.monotonic() + ROM_POST_FLUSH_DISCARD_SEC
         return out
 
     def _reset_rom(self) -> None:
-        self.rom_pcm.clear()
-        self.rom_open = False
+        self._uplink_open = False
         self.rom_sr = self.audio_cfg.sample_rate
         self.rom_ch = self.audio_cfg.channels
         self.rom_codec = self.audio_cfg.input_codec
 
     def cancel_rom_uplink(self) -> None:
-        """丢弃已上行但未 flush 的 PCM（设备端 TTS 打断录音时）。"""
-        had = len(self.rom_pcm)
+        """设备端 TTS 打断：重置 VAD 状态。"""
+        self._vad = SileroVadStream(
+            self._silero_cfg,
+            sample_rate=self.audio_cfg.sample_rate,
+        )
         self._reset_rom()
-        if had:
-            logger.info("[ROM uplink] audio_cancel discarded %d bytes", had)
+        logger.info("[ROM uplink] audio_cancel reset Silero VAD state")

@@ -6,7 +6,6 @@
 #include "camera_ws.h"
 #include "deskbot_config.h"
 #include "wifi_provision.h"
-#include "vadnet_gate.h"
 #include "common.h"
 #include "oled.h"
 #include "audio_player.h"
@@ -129,11 +128,11 @@ void setup() {
   wifi_provision_set_link_handlers(on_wifi_link_down, on_wifi_link_up);
 
   setup_audio();
-  if (!vadnet_gate_setup()) {
-    log_warn("[BOOT] VADNet unavailable — ASR uplink falls back to energy gate");
-  }
   mic_capture_setup();
   audio_play_task_setup();
+  if (!asrChatClient.initWsUplink()) {
+    log_error("[BOOT] ws_uplink task start failed");
+  }
   display_task_setup();
 
   log_info("[BOOT] firmware=%s %s %s", VERSION, __DATE__, __TIME__);

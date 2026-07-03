@@ -159,6 +159,12 @@ ensure_models() {
     echo "[setup] ASR 模型已就绪: $ASR_MODEL_DIR"
   fi
 
+  if [[ -f "$ASR_MODEL_DIR/model.pt" ]] && [[ ! -f "$ASR_MODEL_DIR/model_quant.onnx" ]]; then
+    echo "[setup] 导出 ASR 量化 ONNX（model_quant.onnx，首次约 1 分钟）..."
+    "$(deskbot_venv_python)" "$ROOT/scripts/export_asr_quant_onnx.py" "$ASR_MODEL_DIR" || \
+      echo "[warn] 量化 ONNX 导出失败，将回退 PyTorch model.pt 推理。" >&2
+  fi
+
   if ! face_model_ready; then
     download_face_model
   else

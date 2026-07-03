@@ -161,13 +161,29 @@ def build_pb_wire_pairs(
 
     pb_req = request_id or uuid.uuid4().hex[:16]
     pb_vol = resolve_pb_device_hints(tts_cfg, volume=volume, device_id=device_id)
+    output_fmt = str(tts_cfg.get("output_codec") or "s16le").lower()
+    audio_blobs: list[bytes] = list(merged_pcm)
+    opus_frames: list[int] | None = None
+    if output_fmt == "opus":
+        from deskbot_server.pipeline.opus_downlink import encode_pcm_s16le_to_opus_batch
+
+        audio_blobs = []
+        opus_frames = []
+        for pcm in merged_pcm:
+            blob, nf = encode_pcm_s16le_to_opus_batch(pcm, sample_rate)
+            audio_blobs.append(blob)
+            opus_frames.append(nf)
+        wire_fmt = "opus"
+    else:
+        wire_fmt = "s16le"
     pairs = pb_json_messages(
         pb_req=pb_req,
         sample_rate=sample_rate,
-        fmt="s16le",
+        fmt=wire_fmt,
         channels=1,
         anim_rows=merged_rows,
-        pcm_per_idx=merged_pcm,
+        pcm_per_idx=audio_blobs,
+        opus_frames_per_idx=opus_frames,
         volume=pb_vol,
         action=action,
     )

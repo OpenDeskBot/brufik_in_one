@@ -8,14 +8,36 @@ import io
 import wave
 
 from deskbot_server.ws.asr_chat import _publish_asr_capture
+from deskbot_server.ws.device_pipeline import DevicePipelineBroker
 
 
 class _CaptureBroker:
     def __init__(self) -> None:
         self.messages: list[tuple[str, dict]] = []
 
+    async def has_subscribers_for_device(self, device_id: str | None = None) -> bool:
+        return True
+
     async def broadcast_to_device(self, device_id: str, payload: dict) -> None:
         self.messages.append((device_id, payload))
+
+
+def test_publish_asr_capture_skips_without_subscribers():
+    async def _run() -> None:
+        broker = DevicePipelineBroker()
+        await _publish_asr_capture(
+            broker,
+            "dev1",
+            request_id="r1",
+            pcm_segment=b"\x00\x00" * 160,
+            sample_rate=16000,
+            asr_text="你好",
+            asr_ms=10.0,
+            asr_valid=True,
+        )
+        assert broker.snapshot_events("dev1") == []
+
+    asyncio.run(_run())
 
 
 def test_publish_asr_capture_includes_wav_and_flags():

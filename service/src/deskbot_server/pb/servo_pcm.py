@@ -508,6 +508,7 @@ def pb_json_messages(
     anim_rows: list[dict[str, Any]],
     pcm_per_idx: list[bytes],
     assets_per_idx: list[list[bytes]] | None = None,
+    opus_frames_per_idx: list[int] | None = None,
     action: str = PB_ACTION_REPLACE,
     level: int = PB_LEVEL_TASK,
     volume: int | None = None,
@@ -565,7 +566,10 @@ def pb_json_messages(
                 msg["sr"] = int(sample_rate)
                 msg["fmt"] = fmt
                 msg["ch"] = int(channels)
-            msg["audio"] = {"next_bin_len": len(pcm)}
+            audio_obj: dict[str, Any] = {"next_bin_len": len(pcm)}
+            if fmt == "opus" and opus_frames_per_idx and i < len(opus_frames_per_idx):
+                audio_obj["frames"] = int(opus_frames_per_idx[i])
+            msg["audio"] = audio_obj
         if row_assets:
             from deskbot_server.pb.llm_display import jpeg_blob_dimensions
 

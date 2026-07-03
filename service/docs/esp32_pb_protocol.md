@@ -96,7 +96,7 @@ websocket_connect(url);
 | 方向 | 声明 | binary 内容 |
 |------|------|-------------|
 | 上行 | 根级 `"next_bin_len": N` | Opus / PCM16 / JPEG |
-| 下行 pb | `"audio": {"next_bin_len": N}` | s16le PCM |
+| 下行 pb | `"audio": {"next_bin_len": N, "frames": F?}` | **opus** batch 或 s16le PCM |
 
 ---
 
@@ -151,7 +151,7 @@ JSON flush
 | 项目 | 约定 |
 |------|------|
 | 版本 | `pb_ver: 2`（wire v2.1） |
-| 音频 | mono **s16le**，**sr = 24000**（首包声明） |
+| 音频 | mono **opus**（默认，`config.yaml` → `audio.output_codec`）或 **s16le**，**sr = 24000**（首包声明） |
 | 画布 | **284 × 240**，原点左上 |
 | 单包 | `chunk_ms ≤ 10000` |
 | 口播默认 | `level = 1`，`action = "replace"` |
@@ -164,7 +164,7 @@ JSON flush
 |------|------|
 | R0 | `pb_start`/`pb_chunk`/`pb_end`/`pb_single` 中 `audio`/`servo`/`anim` 至少一项 |
 | R1 | 队列决策仅 **`pb_start`**、**`pb_single`**；同 `req` 的 `pb_chunk`/`pb_end` 只续传 |
-| R2 | `audio.next_bin_len > 0` → 下一条为等长 PCM binary |
+| R2 | `audio.next_bin_len > 0` → 下一条为等长 audio binary（opus batch 或 s16le PCM） |
 | R3 | 协议错位 → 丢弃该 `req` 剩余片，清队列 |
 | R4 | 同 `req` 内 `idx` 从 0 严格递增 |
 | R5 | 有 `anim[]` 时 `sum(anim[i].ms) == chunk_ms` |
@@ -294,7 +294,7 @@ c  = (R5 << 11) | (G6 << 5) | B5
 "audio": { "next_bin_len": 92112 }
 ```
 
-`sr`/`fmt`/`ch` 以本 `req` **首条含音频**的包为准（当前 24000 / s16le / 1）。
+| `sr`/`fmt`/`ch` 以本 `req` **首条含音频**的包为准（当前 24000 / opus 或 s16le / 1）。
 
 ### 6.2 舵机 `servo[]`
 

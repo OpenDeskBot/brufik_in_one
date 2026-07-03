@@ -42,28 +42,26 @@ async def main():
         input_codec=app_settings.audio.input_codec,
         sample_rate=app_settings.audio.sample_rate,
         channels=app_settings.audio.channels,
-        vad_mode=app_settings.vad.mode,
-        frame_ms=app_settings.vad.frame_ms,
         min_speech_ms=app_settings.vad.min_speech_ms,
         max_silence_ms=app_settings.vad.max_silence_ms,
         pre_speech_ms=app_settings.vad.pre_speech_ms,
+        silero_model_path=app_settings.vad.silero_model_path,
+        silero_threshold=app_settings.vad.silero_threshold,
+        silero_threshold_low=app_settings.vad.silero_threshold_low,
     )
     logger.info(
-        "[VAD/AUDIO] codec=%s sample_rate=%d channels=%d | vad_mode=%d frame_ms=%d "
+        "[VAD/AUDIO] codec=%s sample_rate=%d channels=%d | silero "
         "min_speech_ms=%d max_silence_ms=%d pre_speech_ms=%d "
-        "(min_speech_frames=%d max_silence_frames=%d pre_frames=%d) | "
+        "threshold=%.2f threshold_low=%.2f | "
         "asr_text_filter: min_text_len=%s min_chinese_ratio=%s",
         audio_cfg.input_codec,
         audio_cfg.sample_rate,
         audio_cfg.channels,
-        audio_cfg.vad_mode,
-        audio_cfg.frame_ms,
         audio_cfg.min_speech_ms,
         audio_cfg.max_silence_ms,
         audio_cfg.pre_speech_ms,
-        max(1, audio_cfg.min_speech_ms // audio_cfg.frame_ms),
-        max(1, audio_cfg.max_silence_ms // audio_cfg.frame_ms),
-        max(1, audio_cfg.pre_speech_ms // audio_cfg.frame_ms),
+        audio_cfg.silero_threshold,
+        audio_cfg.silero_threshold_low,
         config.get("asr", {}).get("text_filter", {}).get("min_text_len"),
         config.get("asr", {}).get("text_filter", {}).get("min_chinese_ratio"),
     )

@@ -35,6 +35,7 @@ class ServerSettings:
 @dataclass(frozen=True)
 class AudioSettings:
     input_codec: str = "opus"
+    output_codec: str = "opus"
     sample_rate: int = 16000
     channels: int = 1
 
@@ -43,9 +44,12 @@ class AudioSettings:
 class VadSettings:
     mode: int = 2
     frame_ms: int = 30
-    min_speech_ms: int = 300
+    min_speech_ms: int = 250
     max_silence_ms: int = 500
     pre_speech_ms: int = 300
+    silero_model_path: str = ""
+    silero_threshold: float = 0.5
+    silero_threshold_low: float = 0.2
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,8 @@ class AsrSettings:
     model_dir: str = ""
     hub: str = "hf"
     language: str = "zh"
+    use_quant_onnx: bool = True
+    onnx_intra_op_threads: int = 4
     text_filter: AsrTextFilterSettings = field(default_factory=AsrTextFilterSettings)
 
 
@@ -195,6 +201,7 @@ class AppSettings:
             ),
             audio=AudioSettings(
                 input_codec=str(audio.get("input_codec", "opus")),
+                output_codec=str(audio.get("output_codec", "opus")),
                 sample_rate=int(audio.get("sample_rate", 16000)),
                 channels=int(audio.get("channels", 1)),
             ),
@@ -204,11 +211,18 @@ class AppSettings:
                 min_speech_ms=int(vad.get("min_speech_ms", 300)),
                 max_silence_ms=int(vad.get("max_silence_ms", 500)),
                 pre_speech_ms=int(vad.get("pre_speech_ms", 300)),
+                silero_model_path=str(vad.get("silero_model_path", "")),
+                silero_threshold=float(vad.get("silero_threshold", 0.5)),
+                silero_threshold_low=float(vad.get("silero_threshold_low", 0.2)),
             ),
             asr=AsrSettings(
                 model_dir=str(asr.get("model_dir", "")),
                 hub=str(asr.get("hub", "hf")),
                 language=str(asr.get("language", "zh")),
+                use_quant_onnx=bool(asr.get("use_quant_onnx", True)),
+                onnx_intra_op_threads=max(
+                    1, int(asr.get("onnx_intra_op_threads", 4))
+                ),
                 text_filter=AsrTextFilterSettings(
                     min_text_len=int(tf.get("min_text_len", 2)),
                     min_chinese_ratio=float(tf.get("min_chinese_ratio", 0.2)),
@@ -261,6 +275,7 @@ class AppSettings:
             "pb_face_bundle_json": self.tts.pb_face_bundle_json,
             "pb_face_bundle_file": self.tts.pb_face_bundle_file,
         }
+        base["output_codec"] = self.audio.output_codec
         base.update(self.tts.extra)
         return base
 

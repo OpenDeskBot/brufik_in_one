@@ -41,6 +41,18 @@ def coerce_next_bin_len(data: dict[str, Any]) -> int:
     return n
 
 
+def coerce_opus_frames(data: dict[str, Any]) -> Optional[int]:
+    """Opus batch 帧数；缺省或 1 表示单帧 binary。"""
+    raw = data.get("frames")
+    if raw is None:
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 1 else None
+
+
 @dataclass
 class PendingUplinkBinary:
     kind: PendingKind
@@ -48,6 +60,7 @@ class PendingUplinkBinary:
     codec: Optional[str] = None
     sample_rate: Optional[int] = None
     channels: Optional[int] = None
+    opus_frames: Optional[int] = None
 
 
 @dataclass

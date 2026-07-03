@@ -98,18 +98,7 @@ static inline bool deskbot_api_key_configured(void) {
 #define DESKBOT_PDM_MIC_CLK  GPIO_NUM_42
 #define DESKBOT_PDM_MIC_DATA GPIO_NUM_41
 
-/* VADNet（ESP-SR AFE）参数：见 vadnet_gate.cpp
- * vad_mode：0 最松 → 4 最严（远场/背景人声误触时可加大）。 */
-#define DESKBOT_VADNET_MIN_SPEECH_MS         200
-#define DESKBOT_VADNET_MIN_NOISE_MS          300
-#define DESKBOT_VADNET_DELAY_MS              128
-#define DESKBOT_VADNET_MODE                  2
-/** VADNet 判 speech 时另需满足的帧均 abs 下限（enhanceVoice 后；近讲通常 >150）。 */
-#define DESKBOT_VADNET_MIN_ABS_AVG           140
-/** VADNet 监听阶段环形缓冲时长（秒）；触发后按时间序整段上行，再续 live 帧。 */
-#define DESKBOT_VADNET_RING_SECONDS          10
-
-/* 能量门控（VADNet 联合触发 + fallback） */
+/* 能量门控（enhanceVoice 后本地预处理，切句在服务端 Silero VAD） */
 #define DESKBOT_PDM_VOICE_MARGIN             320
 #define DESKBOT_PDM_VOICE_HANGOVER_MARGIN    200
 #define DESKBOT_PDM_VOICE_TRIGGER_RATIO_NUM    130
@@ -143,4 +132,29 @@ static inline size_t deskbot_pdm_voice_hangover_thr(size_t ema) {
 
 /** I2S 播放 chunk 的 mean-abs×volume 低于此值视为静音，isSpeaking 保持 false。 */
 #define DESKBOT_SPEAKER_AUDIBLE_MEAN_ABS     16
+
+/** TTS 结束后尾音抑制（ms）；无 AEC 时开麦前丢弃环内回声。 */
+#ifndef DESKBOT_TAIL_SUPPRESS_MS
+#define DESKBOT_TAIL_SUPPRESS_MS               300
+#endif
+
+/** 相机 JPEG 上行最小间隔（ms，空闲时）。 */
+#ifndef DESKBOT_CAMERA_UPLINK_INTERVAL_MS
+#define DESKBOT_CAMERA_UPLINK_INTERVAL_MS      500
+#endif
+
+/** 连续听音期间相机 JPEG 上行最小间隔（ms）；与 Opus 并行时降低带宽争用。 */
+#ifndef DESKBOT_CAMERA_UPLINK_INTERVAL_DURING_LISTEN_MS
+#define DESKBOT_CAMERA_UPLINK_INTERVAL_DURING_LISTEN_MS  2000
+#endif
+
+/** 单轮连续 Opus 上行上限（秒）；正常由 pb_start 提前结束。 */
+#ifndef DESKBOT_UPLINK_MAX_SEC
+#define DESKBOT_UPLINK_MAX_SEC                 30
+#endif
+
+/** 下行 pb 等 BIN 超时（ms）；超时后 reset 序列并 flush defer 队列，防卡死。 */
+#ifndef DESKBOT_PB_EXPECT_BIN_TIMEOUT_MS
+#define DESKBOT_PB_EXPECT_BIN_TIMEOUT_MS       12000
+#endif
 

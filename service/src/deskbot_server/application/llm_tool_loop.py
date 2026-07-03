@@ -1,16 +1,19 @@
 """LLM 多轮 tool-call 循环：中间轮执行 tools，末轮走 TTS/pb。"""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 from deskbot_server.application.llm_tool_runner import execute_llm_tools
+from deskbot_server.application.tool_interim_tts import build_tool_interim_tts
 from deskbot_server.llm.utils import parse_llm_reply
 
 if TYPE_CHECKING:
     from deskbot_server.application.chat_service import ChatService
+    from deskbot_server.application.chat_flow import _TtsPrefetch
 
 logger = logging.getLogger("deskbot-server")
 
@@ -42,7 +45,8 @@ def build_llm_tool_followup_message(tool_results: list[dict[str, Any]]) -> str:
     return (
         "[工具执行结果]\n"
         f"{payload}\n\n"
-        "请根据结果继续。若还需调用工具，请输出 JSON 且 ``tools`` 非空（``tts`` 可留空）；"
+        "请根据结果继续。若还需调用工具，请输出 JSON 且 ``tools`` 非空，"
+        "并在 ``tts`` 写一句口语化过渡语（如「稍等，我帮你查一下」）以便立刻播报；"
         "若已完成，请输出最终 JSON，``tools`` 写 [] 并填写 ``tts`` 等字段。"
     )
 
@@ -59,6 +63,8 @@ async def complete_llm_with_tool_loop(
     dp_broker: Optional[Any] = None,
     pipeline_source: Optional[str] = None,
     on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
+    tts_prefetch: Optional["_TtsPrefetch"] = None,
+    on_interim_tts_play: Optional[Callable[[str, int], Awaitable[None]]] = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str]:
     """多轮 LLM：有 tools 则执行并继续，无 tools 则返回最终 parsed。
 
@@ -94,7 +100,32 @@ async def complete_llm_with_tool_loop(
             )
             break
 
-        tool_results = execute_llm_tools(tools, device_id=device_id, session_id=session_id)
+        interim_text = (parsed.get("reply") or "").strip()
+        if not interim_text:
+            interim_text = build_tool_interim_tts(tools)
+            if interim_text:
+                logger.info(
+                    "[LLM] tool 轮兜底过渡 TTS device_id=%s req=%s text=%r",
+                    device_id,
+                    request_id,
+                    interim_text[:80],
+                )
+        play_coro = None
+        if interim_text and on_interim_tts_play is not None:
+            play_coro = on_interim_tts_play(interim_text, round_idx + 1)
+        elif interim_text and tts_prefetch is not None:
+            tts_prefetch.cancel()
+
+        tool_coro = asyncio.to_thread(
+            execute_llm_tools,
+            tools,
+            device_id=device_id,
+            session_id=session_id,
+        )
+        if play_coro is not None:
+            tool_results, _ = await asyncio.gather(tool_coro, play_coro)
+        else:
+            tool_results = await tool_coro
         all_tools.extend(tools)
         all_tool_results.extend(tool_results)
         logger.info(

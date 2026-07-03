@@ -15,7 +15,7 @@
 #define UDP_DISCOVERY_PREFIX "Deskbot"
 
 #ifndef RECORD_TIME
-#define RECORD_TIME 10
+#define RECORD_TIME DESKBOT_UPLINK_MAX_SEC
 #endif
 
 /* asr_chat 主循环最长运行时间（毫秒）。0 = 上电后一直对话，不自动 leave。原固件为 600000（10 分钟）。 */

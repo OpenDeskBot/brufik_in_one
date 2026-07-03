@@ -46,6 +46,53 @@ def test_resolve_system_llm_config_prefers_ark_env(monkeypatch):
     assert cfg.model == "ep-202607020001"
 
 
+def test_chat_completion_stream_invokes_tts_extractor(monkeypatch):
+    from deskbot_server.llm.runtime import ResolvedLlmConfig, chat_acompletion
+
+    seen_deltas: list[str] = []
+
+    def fake_stream(messages, cfg, *, temperature, json_mode, on_delta=None, timeout=60):
+        assert json_mode is True
+        chunks = ['{"tts":"', "你好", '","tools":[]}']
+        for c in chunks:
+            seen_deltas.append(c)
+            if on_delta is not None:
+                on_delta(c)
+        return "".join(chunks), {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+
+    monkeypatch.setattr(
+        "deskbot_server.llm.runtime._request_chat_completion_stream",
+        fake_stream,
+    )
+    cfg = ResolvedLlmConfig(
+        model="qwen-flash",
+        api_key="test-key",
+        api_base="https://dashscope.example/v1",
+        protocol="dashscope",
+        source="test",
+        display_name="test",
+    )
+    tts_seen: list[str] = []
+
+    async def _run():
+        async def on_tts(text: str) -> None:
+            tts_seen.append(text)
+
+        content, meta = await chat_acompletion(
+            [{"role": "user", "content": "hi"}],
+            config=cfg,
+            on_tts_ready=on_tts,
+        )
+        return content, meta
+
+    import asyncio
+
+    content, meta = asyncio.run(_run())
+    assert content == '{"tts":"你好","tools":[]}'
+    assert tts_seen == ["你好"]
+    assert meta["usage"]["total_tokens"] == 3
+
+
 def test_chat_completion_posts_to_openai_compatible_endpoint(monkeypatch):
     from deskbot_server.llm.runtime import ResolvedLlmConfig, chat_completion
 

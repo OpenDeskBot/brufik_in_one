@@ -5,33 +5,76 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
-from funasr import AutoModel
+import numpy as np
 
-from deskbot_server.asr_model_dir import asr_model_dir_ready
+from deskbot_server.asr_model_dir import asr_model_dir_ready, ensure_asr_quant_onnx, has_quant_onnx
 from deskbot_server.core.concurrency import asr_infer_slot
 from deskbot_server.core.settings import AppSettings
 from deskbot_server.paths import MODELS_DIR, PROJECT_ROOT
-from deskbot_server.util import save_temp_wav
+from deskbot_server.util import pcm_to_wav_bytes
 
 logger = logging.getLogger("deskbot-server")
 
 
 class FunAsrAdapter:
-    """FunASR SenseVoice ASR 适配器。"""
+    """FunASR SenseVoice ASR：优先 ``model_quant.onnx``（CPU），否则回退 PyTorch。"""
 
     def __init__(self, settings: AppSettings) -> None:
         self._settings = settings
         self._language = settings.asr.language
         self._min_text_len = settings.asr.text_filter.min_text_len
         self._min_chinese_ratio = settings.asr.text_filter.min_chinese_ratio
+        self._use_quant_onnx = settings.asr.use_quant_onnx
+        self._onnx_threads = settings.asr.onnx_intra_op_threads
         model_dir = self._resolve_model_dir(settings.asr.model_dir)
         self._validate_model_dir(model_dir)
-        self._model = AutoModel(
-            model=model_dir,
-            disable_update=True,
-            hub=settings.asr.hub,
+        self._model_dir = model_dir
+        self._onnx_model: Any = None
+        self._pt_model: Any = None
+
+        if self._use_quant_onnx:
+            if not has_quant_onnx(model_dir):
+                ensure_asr_quant_onnx(model_dir)
+            if has_quant_onnx(model_dir):
+                self._onnx_model = self._load_onnx_model(model_dir)
+                logger.info(
+                    "[ASR] 使用量化 ONNX 推理 model_dir=%s threads=%d",
+                    model_dir,
+                    self._onnx_threads,
+                )
+            else:
+                logger.warning(
+                    "[ASR] model_quant.onnx 不可用，回退 PyTorch model.pt model_dir=%s",
+                    model_dir,
+                )
+
+        if self._onnx_model is None:
+            from funasr import AutoModel
+
+            self._pt_model = AutoModel(
+                model=model_dir,
+                disable_update=True,
+                hub=settings.asr.hub,
+            )
+            logger.info("[ASR] 使用 PyTorch 推理 model_dir=%s", model_dir)
+
+    def _load_onnx_model(self, model_dir: str) -> Any:
+        from funasr_onnx import SenseVoiceSmall
+
+        threads = self._onnx_threads
+        env_raw = (os.environ.get("DESKBOT_ASR_ONNX_THREADS") or "").strip()
+        if env_raw:
+            try:
+                threads = max(1, int(env_raw))
+            except ValueError:
+                pass
+        return SenseVoiceSmall(
+            model_dir,
+            batch_size=1,
+            quantize=True,
+            intra_op_num_threads=threads,
         )
 
     @staticmethod
@@ -54,7 +97,6 @@ class FunAsrAdapter:
             if os.path.isdir(path):
                 return path
 
-        # 返回首个候选供 _validate_model_dir 打出明确路径
         for raw in candidates:
             path = FunAsrAdapter._normalize_model_path(raw)
             if path:
@@ -88,24 +130,55 @@ class FunAsrAdapter:
 
     async def transcribe(self, pcm_bytes: bytes, sample_rate: int) -> str:
         async with asr_infer_slot():
-            wav_path = await asyncio.to_thread(save_temp_wav, pcm_bytes, sample_rate)
-            try:
-                result = await asyncio.to_thread(
-                    self._model.generate,
-                    input=wav_path,
-                    cache={},
-                    language=self._language,
-                    use_itn=True,
+            if self._onnx_model is not None:
+                lines = await asyncio.to_thread(
+                    self._transcribe_onnx,
+                    pcm_bytes,
+                    sample_rate,
                 )
-            finally:
-                try:
-                    os.remove(wav_path)
-                except OSError:
-                    pass
-        if not result:
+            else:
+                lines = await asyncio.to_thread(
+                    self._transcribe_pytorch,
+                    pcm_bytes,
+                    sample_rate,
+                )
+        if not lines:
             return ""
-        raw_text = str(result[0].get("text", "")).strip()
+        raw_text = str(lines[0] if isinstance(lines, list) else lines).strip()
         return self._normalize_text(raw_text)
+
+    def _transcribe_onnx(self, pcm_bytes: bytes, sample_rate: int) -> list[str]:
+        waveform = self._pcm_to_waveform(pcm_bytes, sample_rate)
+        lang = self._language if self._language in ("auto", "zh", "en", "yue", "ja", "ko") else "zh"
+        return self._onnx_model(
+            waveform,
+            language=lang,
+            textnorm="withitn",
+        )
+
+    def _transcribe_pytorch(self, pcm_bytes: bytes, sample_rate: int) -> list:
+        wav_bytes = pcm_to_wav_bytes(pcm_bytes, sample_rate)
+        result = self._pt_model.generate(
+            input=wav_bytes,
+            cache={},
+            language=self._language,
+            use_itn=True,
+        )
+        if not result:
+            return []
+        return [str(result[0].get("text", "")).strip()]
+
+    @staticmethod
+    def _pcm_to_waveform(pcm_bytes: bytes, sample_rate: int) -> np.ndarray:
+        if not pcm_bytes:
+            return np.zeros(0, dtype=np.float32)
+        pcm = np.frombuffer(pcm_bytes, dtype=np.int16)
+        wave = pcm.astype(np.float32) / 32768.0
+        if sample_rate != 16000:
+            import librosa
+
+            wave = librosa.resample(wave, orig_sr=sample_rate, target_sr=16000)
+        return wave
 
     def is_valid_text(self, text: str) -> bool:
         from deskbot_server.asr.text_filter import is_asr_text_acceptable

@@ -38,8 +38,10 @@ server:
   asr_chat_minimal_device_downlink: false
   pb_idle_snore_sec: 5
   pb_idle_silence_sec: 2
+  max_concurrent_asr: 6
 audio:
   input_codec: opus
+  output_codec: opus
   sample_rate: 16000
   channels: 1
 vad:
@@ -48,10 +50,15 @@ vad:
   min_speech_ms: 250
   max_silence_ms: 500
   pre_speech_ms: 300
+  silero_model_path: models/silero_vad/silero_vad.onnx
+  silero_threshold: 0.5
+  silero_threshold_low: 0.2
 asr:
   model_dir: ''
   hub: hf
   language: zh
+  use_quant_onnx: true
+  onnx_intra_op_threads: 4
   text_filter:
     min_text_len: 2
     min_chinese_ratio: 0.0

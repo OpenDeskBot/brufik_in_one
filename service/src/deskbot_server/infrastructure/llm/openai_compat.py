@@ -124,21 +124,9 @@ class OpenAiLlmAdapter:
             answer = await _chat(retry_messages, stream_tts=on_tts_ready is not None)
             parsed = parse_llm_reply(answer)
         elif parsed.get("tools") and not (parsed.get("reply") or "").strip():
-            logger.warning(
-                "[LLM] 仅有 tools 无 tts，重试 device_id=%s tools=%s",
+            logger.info(
+                "[LLM] tools 轮无 tts，跳过过渡语重试 device_id=%s tools=%s",
                 device_id,
                 parsed.get("tools"),
             )
-            retry_messages = list(messages)
-            retry_messages.append({"role": "assistant", "content": answer})
-            retry_messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "上轮只返回了 tools，缺少完整 JSON 对象与 tts。"
-                        "请输出完整 JSON：tools 写 []，tts 写要对用户说的口语。"
-                    ),
-                }
-            )
-            answer = await _chat(retry_messages, stream_tts=on_tts_ready is not None)
         return answer

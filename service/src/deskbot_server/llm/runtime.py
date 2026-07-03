@@ -274,6 +274,111 @@ def _content_from_response(response: Any) -> str:
         return ""
 
 
+def _delta_content_from_sse_event(data: dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    delta = first.get("delta")
+    if isinstance(delta, dict):
+        return _stringify_content(delta.get("content"))
+    message = first.get("message")
+    if isinstance(message, dict):
+        return _stringify_content(message.get("content"))
+    return ""
+
+
+def _iter_sse_json_events(resp) -> Any:
+    """从 OpenAI-compatible SSE 响应中逐条解析 ``data: {...}``。"""
+    buf = b""
+    while True:
+        chunk = resp.read(4096)
+        if not chunk:
+            break
+        buf += chunk
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            line = line.strip()
+            if not line or not line.startswith(b"data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == b"[DONE]":
+                return
+            try:
+                data = json.loads(payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict):
+                yield data
+
+
+def _request_chat_completion_stream(
+    messages: list[dict[str, str]],
+    cfg: ResolvedLlmConfig,
+    *,
+    temperature: float,
+    json_mode: bool,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    on_delta: Optional[Callable[[str], None]] = None,
+) -> tuple[str, Optional[dict[str, Any]]]:
+    """SSE 流式 Chat Completions；``on_delta`` 收到 content 增量时回调。"""
+    _validate_api_key(cfg)
+    url = _completion_url(cfg.api_base, cfg.protocol)
+    payload = _build_completion_payload(
+        messages,
+        cfg,
+        temperature=temperature,
+        json_mode=json_mode,
+        stream=True,
+    )
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {cfg.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "User-Agent": "deskbot-server/0.1",
+        },
+        method="POST",
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", "replace").strip()
+        preview = err_body[:1000] if err_body else str(exc)
+        raise RuntimeError(f"LLM API 请求失败 HTTP {exc.code}: {preview}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"LLM API 请求失败: {exc.reason}") from exc
+
+    parts: list[str] = []
+    usage: Optional[dict[str, Any]] = None
+    try:
+        with resp:
+            for event in _iter_sse_json_events(resp):
+                piece = _delta_content_from_sse_event(event)
+                if piece:
+                    parts.append(piece)
+                    if on_delta is not None:
+                        on_delta(piece)
+                event_usage = event.get("usage")
+                if isinstance(event_usage, dict):
+                    usage = {
+                        "prompt_tokens": event_usage.get("prompt_tokens"),
+                        "completion_tokens": event_usage.get("completion_tokens"),
+                        "total_tokens": event_usage.get("total_tokens"),
+                    }
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", "replace").strip()
+        preview = err_body[:1000] if err_body else str(exc)
+        raise RuntimeError(f"LLM SSE 读取失败 HTTP {exc.code}: {preview}") from exc
+
+    return "".join(parts).strip(), usage
+
+
 def _request_chat_completion(
     messages: list[dict[str, str]],
     cfg: ResolvedLlmConfig,
@@ -336,26 +441,59 @@ async def chat_acompletion(
 ) -> tuple[str, dict[str, Any]]:
     """Call an OpenAI-compatible Chat Completions endpoint."""
     cfg = config or resolve_llm_config(device_id)
-    use_stream = False
-    if stream or on_tts_ready:
-        logger.debug("[LLM] direct runtime currently uses non-stream request and post-response TTS hook")
-    response = await asyncio.to_thread(
-        _request_chat_completion,
-        messages,
-        cfg,
-        temperature=temperature,
-        json_mode=json_mode,
-        stream=use_stream,
-    )
-    content = _content_from_response(response)
-    usage_dict = _usage_from_response(response)
+    use_stream = bool(stream or on_tts_ready)
+    usage_dict: Optional[dict[str, Any]] = None
+    tts_extractor: JsonTtsStreamExtractor | None = None
 
-    if on_tts_ready is not None:
-        text = JsonTtsStreamExtractor().feed(content)
-        if text:
-            result = on_tts_ready(text)
-            if inspect.isawaitable(result):
-                await result
+    async def _fire_tts_ready(text: str) -> None:
+        if not on_tts_ready or not text:
+            return
+        result = on_tts_ready(text)
+        if inspect.isawaitable(result):
+            await result
+
+    if use_stream:
+        tts_extractor = JsonTtsStreamExtractor()
+        pending_tts: dict[str, Optional[str]] = {"text": None}
+
+        def _on_delta(piece: str) -> None:
+            if tts_extractor is None:
+                return
+            ready = tts_extractor.feed(piece)
+            if ready:
+                pending_tts["text"] = ready
+
+        content, usage_dict = await asyncio.to_thread(
+            _request_chat_completion_stream,
+            messages,
+            cfg,
+            temperature=temperature,
+            json_mode=json_mode,
+            on_delta=_on_delta,
+        )
+        if pending_tts["text"]:
+            await _fire_tts_ready(pending_tts["text"])
+        elif tts_extractor is not None and not tts_extractor._fired:
+            ready = tts_extractor.feed("")
+            if ready:
+                await _fire_tts_ready(ready)
+        logger.debug(
+            "[LLM] SSE 流式完成 device_id=%s chars=%d tts_prefetch=%s",
+            device_id,
+            len(content),
+            bool(tts_extractor and tts_extractor._fired),
+        )
+    else:
+        response = await asyncio.to_thread(
+            _request_chat_completion,
+            messages,
+            cfg,
+            temperature=temperature,
+            json_mode=json_mode,
+            stream=False,
+        )
+        content = _content_from_response(response)
+        usage_dict = _usage_from_response(response)
 
     meta = {
         "model": build_chat_model(cfg.protocol, cfg.model),

@@ -22,16 +22,22 @@ public:
 
   /** TTS/pb 半双工窗口（含 anim-only pb）；mic 抑制与旧 camera 逻辑共用。 */
   bool isVisionUplinkPaused() const;
-  /** 仅 PCM 上行或 TTS PCM 下行时暂停 camera；anim-only pb 仍可上传 JPEG。 */
+  /** 仅 Opus 上行或 TTS PCM 下行时暂停 camera；anim-only pb 仍可上传 JPEG。 */
   bool isCameraUplinkPaused() const;
   /** 扬声器 I2S 正在输出或播放队列有待播 PCM（不含 stream begin 空窗）。 */
   bool isSpeaking() const;
   /** TTS/I2S DMA 尾音抑制窗口内（无 AEC 时防回声误触发 VAD）。 */
   bool isMicTailSuppressed() const;
-  /** VAD 已触发、本轮语音上行窗口内（含已发/待发 PCM）。 */
+  /** VAD 已触发、本轮语音上行窗口内（含已发/待发 Opus）。 */
   bool isVadGateOpen() const;
   /** 主循环可否开新一轮录音（WS 可用 + 无 TTS + 无尾音抑制）。 */
   bool canStartVoiceRound();
+
+  /** ws_uplink RX 队列 → 原 onWebSocketEvent（须在主上下文调用）。 */
+  void dispatchWebSocketEvent(WStype_t type, uint8_t* payload, size_t length);
+
+  /** ws_uplink 任务；setup 阶段调用一次。 */
+  bool initWsUplink();
 
   /** WiFi 断线：立即标记 WS 需重连，避免对 unreachable 主机空转 connect。 */
   void onLinkDown(const char* why = "wifi lost");
@@ -45,12 +51,14 @@ private:
   static constexpr const char* kHost = ASR_CHAT_HOST;
   static constexpr uint16_t kPort = ASR_CHAT_PORT;
   static constexpr size_t kFrameSamples20ms = 320;  // 16kHz * 0.02s
+  /** 上行 Opus batch：5×20ms=100ms 一 JSON+binary，binary 为 uint16_be+opus 重复。 */
+  static constexpr size_t kUplinkBatchFrames = 5;
+  static constexpr size_t kUplinkBatchMaxBin = kUplinkBatchFrames * (2 + 256);
 
   WebSocketsClient ws_;
   bool ready_ = false;
   /* 本轮下行收尾标志：pbSignalTtsRoundComplete() 触发，等价于「pb 序列已完整结束」。 */
   bool reply_done_ = false;
-  bool server_started_reply_ = false;
   /* tts_active_：pb_start 置 true、pb 序列收尾 / pbSignalTtsRoundComplete 置 false。
    * 半双工抑制、摄像头暂停、attention display 共用此窗口。 */
   bool tts_active_ = false;
@@ -64,7 +72,7 @@ private:
   uint32_t round_id_ = 0;
   /* WebSocket 断在本轮内时置位，用于结束等待并区分日志（避免打成「reply completed」）。 */
   bool disconnect_abort_round_ = false;
-  /* 本轮已开始向服务端发送 PCM：与 camera_frame 互斥。 */
+  /* 本轮已开始向服务端发送 Opus：与 camera_frame 互斥。 */
   bool voice_uplink_active_ = false;
   /** VAD 触发后的上行窗口：至本轮 flush/skip/abort 结束；期间禁止 camera_frame。 */
   bool vad_gate_open_ = false;
@@ -72,6 +80,11 @@ private:
   bool camera_send_in_progress_ = false;
   /** runVoiceRound 录音环内标记（loopLite 可上传相机/VAD 未开时）。 */
   bool in_voice_record_loop_ = false;
+  uint8_t uplink_batch_bin_[kUplinkBatchMaxBin];
+  size_t uplink_batch_bin_len_ = 0;
+  uint8_t uplink_batch_count_ = 0;
+  unsigned long last_camera_uplink_ms_ = 0;
+  bool capture_was_allowed_ = false;
 
   /* -----------------------------------------------------------------------
    * pb v2 下行播放序列（JSON + 紧随 binary PCM）：
@@ -153,7 +166,9 @@ private:
   uint8_t pb_pending_bin_cursor_ = 0;
   PbBinKind pb_pending_bin_kinds_[kPbMaxBinsPerChunk]{};
   size_t pb_pending_bin_lens_[kPbMaxBinsPerChunk]{};
+  uint16_t pb_pending_bin_frames_[kPbMaxBinsPerChunk]{};
   PbBinKind pb_expect_bin_kind_ = PbBinKind::kPcm;
+  uint16_t pb_expect_opus_frames_ = 0;
   uint8_t* pb_asset_bufs_[kPbMaxAssetsPerChunk]{};
   size_t pb_asset_lens_[kPbMaxAssetsPerChunk]{};
   uint8_t pb_asset_count_ = 0;
@@ -197,14 +212,16 @@ private:
   static constexpr int kSleepHeadDownDeg = -30;
 
   void onWebSocketEvent(WStype_t type, uint8_t* payload, size_t length);
+  bool tryUploadCameraFrameIfDue();
   void engageVoiceUplink();
-  bool sendAudioJsonPcm16(const int16_t* pcm, size_t samples);
+  void resetUplinkBatch();
+  bool queueAudioOpusFrame(const int16_t* pcm, size_t samples);
+  bool flushAudioOpusBatch();
   /** 规则 3：VAD 未开且 !isSpeaking() 且 WS 可用。 */
   bool canUploadCamera();
   /** 尝试发送一帧 JPEG；失败则丢弃该帧。 */
   bool tryUploadCameraFrame();
   void discardPendingUplinkMedia();
-  void resetVadForNewRound(bool use_vadnet);
   bool sendJson(const char* msg, bool critical = true);
   bool sendJson(const String& msg, bool critical = true);
   /** sendTXT/BIN 失败或半开连接：断开 WS，下一轮 connect() 会 ws_.begin 重连。 */
@@ -220,8 +237,7 @@ private:
   /* 无 AEC：仅喇叭播音/播放队列/I2S DMA 尾音窗口内不上行真实 mic（录音环仍读麦排空队列）。 */
   bool shouldSuppressMicUplink();
 
-  /** 播音结束后 I2S 尾音抑制截止时刻（毫秒墙钟）。 */
-  unsigned long mic_suppress_until_ms_ = 0;
+  /** 播音结束后 I2S 尾音抑制见 deskbot_uplink_state。 */
 
   void pbReset(bool stop_audio);
   void pbProtocolError(const char* why);
@@ -239,8 +255,12 @@ private:
   /** record loop / i2s_tail 专用轻量泵：单次 ws_.loop()，不做 pbPumpWsWhileExpectBin。
    *  避免大块 BIN（175KB TTS）一次 ws_.loop() 阻塞 30s 卡死录音循环。 */
   void loopLite();
+  /** loop() 主体；听音环内 allow_camera=false 以免 JPEG 与 Opus 争用 WS TX。 */
+  void serviceLoop(bool allow_camera);
+  void pbTickExpectBinTimeout();
+  void pollMicUplinkGateLog();
   static constexpr size_t kPbDeferMaxBytes = 65536;
-  static constexpr uint8_t kPbDeferQueueDepth = 4;
+  static constexpr uint8_t kPbDeferQueueDepth = 16;
   uint8_t* pb_defer_bufs_[kPbDeferQueueDepth]{};
   size_t pb_defer_lens_[kPbDeferQueueDepth]{};
   uint8_t pb_defer_head_ = 0;
@@ -248,6 +268,7 @@ private:
   bool pbDeferEnqueue(const uint8_t* payload, size_t length);
   uint8_t pbDeferQueueDepth() const;
   void flushDeferredPbJson(bool pump_ws_after = true);
+  void pbDiscardDeferredJsonQueue();
   /* audio.next_bin_len：pb_ack 仅在 loop() 发送；舵机 async 不再阻塞 ack（与音频解耦）。 */
   bool pbDispatchChunkPreamble(uint32_t chunk_idx);
 };

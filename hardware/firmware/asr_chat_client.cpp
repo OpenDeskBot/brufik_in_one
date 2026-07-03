@@ -12,7 +12,10 @@
 #include "esp_heap_caps.h"
 #include "head.h"
 #include "task_trace.h"
-#include "vadnet_gate.h"
+#include "opus_uplink.h"
+#include "opus_downlink.h"
+#include "deskbot_uplink_state.h"
+#include "ws_uplink.h"
 
 static int pb_json_number_to_int(JsonVariantConst v, int defv) {
   if (v.isNull()) {
@@ -21,7 +24,7 @@ static int pb_json_number_to_int(JsonVariantConst v, int defv) {
   return (int)lround(v.as<double>());
 }
 
-/** pb 下行：audio.next_bin_len > 0 表示下一条 WS 为固定长度 PCM binary。 */
+/** pb 下行：audio.next_bin_len > 0 表示下一条 WS 为固定长度 audio binary。 */
 static size_t pb_read_audio_next_bin_len(const JsonDocument& doc) {
   if (!doc["audio"].is<JsonObjectConst>()) {
     return 0;
@@ -32,6 +35,18 @@ static size_t pb_read_audio_next_bin_len(const JsonDocument& doc) {
   }
   const int n = pb_json_number_to_int(v, 0);
   return n > 0 ? (size_t)n : 0;
+}
+
+static uint16_t pb_read_audio_opus_frames(const JsonDocument& doc) {
+  if (!doc["audio"].is<JsonObjectConst>()) {
+    return 0;
+  }
+  JsonVariantConst v = doc["audio"]["frames"];
+  if (v.isNull()) {
+    return 0;
+  }
+  const int n = pb_json_number_to_int(v, 0);
+  return n > 0 ? (uint16_t)n : 0;
 }
 
 static size_t pb_read_asset_next_bin_len(JsonObjectConst asset) {
@@ -104,11 +119,40 @@ bool deskbot_vision_uplink_paused(void) {
 }
 
 namespace {
-/* 上一轮 TTS 刚结束就进入下一轮拾音时，喇叭尾音/房间反射易进麦克风 → ASR 连环触发
- *（短词如「老板」尤其明显）。无 AEC 时仅在播音/I2S 尾音窗口抑制上行，其余时间开麦。 */
-/* I2S TX DMA 排空量级（与 audio_player stop_play 注释 ~340ms 同阶）+ 余量。 */
-constexpr uint32_t kI2sDmaTailSuppressMs =
-    (uint32_t)((DMA_BUF_COUNT * DMA_BUF_LEN * 1000UL) / (uint32_t)SAMPLE_RATE) + 200UL;
+/* 无 AEC：尾音抑制见 deskbot_uplink_state / DESKBOT_TAIL_SUPPRESS_MS。 */
+
+const char* micCaptureBlockReason(bool ws_can_send) {
+  if (!deskbot_uplink_ws_uplink_allowed()) {
+    return "ws_uplink_blocked";
+  }
+  if (!ws_can_send) {
+    return "ws_not_ready";
+  }
+  if (deskbot_uplink_speaker_audible()) {
+    return "isSpeaking";
+  }
+  if (deskbot_uplink_in_tail_suppress()) {
+    return "tail_suppress";
+  }
+  return nullptr;
+}
+
+void logMicCaptureBlockReason(const char* phase, uint32_t round_id, const char* reason) {
+  if (reason == nullptr) {
+    return;
+  }
+  if (strcmp(reason, "tail_suppress") == 0) {
+    log_warn("[MIC_UPLINK] 暂停录音 %s round=%u reason=%s remain=%lums isSpeaking=%d ws_ok=%d",
+             phase, (unsigned)round_id, reason,
+             (unsigned long)deskbot_uplink_tail_ms_remaining(),
+             (int)deskbot_uplink_speaker_audible(),
+             (int)deskbot_uplink_ws_uplink_allowed());
+  } else {
+    log_warn("[MIC_UPLINK] 暂停录音 %s round=%u reason=%s isSpeaking=%d ws_ok=%d",
+             phase, (unsigned)round_id, reason, (int)deskbot_uplink_speaker_audible(),
+             (int)deskbot_uplink_ws_uplink_allowed());
+  }
+}
 
 extern "C" void audio_yield_hook() {
   /* 严禁在此调用 loop()：loop() 内的 flush_deferred_pb_stream_end 会调
@@ -271,6 +315,14 @@ void AsrChatClient::pbOnSequenceComplete() {
 
 AsrChatClient::AsrChatClient() {}
 
+bool AsrChatClient::initWsUplink() {
+  return ws_uplink_init(&ws_, this);
+}
+
+void AsrChatClient::dispatchWebSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
+  onWebSocketEvent(type, payload, length);
+}
+
 void AsrChatClient::pbFreePendingAssets() {
   for (uint8_t i = 0; i < pb_asset_count_; i++) {
     if (pb_asset_bufs_[i]) {
@@ -289,6 +341,7 @@ void AsrChatClient::pbBuildPendingBinQueue(const JsonDocument& doc) {
   if (pcm_len > 0 && pb_pending_bin_count_ < kPbMaxBinsPerChunk) {
     pb_pending_bin_kinds_[pb_pending_bin_count_] = PbBinKind::kPcm;
     pb_pending_bin_lens_[pb_pending_bin_count_] = pcm_len;
+    pb_pending_bin_frames_[pb_pending_bin_count_] = pb_read_audio_opus_frames(doc);
     pb_pending_bin_count_++;
   }
   if (doc["assets"].is<JsonArrayConst>()) {
@@ -313,6 +366,7 @@ void AsrChatClient::pbAdvanceBinQueue() {
   if (pb_pending_bin_cursor_ < pb_pending_bin_count_) {
     pb_expect_bin_kind_ = pb_pending_bin_kinds_[pb_pending_bin_cursor_];
     pb_expect_bin_len_ = pb_pending_bin_lens_[pb_pending_bin_cursor_];
+    pb_expect_opus_frames_ = pb_pending_bin_frames_[pb_pending_bin_cursor_];
     pb_expect_bin_ = true;
     pb_expect_bin_since_ms_ = millis();
   } else {
@@ -334,6 +388,7 @@ void AsrChatClient::pbReset(bool stop_audio) {
   pbFreePendingAssets();
   pb_pending_bin_count_ = 0;
   pb_pending_bin_cursor_ = 0;
+  pb_expect_opus_frames_ = 0;
   pb_active_ = false;
   pb_req_.remove(0);
   pb_next_idx_ = 0;
@@ -371,7 +426,7 @@ void AsrChatClient::pbReset(bool stop_audio) {
   pb_audio_buf_ms_est_ = 0;
   pb_last_buf_decay_ms_ = millis();
   if (stop_audio) {
-    mic_suppress_until_ms_ = millis() + (unsigned long)kI2sDmaTailSuppressMs;
+    deskbot_uplink_set_speaker_active(false);
     if (pb_deferred_stream_end_pending_) {
       pb_deferred_stream_end_pending_ = false;
       audio_stream_pcm16_end(pb_deferred_stream_end_ch_);
@@ -667,7 +722,8 @@ bool AsrChatClient::pbDispatchChunkPreamble(uint32_t chunk_idx) {
 
 void AsrChatClient::pbPumpWsWhileExpectBin(uint16_t max_pumps) {
   for (uint16_t i = 0; i < max_pumps && pb_expect_bin_ && ws_.isConnected(); i++) {
-    ws_.loop();
+    ws_uplink_pump();
+    ws_uplink_drain_rx(this);
     flushPendingPbAck();
     yield();
   }
@@ -710,34 +766,27 @@ uint8_t AsrChatClient::pbDeferQueueDepth() const {
 
 void AsrChatClient::flushDeferredPbJson(bool pump_ws_after) {
   (void)pump_ws_after;
-  /* 正在等 BIN 时不得再 parse 后续 pb_end JSON，否则覆盖 expect_len（表情+TTS 常见连发两帧 JSON）。 */
-  if (pb_expect_bin_) {
-    return;
-  }
-  if (pb_defer_head_ == pb_defer_tail_) {
-    return;
-  }
+  /* 迭代处理 defer 队列，避免递归 + JsonDocument 叠帧导致 loopTask 栈溢出。 */
+  while (!pb_expect_bin_ && pb_defer_head_ != pb_defer_tail_) {
+    const uint8_t slot = pb_defer_head_;
+    const size_t len = pb_defer_lens_[slot];
+    const uint8_t* const wire = pb_defer_bufs_[slot];
+    pb_defer_head_ = static_cast<uint8_t>((pb_defer_head_ + 1) % kPbDeferQueueDepth);
+    if (len == 0 || wire == nullptr) {
+      continue;
+    }
 
-  const uint8_t slot = pb_defer_head_;
-  const size_t len = pb_defer_lens_[slot];
-  const uint8_t* const wire = pb_defer_bufs_[slot];
-  pb_defer_head_ = static_cast<uint8_t>((pb_defer_head_ + 1) % kPbDeferQueueDepth);
-  if (len == 0 || wire == nullptr) {
-    flushDeferredPbJson(pump_ws_after);
-    return;
+    JsonDocument doc;
+    if (deserializeJson(doc, wire, len)) {
+      log_warn("[PB] defer deserialize failed len=%u", (unsigned)len);
+      continue;
+    }
+    (void)pbParseAndStage(doc);
   }
+}
 
-  JsonDocument doc;
-  if (deserializeJson(doc, wire, len)) {
-    log_warn("[PB] defer deserialize failed len=%u", (unsigned)len);
-    flushDeferredPbJson(pump_ws_after);
-    return;
-  }
-  (void)pbParseAndStage(doc);
-  if (pb_expect_bin_) {
-    return;
-  }
-  flushDeferredPbJson(false);
+void AsrChatClient::pbDiscardDeferredJsonQueue() {
+  pb_defer_head_ = pb_defer_tail_;
 }
 
 bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
@@ -799,6 +848,8 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
   const int8_t chunk_level = parsePbLevel(doc, legacy_opportunistic);
 
   const bool is_chain_head = (type == "pb_start" || type == "pb_single") && (idx == 0u);
+  const size_t next_bin_len_head = pb_read_audio_next_bin_len(doc);
+  const bool servo_only_gesture = (type == "pb_single") && (next_bin_len_head == 0);
   if (is_chain_head) {
     const PbQueueDecision qd = pbDecideChainHead(chunk_level, chunk_action);
     if (qd == PbQueueDecision::kDrop) {
@@ -811,9 +862,6 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
         pb_active_ && (req == pb_req_) && (chunk_action == PbEnqueueAction::kReplace);
     if (qd == PbQueueDecision::kClear || force_restart_same_req) {
       /* 服务端「摇头 N 次」常拆成多帧 pb_single（仅 servo、无音频）；replace 时勿清空 motor 队列。 */
-      const size_t next_bin_len_head = pb_read_audio_next_bin_len(doc);
-      /* 无 PCM 的 pb_single = 纯舵机手势（摇头/点头分多包）；禁止 replace 时 head_motor_reset。 */
-      const bool servo_only_gesture = (type == "pb_single") && (next_bin_len_head == 0);
       const bool drain_motor = !servo_only_gesture;
       pbDrainWorkersForNewSequence(drain_motor);
       if (servo_only_gesture) {
@@ -842,8 +890,6 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
     pb_next_idx_ = 0;
     pb_bins_rx_count_ = 0;
     pb_pcm_bytes_rx_total_ = 0;
-    /* pb_start：尽早打开半双工，避免首包 BIN 前上行真实 mic。 */
-    server_started_reply_ = true;
     tts_active_ = true;
     deskbot_mic_uplink_set_active(false);
   } else if (!pb_active_ || req != pb_req_) {
@@ -974,18 +1020,19 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
         pbProtocolError("audio.next_bin_len but missing sr/ch/fmt");
         return true;
       }
-      if (pb_fmt_ != "s16le") {
-        pbProtocolError("unsupported fmt (need s16le)");
+      if (pb_fmt_ != "s16le" && pb_fmt_ != "opus") {
+        pbProtocolError("unsupported fmt (need s16le or opus)");
         return true;
       }
-      if ((next_bin_len & 1u) != 0u) {
-        pbProtocolError("audio.next_bin_len must be even");
+      if (pb_fmt_ == "s16le" && (next_bin_len & 1u) != 0u) {
+        pbProtocolError("audio.next_bin_len must be even for s16le");
         return true;
       }
     }
     pb_expect_bin_ = true;
     pb_expect_bin_kind_ = pb_pending_bin_kinds_[0];
     pb_expect_bin_len_ = pb_pending_bin_lens_[0];
+    pb_expect_opus_frames_ = pb_pending_bin_frames_[0];
     pb_expect_bin_since_ms_ = millis();
     pb_pending_idx_ = idx;
     pb_pending_chunk_ms_ = chunk_ms;
@@ -1045,6 +1092,7 @@ void AsrChatClient::forceWsReconnect(const char* why) {
 }
 
 void AsrChatClient::onLinkDown(const char* why) {
+  deskbot_uplink_bump_ws_generation();
   forceWsReconnect(why ? why : "wifi lost");
 }
 
@@ -1056,7 +1104,7 @@ void AsrChatClient::onLinkUp() {
 }
 
 bool AsrChatClient::wsCanSend() {
-  return ws_.isConnected() && ready_ && !ws_needs_reconnect_;
+  return ws_.isConnected() && ready_ && !ws_needs_reconnect_ && deskbot_uplink_ws_uplink_allowed();
 }
 
 void AsrChatClient::noteWsSendOk() {
@@ -1098,9 +1146,12 @@ void AsrChatClient::maintainWsConnection() {
   if (wsCanSend()) {
     return;
   }
-  /* 正在等下行 TTS PCM BIN 时勿 reconnect，否则协议错位；anim asset BIN 无此限制。 */
+  /* 正在等下行 TTS BIN 时勿 reconnect，否则协议错位；超时后允许重连。 */
   if (pb_expect_bin_ && pb_expect_bin_kind_ == PbBinKind::kPcm) {
-    return;
+    if (pb_expect_bin_since_ms_ != 0 &&
+        (millis() - pb_expect_bin_since_ms_) < (unsigned long)DESKBOT_PB_EXPECT_BIN_TIMEOUT_MS) {
+      return;
+    }
   }
   const unsigned long now = millis();
   if (ws_last_reconnect_attempt_ms_ != 0 &&
@@ -1137,7 +1188,8 @@ bool AsrChatClient::connect() {
     unsigned long start = millis();
     while (!ready_ && millis() - start < 3000) {
       handle_cmd();
-      ws_.loop();
+      ws_uplink_pump();
+      ws_uplink_drain_rx(this);
       log_task_pump("wait_ready_late");
       taskYIELD();
     }
@@ -1161,7 +1213,6 @@ bool AsrChatClient::connect() {
   }
   ready_ = false;
   reply_done_ = false;
-  server_started_reply_ = false;
 
   if (ws_.isConnected()) {
     ws_.disconnect();
@@ -1169,7 +1220,8 @@ bool AsrChatClient::connect() {
   unsigned long disc_start = millis();
   while (ws_.isConnected() && millis() - disc_start < 500) {
     handle_cmd();
-    ws_.loop();
+    ws_uplink_pump();
+    ws_uplink_drain_rx(this);
     taskYIELD();
   }
 
@@ -1179,30 +1231,22 @@ bool AsrChatClient::connect() {
   snprintf(auth_header, sizeof(auth_header), "X-API-Key: %s", DESKBOT_API_KEY);
   ws_.setExtraHeaders(auth_header);
   log_info("[ASR_CHAT] connecting ws://%s:%u%s (X-API-Key)", kHost, (unsigned)kPort, path);
+  deskbot_uplink_set_ws_ready(false);
   ws_.begin(kHost, kPort, path);
-  ws_.onEvent([this](WStype_t type, uint8_t* payload, size_t length) {
-    this->onWebSocketEvent(type, payload, length);
-  });
   ws_.setReconnectInterval(2000);
 
-  unsigned long start = millis();
-  while (!ws_.isConnected() && millis() - start < 4000) {
-    handle_cmd();
-    ws_.loop();
-    log_task_pump("tcp_handshake");
-    taskYIELD();
-  }
-  if (!ws_.isConnected()) {
+  if (!ws_uplink_wait_connected(&ws_, this, 4000)) {
     log_error("[ASR_CHAT] connect timeout ws://%s:%u (check host reachable from device WiFi, "
               "DESKBOT_API_KEY, firewall)",
               kHost, (unsigned)kPort);
     return false;
   }
 
-  start = millis();
+  unsigned long start = millis();
   while (!ready_ && millis() - start < 3000) {
     handle_cmd();
-    ws_.loop();
+    ws_uplink_pump();
+    ws_uplink_drain_rx(this);
     log_task_pump("wait_ready");
     taskYIELD();
   }
@@ -1213,11 +1257,31 @@ bool AsrChatClient::connect() {
   }
   ws_needs_reconnect_ = false;
   ws_send_fail_streak_ = 0;
+  (void)opus_downlink_init();
   return true;
 }
 
+void AsrChatClient::pbTickExpectBinTimeout() {
+  if (!pb_expect_bin_ || pb_expect_bin_since_ms_ == 0) {
+    return;
+  }
+  const unsigned long wait_ms = millis() - pb_expect_bin_since_ms_;
+  unsigned long limit_ms = (unsigned long)DESKBOT_PB_EXPECT_BIN_TIMEOUT_MS;
+  if (pb_expect_bin_len_ > 200000U) {
+    limit_ms = 30000UL;
+  } else if (pb_expect_bin_len_ > 50000U) {
+    limit_ms = 20000UL;
+  }
+  if (wait_ms <= limit_ms) {
+    return;
+  }
+  log_warn("[PB] expect_bin timeout wait=%lums limit=%lums expect_len=%u req=%s",
+           wait_ms, limit_ms, (unsigned)pb_expect_bin_len_, pb_req_.c_str());
+  pbProtocolError("expect bin timeout");
+  flushDeferredPbJson(/*pump_ws_after=*/false);
+}
+
 void AsrChatClient::loopLite() {
-  /* record loop / i2s_tail：单次 ws_.loop()（WS 全双工，上下行互不阻塞）。 */
   if (audio_play_is_on_play_task()) {
     return;
   }
@@ -1225,7 +1289,11 @@ void AsrChatClient::loopLite() {
     pb_deferred_stream_end_pending_ = false;
     audio_stream_pcm16_end(pb_deferred_stream_end_ch_);
   }
-  ws_.loop();
+  if (pb_expect_bin_) {
+    pbPumpWsWhileExpectBin(8);
+  }
+  ws_uplink_pump();
+  ws_uplink_drain_rx(this);
   flushPendingPbAck();
   if (!pb_expect_bin_) {
     flushDeferredPbJson();
@@ -1238,17 +1306,11 @@ void AsrChatClient::loopLite() {
     }
   }
   flushPendingPbAck();
-  /* 规则 3：VAD 未开且 !isSpeaking() 时可在录音监听阶段上传相机。 */
-  if (in_voice_record_loop_ && !vad_gate_open_ && !isSpeaking()) {
-    tryUploadCameraFrame();
-  }
+  pbTickExpectBinTimeout();
+  /* 听音环内不再上传相机（canUploadCamera 已含 in_voice_record_loop_ 判定）。 */
 }
 
-void AsrChatClient::loop() {
-  /* 防御：loop() 不得从 audio_play_task 调用。
-   * 该任务内调 audio_stream_pcm16_end/emergency_flush 等同步 audio API 会自我死锁；
-   * 调 ws_.loop() 会在 WS 库内部重入（主循环可能已在 ws_.loop() 中途被 preempt）。
-   * audio_yield_hook 已改为 taskYIELD()，正常不会走到这里；此处仅做兜底。 */
+void AsrChatClient::serviceLoop(bool allow_camera) {
   if (audio_play_is_on_play_task()) {
     return;
   }
@@ -1261,7 +1323,7 @@ void AsrChatClient::loop() {
     audio_stream_pcm16_end(pb_deferred_stream_end_ch_);
   };
   flush_deferred_pb_stream_end();
-  /* 先泵再 parse 队列：若已在 expect_bin，优先把 BIN 收进同一轮 ws_.loop() 栈外的主循环。 */
+  pbTickExpectBinTimeout();
   if (pb_expect_bin_) {
     pbPumpWsWhileExpectBin(24);
   }
@@ -1269,17 +1331,16 @@ void AsrChatClient::loop() {
   if (pb_expect_bin_) {
     pbPumpWsWhileExpectBin(8);
   }
-  /* 等待下行 PCM 时须尽快泵 WS 收 BIN（仅在 loop 主上下文）。 */
   const int ws_pumps = pb_expect_bin_ ? 0 : ((pb_active_ || tts_active_) ? 6 : 1);
   for (int i = 0; i < ws_pumps; ++i) {
-    ws_.loop();
+    ws_uplink_pump();
+    ws_uplink_drain_rx(this);
     flushPendingPbAck();
     if (!pb_expect_bin_) {
       break;
     }
   }
   flush_deferred_pb_stream_end();
-  /* 舵机 async ramp 完成后投递的 pb_ack（不阻塞 motor_task / WS 回调）。 */
   {
     char reqb[48];
     uint32_t midx = 0;
@@ -1287,41 +1348,71 @@ void AsrChatClient::loop() {
       pbScheduleMotorAck(reqb, midx);
     }
   }
-  /* pb_ack 必须在 RX 回调之外发送，否则部分 WebSockets 实现会在 sendTXT 时死锁，表现为 pb_start 后卡住。 */
   flushPendingPbAck();
   if (wsCanSend() && millis() - last_ping_ms_ > 15000) {
     if (sendJson("{\"type\":\"ping\"}", /*critical=*/false)) {
       last_ping_ms_ = millis();
     }
   }
-  /* 空闲头部姿态步进：状态稳定时 if 判定即返回。 */
   if (!pb_active_) {
     updateAttentionDisplay();
   }
-
-  /* 规则 3：VAD 未开且 !isSpeaking() 时上传 camera_frame。 */
-  if (canUploadCamera()) {
-    tryUploadCameraFrame();
+  if (allow_camera && canUploadCamera()) {
+    tryUploadCameraFrameIfDue();
   }
   shouldSuppressMicUplink();
   maintainWsConnection();
+  if (allow_camera) {
+    pollMicUplinkGateLog();
+  }
+}
+
+void AsrChatClient::loop() {
+  serviceLoop(/*allow_camera=*/true);
+}
+
+void AsrChatClient::pollMicUplinkGateLog() {
+  static bool s_idle_capture_ok = false;
+  if (in_voice_record_loop_) {
+    s_idle_capture_ok = false;
+    return;
+  }
+  const bool ws_ok = wsCanSend();
+  const bool can_start = canStartVoiceRound();
+  if (can_start && !s_idle_capture_ok) {
+    log_warn("[MIC_UPLINK] 开始正常录音 (待命) isSpeaking=%d ws_ok=%d",
+             (int)isSpeaking(), (int)ws_ok);
+    s_idle_capture_ok = true;
+  } else if (!can_start && s_idle_capture_ok) {
+    const char* reason = micCaptureBlockReason(ws_ok);
+    if (reason == nullptr && isMicTailSuppressed()) {
+      reason = "tail_suppress";
+    }
+    if (reason == nullptr && isSpeaking()) {
+      reason = "isSpeaking";
+    }
+    if (reason == nullptr) {
+      reason = "gate";
+    }
+    logMicCaptureBlockReason("(待命)", 0, reason);
+    s_idle_capture_ok = false;
+  }
 }
 
 bool AsrChatClient::isVisionUplinkPaused() const {
-  return voice_uplink_active_ || tts_active_ || pb_expect_bin_ || pb_audio_stream_started_ ||
-         pb_deferred_stream_end_pending_ || pb_active_;
+  return isSpeaking() || isMicTailSuppressed();
 }
 
 bool AsrChatClient::isCameraUplinkPaused() const {
-  return vad_gate_open_ || voice_uplink_active_ || isSpeaking();
+  return isSpeaking() || camera_send_in_progress_;
 }
 
 bool AsrChatClient::isSpeaking() const {
-  return audio_play_speaker_busy();
+  return deskbot_uplink_speaker_audible() || audio_play_speaker_busy();
 }
 
 bool AsrChatClient::isMicTailSuppressed() const {
-  return millis() < mic_suppress_until_ms_;
+  return deskbot_uplink_in_tail_suppress();
 }
 
 bool AsrChatClient::isVadGateOpen() const {
@@ -1382,7 +1473,7 @@ bool AsrChatClient::sendJson(const char* msg, bool critical) {
   if (msg == nullptr || !wsCanSend()) {
     return false;
   }
-  if (!ws_.sendTXT(msg)) {
+  if (!ws_uplink_send_json(msg)) {
     if (critical) {
       noteWsSendFail("sendTXT");
     }
@@ -1398,23 +1489,24 @@ bool AsrChatClient::sendJson(const String& msg, bool critical) {
   return sendJson(msg.c_str(), critical);
 }
 
-bool AsrChatClient::shouldSuppressMicUplink() {
+bool AsrChatClient::tryUploadCameraFrameIfDue() {
   const unsigned long now = millis();
-  /* 仅扬声器已在播 PCM 时上行静音；pb JSON/expect_bin 不抑制。 */
-  if (isSpeaking()) {
-    const unsigned long until = now + (unsigned long)kI2sDmaTailSuppressMs;
-    if (until > mic_suppress_until_ms_) {
-      mic_suppress_until_ms_ = until;
-    }
-    deskbot_mic_uplink_set_active(false);
-    return true;
+  const unsigned long interval =
+      (in_voice_record_loop_ || voice_uplink_active_)
+          ? (unsigned long)DESKBOT_CAMERA_UPLINK_INTERVAL_DURING_LISTEN_MS
+          : (unsigned long)DESKBOT_CAMERA_UPLINK_INTERVAL_MS;
+  if (last_camera_uplink_ms_ != 0 && (now - last_camera_uplink_ms_) < interval) {
+    return false;
   }
-  if (now < mic_suppress_until_ms_) {
-    deskbot_mic_uplink_set_active(false);
-    return true;
+  if (!tryUploadCameraFrame()) {
+    return false;
   }
-  deskbot_mic_uplink_set_active(true);
-  return false;
+  last_camera_uplink_ms_ = now;
+  return true;
+}
+
+bool AsrChatClient::shouldSuppressMicUplink() {
+  return !deskbot_uplink_capture_allowed();
 }
 
 void AsrChatClient::engageVoiceUplink() {
@@ -1431,13 +1523,11 @@ bool AsrChatClient::canUploadCamera() {
   if (!wsCanSend()) {
     return false;
   }
-  if (isSpeaking()) {
+  /* 连续听音环内不发 JPEG，避免与 Opus 争用 WS TX。 */
+  if (in_voice_record_loop_ || voice_uplink_active_) {
     return false;
   }
-  if (vad_gate_open_ || voice_uplink_active_) {
-    return false;
-  }
-  if (camera_send_in_progress_) {
+  if (isSpeaking() || isMicTailSuppressed() || camera_send_in_progress_) {
     return false;
   }
   return true;
@@ -1453,19 +1543,20 @@ bool AsrChatClient::tryUploadCameraFrame() {
   if (!camera_ws_take_frame(&jpeg_buf, &jpeg_len, &jpeg_seq)) {
     return false;
   }
+  static uint32_t s_cam_last_log_seq = 0;
+  if (jpeg_seq <= 1u || jpeg_seq % 30u == 0u || jpeg_seq != s_cam_last_log_seq) {
+    s_cam_last_log_seq = jpeg_seq;
+    log_warn("[CAM] camera_frame seq=%u jpeg=%uB (%.1f KB)",
+             (unsigned)jpeg_seq, (unsigned)jpeg_len, jpeg_len / 1024.0f);
+  }
   char cam_hdr[128];
   snprintf(cam_hdr, sizeof(cam_hdr),
            "{\"type\":\"camera_frame\",\"codec\":\"jpeg\",\"next_bin_len\":%u,\"seq\":%u}",
            (unsigned)jpeg_len, (unsigned)jpeg_seq);
   camera_send_in_progress_ = true;
-  bool ok = false;
-  if (sendJson(cam_hdr, /*critical=*/false)) {
-    ok = wsSendBin(jpeg_buf, jpeg_len, "camera_frame bin", /*critical=*/false);
-    if (!ok) {
-      log_warn("[CAM] camera_frame bin send failed (drop frame)");
-    }
-  } else {
-    log_warn("[CAM] camera_frame header send failed (drop frame)");
+  bool ok = ws_uplink_send(cam_hdr, jpeg_buf, jpeg_len);
+  if (!ok) {
+    log_warn("[CAM] camera_frame send failed (drop frame)");
   }
   camera_send_in_progress_ = false;
   camera_ws_release_frame();
@@ -1477,31 +1568,51 @@ void AsrChatClient::discardPendingUplinkMedia() {
   vad_gate_open_ = false;
   voice_uplink_active_ = false;
   camera_send_in_progress_ = false;
+  resetUplinkBatch();
 }
 
-void AsrChatClient::resetVadForNewRound(bool use_vadnet) {
-  if (use_vadnet) {
-    vadnet_gate_reset_round();
+void AsrChatClient::resetUplinkBatch() {
+  uplink_batch_bin_len_ = 0;
+  uplink_batch_count_ = 0;
+}
+
+bool AsrChatClient::flushAudioOpusBatch() {
+  if (uplink_batch_count_ == 0 || uplink_batch_bin_len_ == 0) {
+    return true;
   }
-  vad_gate_open_ = false;
-  voice_uplink_active_ = false;
-}
-
-bool AsrChatClient::sendAudioJsonPcm16(const int16_t* pcm, size_t samples) {
-  /* 规则 4：若相机帧正在发送，须在本函数调用前 tryUploadCameraFrame 已完成。 */
   engageVoiceUplink();
-  vad_gate_open_ = true;
-  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(pcm);
-  const size_t byte_len = samples * sizeof(int16_t);
-  char hdr[96];
+  char hdr[128];
   snprintf(hdr, sizeof(hdr),
-           "{\"type\":\"audio\",\"codec\":\"pcm16\",\"next_bin_len\":%u,\"sr\":16000,\"ch\":1}",
-           (unsigned)byte_len);
-  if (!sendJson(hdr)) {
+           "{\"type\":\"audio\",\"codec\":\"opus\",\"next_bin_len\":%u,\"sr\":16000,\"ch\":1,"
+           "\"frames\":%u}",
+           (unsigned)uplink_batch_bin_len_, (unsigned)uplink_batch_count_);
+  if (!ws_uplink_send(hdr, uplink_batch_bin_, uplink_batch_bin_len_)) {
+    noteWsSendFail("sendAudioBatch");
     return false;
   }
-  if (!wsSendBin(bytes, byte_len, "audio PCM bin")) {
+  resetUplinkBatch();
+  return true;
+}
+
+bool AsrChatClient::queueAudioOpusFrame(const int16_t* pcm, size_t samples) {
+  static uint8_t opus_buf[256];
+  const size_t opus_len = opus_uplink_encode(pcm, samples, opus_buf, sizeof(opus_buf));
+  if (opus_len == 0) {
+    log_warn("[ASR_CHAT] Opus encode failed samples=%u", (unsigned)samples);
     return false;
+  }
+  if (opus_len > 65535U || uplink_batch_bin_len_ + 2U + opus_len > kUplinkBatchMaxBin) {
+    log_warn("[ASR_CHAT] Opus batch overflow len=%u bin=%u",
+             (unsigned)opus_len, (unsigned)uplink_batch_bin_len_);
+    return false;
+  }
+  uplink_batch_bin_[uplink_batch_bin_len_++] = static_cast<uint8_t>((opus_len >> 8) & 0xFF);
+  uplink_batch_bin_[uplink_batch_bin_len_++] = static_cast<uint8_t>(opus_len & 0xFF);
+  memcpy(uplink_batch_bin_ + uplink_batch_bin_len_, opus_buf, opus_len);
+  uplink_batch_bin_len_ += opus_len;
+  uplink_batch_count_++;
+  if (uplink_batch_count_ >= kUplinkBatchFrames) {
+    return flushAudioOpusBatch();
   }
   return true;
 }
@@ -1518,17 +1629,26 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
   }
 
   if (max_record_seconds == 0 || max_record_seconds > 60) {
-    max_record_seconds = 10;
+    max_record_seconds = (uint16_t)DESKBOT_UPLINK_MAX_SEC;
   }
 
   disconnect_abort_round_ = false;
   reply_done_ = false;
-  server_started_reply_ = false;
+  capture_was_allowed_ = false;
+  const uint32_t uplink_gen = deskbot_uplink_ws_generation();
   /* 每轮开头清掉上一轮 pb/PCM 残余；但若 WS 仍在推本轮 TTS（pb_active），此处 pbReset 会停流并清
    * expect_bin → 后续 BIN 变「unexpected」、idx 全错位（见 CHAT 重叠发起 runVoiceRound 与下行并行）。
    * 仅在没有进行中 pb 序列时才硬清。 */
   if (!pb_active_ && !pb_expect_bin_) {
     pbReset(/*stop_audio=*/true);
+    pbDiscardDeferredJsonQueue();
+    for (int i = 0; i < 8; ++i) {
+      ws_uplink_pump();
+      ws_uplink_drain_rx(this);
+      if (!pb_expect_bin_) {
+        flushDeferredPbJson(/*pump_ws_after=*/false);
+      }
+    }
   } else {
     log_warn("[ASR_CHAT] round=%u start: skip initial pbReset (pb_active=%d expect_bin=%d req=%s next_idx=%u)",
              (unsigned)round_id_, (int)pb_active_, (int)pb_expect_bin_, pb_req_.c_str(), (unsigned)pb_next_idx_);
@@ -1541,109 +1661,39 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
     ~VoiceUplinkGuard() { client.voice_uplink_active_ = false; }
   } voice_guard(*this);
 
-  const size_t total_samples = static_cast<size_t>(max_record_seconds) * SAMPLE_RATE;
-  size_t samples_recorded = 0;  /* 本轮 mic 采样总样点（含未发送的 pre-roll），用于决定何时结束录音 */
-  size_t samples_sent = 0;       /* 真正上行到服务端的样点数，仅用于日志/统计 */
-  int16_t frame[kFrameSamples20ms];
-  bool voice_seen = false;
-  bool record_aborted_downlink = false;
-  bool record_aborted_disconnect = false;
-  unsigned long silence_start = 0;
-  const unsigned long silence_end_ms = DESKBOT_PDM_SILENCE_END_MS;
-  const bool use_vadnet = vadnet_gate_available();
-  const size_t ring_cap_frames =
-      use_vadnet ? (static_cast<size_t>(DESKBOT_VADNET_RING_SECONDS) * SAMPLE_RATE / kFrameSamples20ms)
-                 : static_cast<size_t>(DESKBOT_PDM_PRE_VOICE_FRAMES);
-
-  /* 监听阶段环形缓冲：VADNet 10s / 能量 fallback 1s（PSRAM 按 10s 一次分配）。 */
-  static int16_t* prebuf = nullptr;
-  static size_t prebuf_cap_frames = 0;
-  if (prebuf == nullptr) {
-    prebuf_cap_frames = static_cast<size_t>(DESKBOT_VADNET_RING_SECONDS) * SAMPLE_RATE / kFrameSamples20ms;
-    const size_t bytes = prebuf_cap_frames * kFrameSamples20ms * sizeof(int16_t);
-    prebuf = static_cast<int16_t*>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (prebuf == nullptr) {
-      prebuf = static_cast<int16_t*>(malloc(bytes));
-      if (prebuf == nullptr) {
-        log_warn("[ASR_CHAT] ring buffer alloc failed (%u bytes)", (unsigned)bytes);
-        prebuf_cap_frames = 0;
-      }
-    }
+  if (!opus_uplink_init()) {
+    log_error("[ASR_CHAT] Opus encoder init failed");
+    return false;
   }
-  size_t ring_write = 0;
-  size_t ring_read = 0;
-  size_t ring_used = 0;
-  bool uplink_active = false;
-
-  log_info("[ASR_CHAT] round=%u start up to %us @16k/mono (vad=%s, ring %us)",
-           (unsigned)round_id_, (unsigned)max_record_seconds,
-           use_vadnet ? "VADNet" : "energy",
-           (unsigned)(ring_cap_frames * 20 / 1000));
-  /* 丢掉 Idle / 上一轮 tail 积压的帧，第一段上行从「现在开始」取样。*/
+  opus_uplink_reset();
+  resetUplinkBatch();
   mic_capture_flush_queue();
   enhanceVoice_reset();
   vad_gate_open_ = false;
   voice_uplink_active_ = false;
 
-  /* TTS 刚结束即开麦时，I2S 尾音/房间反射易误触发 VADNet。 */
-  round_scope.phase("mic_tail_wait");
-  while (shouldSuppressMicUplink()) {
-    handle_cmd();
-    loopLite();
-    round_scope.pump("mic_tail");
-    taskYIELD();
-  }
+  const size_t total_samples = static_cast<size_t>(max_record_seconds) * SAMPLE_RATE;
+  size_t samples_recorded = 0;
+  size_t samples_sent = 0;
+  int16_t frame[kFrameSamples20ms];
+  bool record_aborted_disconnect = false;
 
-  if (use_vadnet) {
-    vadnet_gate_reset_round();
-  }
-
-  round_scope.phase("pdm_calibrate");
-  size_t voice_threshold = SOUND_THRESHOLD;
-  size_t noise_ema = 0;
-  size_t floor_max = 0;
-  uint8_t trigger_streak = 0;
-  {
-    size_t floor_sum = 0;
-    constexpr size_t kCalFrames = 20;
-    int16_t cal_frame[kFrameSamples20ms];
-    for (size_t f = 0; f < kCalFrames; ++f) {
-      record(cal_frame, kFrameSamples20ms);
-      enhanceVoice(cal_frame, kFrameSamples20ms);
-      const size_t m = calculate_mean(cal_frame, kFrameSamples20ms);
-      floor_sum += m;
-      if (m > floor_max) {
-        floor_max = m;
-      }
-    }
-    noise_ema = floor_sum / kCalFrames;
-  }
-  voice_threshold = deskbot_pdm_voice_trigger_thr(noise_ema);
-  if (voice_threshold > DESKBOT_PDM_VOICE_THRESHOLD_MAX) {
-    voice_threshold = DESKBOT_PDM_VOICE_THRESHOLD_MAX;
-  }
-  if (!use_vadnet) {
-    log_info("[ASR_CHAT] PDM calibrate avg=%u max=%u thr=%u hang=%u",
-             (unsigned)noise_ema, (unsigned)floor_max, (unsigned)voice_threshold,
-             (unsigned)deskbot_pdm_voice_hangover_thr(noise_ema));
-  } else {
-    log_info("[ASR_CHAT] VADNet gate active (min_speech=%ums min_noise=%ums delay=%ums thr=%u hang=%u)",
-             (unsigned)DESKBOT_VADNET_MIN_SPEECH_MS, (unsigned)DESKBOT_VADNET_MIN_NOISE_MS,
-             (unsigned)DESKBOT_VADNET_DELAY_MS, (unsigned)voice_threshold,
-             (unsigned)deskbot_pdm_voice_hangover_thr(noise_ema));
-  }
-
-  const size_t hang_abs_thr = deskbot_pdm_voice_hangover_thr(noise_ema);
+  const unsigned long record_deadline_ms =
+      millis() + static_cast<unsigned long>(max_record_seconds) * 1000UL + 500UL;
 
   unsigned long sec_stats_start_ms = millis();
   int16_t sec_signed_min = INT16_MAX;
   int16_t sec_signed_max = INT16_MIN;
   uint64_t sec_abs_sum = 0;
   size_t sec_samp_count = 0;
-  bool sec_vad_hit = false;
-  size_t peak_mean_round = 0;
 
-  round_scope.phase("record");
+  log_warn("[ASR_CHAT] round=%u continuous opus uplink up to %us",
+           (unsigned)round_id_, (unsigned)max_record_seconds);
+
+  if (!deskbot_uplink_capture_allowed()) {
+    logMicCaptureBlockReason("(听音中)", round_id_, micCaptureBlockReason(wsCanSend()));
+  }
+
   in_voice_record_loop_ = true;
   struct VoiceRecordLoopGuard {
     AsrChatClient& client;
@@ -1651,54 +1701,42 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
     ~VoiceRecordLoopGuard() { client.in_voice_record_loop_ = false; }
   } record_loop_guard(*this);
 
-  const unsigned long record_deadline_ms =
-      millis() + static_cast<unsigned long>(max_record_seconds) * 1000UL + 500UL;
-
-  auto discard_round_send_fail = [&]() -> bool {
-    log_warn("[ASR_CHAT] send audio failed, discard round");
-    if (samples_sent > 0) {
-      sendJson("{\"type\":\"audio_cancel\"}", /*critical=*/false);
-    }
-    discardPendingUplinkMedia();
-    resetVadForNewRound(use_vadnet);
-    mic_capture_flush_queue();
-    enhanceVoice_reset();
-    log_warn("[ASR_CHAT] round=%u end (send fail)", (unsigned)round_id_);
-    return true;
-  };
-
-  /* 每轮 loop 从 ring 读指针追写指针，限时批量 send，避免 burst 堵死 record() 导致 mic 队列丢帧。 */
-  auto drain_ring_uplink = [&](unsigned long budget_ms) -> bool {
-    if (!uplink_active || prebuf == nullptr || ring_cap_frames == 0) {
-      return true;
-    }
-    const unsigned long t0 = millis();
-    while (ring_read != ring_write && (millis() - t0) < budget_ms) {
-      if (shouldSuppressMicUplink()) {
-        break;
-      }
-      int16_t* fp = &prebuf[ring_read * kFrameSamples20ms];
-      if (!sendAudioJsonPcm16(fp, kFrameSamples20ms)) {
-        return false;
-      }
-      samples_sent += kFrameSamples20ms;
-      ring_read = (ring_read + 1) % ring_cap_frames;
-    }
-    return true;
-  };
-
   while (samples_recorded < total_samples && millis() < record_deadline_ms) {
-    /* 规则 1/5：录音期间 WS 不可用 → 丢弃本轮已录内容。 */
-    if (!wsCanSend() || disconnect_abort_round_) {
+    ws_uplink_pump();
+    ws_uplink_drain_rx(this);
+    if (!wsCanSend() || disconnect_abort_round_ ||
+        deskbot_uplink_ws_generation() != uplink_gen) {
       record_aborted_disconnect = true;
       log_warn("[ASR_CHAT] round=%u record abort (ws down sent=%u)",
                (unsigned)round_id_, (unsigned)samples_sent);
       break;
     }
 
+    if (!deskbot_uplink_capture_allowed()) {
+      if (capture_was_allowed_) {
+        resetUplinkBatch();
+        logMicCaptureBlockReason("(听音中)", round_id_,
+                                 micCaptureBlockReason(wsCanSend()));
+      }
+      capture_was_allowed_ = false;
+      handle_cmd();
+      loopLite();
+      round_scope.pump("listen");
+      taskYIELD();
+      continue;
+    }
+
+    if (!capture_was_allowed_) {
+      log_warn("[MIC_UPLINK] 开始正常录音 (听音中) round=%u isSpeaking=%d ws_ok=%d",
+               (unsigned)round_id_, (int)isSpeaking(), (int)wsCanSend());
+      mic_capture_flush_queue();
+      enhanceVoice_reset();
+      capture_was_allowed_ = true;
+    }
+
     record(frame, kFrameSamples20ms);
-    const bool duplex_suppress = shouldSuppressMicUplink();
     enhanceVoice(frame, kFrameSamples20ms);
+    samples_recorded += kFrameSamples20ms;
 
     const FrameSampleStats frame_stats = frame_sample_stats(frame, kFrameSamples20ms);
     if (frame_stats.signed_min < sec_signed_min) {
@@ -1710,192 +1748,55 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
     sec_abs_sum += frame_stats.abs_sum;
     sec_samp_count += kFrameSamples20ms;
 
-    VadnetSpeechPulse vad_pulse{};
-    bool active = false;
-    const size_t mean = frame_stats.abs_avg;
-    if (mean > peak_mean_round) {
-      peak_mean_round = mean;
-    }
-
-    if (!voice_seen && !duplex_suppress) {
-      const size_t quiet_cap =
-          (noise_ema * DESKBOT_PDM_EMA_QUIET_RATIO_NUM) / DESKBOT_PDM_EMA_QUIET_RATIO_DEN;
-      if (mean < quiet_cap) {
-        noise_ema = (noise_ema * 15 + mean) / 16;
-      }
-      voice_threshold = deskbot_pdm_voice_trigger_thr(noise_ema);
-      if (voice_threshold > DESKBOT_PDM_VOICE_THRESHOLD_MAX) {
-        voice_threshold = DESKBOT_PDM_VOICE_THRESHOLD_MAX;
-      }
-    }
-
-    if (use_vadnet) {
-      (void)vadnet_gate_process(frame, kFrameSamples20ms, &vad_pulse);
-      if (!voice_seen) {
-        if (mean > voice_threshold) {
-          if (trigger_streak < 255) {
-            ++trigger_streak;
-          }
-        } else {
-          trigger_streak = 0;
-        }
-        const bool energy_trigger = trigger_streak >= DESKBOT_PDM_VOICE_TRIGGER_FRAMES;
-        const bool vadnet_trigger =
-            vad_pulse.speech && mean >= (size_t)DESKBOT_VADNET_MIN_ABS_AVG;
-        active = energy_trigger || vadnet_trigger;
-      } else {
-        active = vad_pulse.speech;
-      }
-    } else {
-      if (!voice_seen) {
-        if (mean > voice_threshold) {
-          if (trigger_streak < 255) {
-            ++trigger_streak;
-          }
-        } else {
-          trigger_streak = 0;
-        }
-        active = trigger_streak >= DESKBOT_PDM_VOICE_TRIGGER_FRAMES;
-      } else {
-        active = mean > deskbot_pdm_voice_hangover_thr(noise_ema);
-      }
-    }
-
-    /* 尾音抑制窗口内忽略 VAD（多为回声/爆破音）。 */
-    if (active && !duplex_suppress) {
-      sec_vad_hit = true;
-      if (!voice_seen) {
-        if (!uplink_active) {
-          uplink_active = true;
-          if (prebuf != nullptr && ring_used > 0) {
-            ring_read = (ring_write + ring_cap_frames - ring_used) % ring_cap_frames;
-          } else {
-            ring_read = ring_write;
-          }
-          tryUploadCameraFrame();
-          log_warn("[ASR_CHAT] round=%u VAD trigger: stream uplink %u ring frames (%u ms)",
-                   (unsigned)round_id_, (unsigned)ring_used, (unsigned)(ring_used * 20));
-        }
-      }
-      voice_seen = true;
-    }
-
-    if (voice_seen && !duplex_suppress) {
-      /* 音节间：能量 hangover 续录。说完后：低能量即计静音，不被 VAD 尾音/reverb 误触拖长。
-       * VADNet 路径下 lone vad speech（能量 < MIN_ABS）不再重置尾静音计时。 */
-      const bool still_speech =
-          use_vadnet ? (frame_stats.abs_avg > hang_abs_thr ||
-                        (active && frame_stats.abs_avg >= (size_t)DESKBOT_VADNET_MIN_ABS_AVG))
-                     : (frame_stats.abs_avg > hang_abs_thr);
-      if (still_speech) {
-        silence_start = 0;
-      } else if (silence_start == 0) {
-        silence_start = millis();
-      } else if (millis() - silence_start >= silence_end_ms) {
-        break;
-      }
-    }
-
     const unsigned long now_sec = millis();
     if (now_sec - sec_stats_start_ms >= 1000) {
       const size_t samp_avg =
           sec_samp_count > 0 ? static_cast<size_t>(sec_abs_sum / sec_samp_count) : 0;
-      const int16_t samp_min = sec_signed_min == INT16_MAX ? 0 : sec_signed_min;
-      const int16_t samp_max = sec_signed_max == INT16_MIN ? 0 : sec_signed_max;
-      log_warn("[ASR_CHAT] round=%u 1s samp_min=%d samp_avg=%u samp_max=%d vad=%d voice=%d",
-               (unsigned)round_id_, (int)samp_min, (unsigned)samp_avg, (int)samp_max,
-               (int)sec_vad_hit, (int)voice_seen);
+      log_warn("[ASR_CHAT] round=%u 1s samp_min=%d samp_avg=%u samp_max=%d sent=%u",
+               (unsigned)round_id_, (int)(sec_signed_min == INT16_MAX ? 0 : sec_signed_min),
+               (unsigned)samp_avg, (int)(sec_signed_max == INT16_MIN ? 0 : sec_signed_max),
+               (unsigned)samples_sent);
       sec_stats_start_ms = now_sec;
       sec_signed_min = INT16_MAX;
       sec_signed_max = INT16_MIN;
       sec_abs_sum = 0;
       sec_samp_count = 0;
-      sec_vad_hit = false;
     }
 
-    if (prebuf != nullptr && ring_cap_frames > 0) {
-      if (ring_used >= ring_cap_frames) {
-        /* ring 满：覆盖最旧 slot；若上行尚未消费则丢 1 帧（应极少见）。 */
-        if (uplink_active && ring_read == ring_write) {
-          log_warn("[ASR_CHAT] round=%u ring overrun: drop 1 frame (read caught write)",
-                   (unsigned)round_id_);
-          ring_read = (ring_read + 1) % ring_cap_frames;
-        } else if (!uplink_active) {
-          ring_read = (ring_read + 1) % ring_cap_frames;
-        }
-      }
-      int16_t* slot = &prebuf[ring_write * kFrameSamples20ms];
-      if (duplex_suppress) {
-        /* TTS 播音期间 ring 写零，避免回声进上行；仍续录至静音结束再 flush。 */
-        memset(slot, 0, kFrameSamples20ms * sizeof(int16_t));
-      } else {
-        memcpy(slot, frame, kFrameSamples20ms * sizeof(int16_t));
-      }
-      ring_write = (ring_write + 1) % ring_cap_frames;
-      if (ring_used < ring_cap_frames) {
-        ++ring_used;
-      }
-    }
-
-    samples_recorded += kFrameSamples20ms;
     handle_cmd();
     loopLite();
 
-    /* 规则 2：扬声器正在播可听 PCM → 停止录音并 discard。 */
-    if (isSpeaking()) {
-      record_aborted_downlink = true;
-      log_warn("[ASR_CHAT] round=%u isSpeaking during record, abort discard "
-               "(voice=%d sent=%u audible=%d i2s=%d play_q=%u stream_open=%d)",
-               (unsigned)round_id_, (int)voice_seen, (unsigned)samples_sent,
-               (int)audio_play_speaker_busy(), (int)audio_play_i2s_in_progress(),
-               (unsigned)audio_play_input_queue_depth(), (int)audio_play_stream_pcm_active());
-      break;
-    }
-    if (!voice_seen && server_started_reply_) {
-      log_warn("[ASR_CHAT] round=%u listen end (server replying, no voice)",
-               (unsigned)round_id_);
-      break;
-    }
-    if (disconnect_abort_round_) {
-      record_aborted_disconnect = true;
-      break;
-    }
-
-    if (uplink_active) {
-      if (!drain_ring_uplink(/*budget_ms=*/18)) {
-        return discard_round_send_fail();
-      }
-    }
-
-    round_scope.pump(voice_seen ? "uplink" : "listen");
-    taskYIELD();
-  }
-
-  in_voice_record_loop_ = false;
-
-  /* 录音环结束：把 ring 里尚未上行的尾巴发完再 flush（abort 轮跳过）。 */
-  if (!record_aborted_downlink && !record_aborted_disconnect && uplink_active &&
-      ring_read != ring_write && wsCanSend()) {
-    while (ring_read != ring_write) {
-      if (isSpeaking()) {
-        record_aborted_downlink = true;
-        log_warn("[ASR_CHAT] round=%u isSpeaking during ring tail, abort discard "
-                 "(sent=%u audible=%d i2s=%d play_q=%u stream_open=%d)",
-                 (unsigned)round_id_, (unsigned)samples_sent, (int)audio_play_speaker_busy(),
-                 (int)audio_play_i2s_in_progress(), (unsigned)audio_play_input_queue_depth(),
-                 (int)audio_play_stream_pcm_active());
-        break;
-      }
-      if (!drain_ring_uplink(/*budget_ms=*/50)) {
-        return discard_round_send_fail();
-      }
-      if (ring_read == ring_write) {
-        break;
-      }
-      handle_cmd();
-      loopLite();
+    if (!deskbot_uplink_capture_allowed()) {
+      round_scope.pump("listen");
       taskYIELD();
+      continue;
     }
+
+    bool audio_ok = false;
+    for (int uplink_retry = 0; uplink_retry < 3; ++uplink_retry) {
+      if (queueAudioOpusFrame(frame, kFrameSamples20ms)) {
+        audio_ok = true;
+        break;
+      }
+      ws_uplink_pump();
+      loopLite();
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (!audio_ok) {
+      log_warn("[ASR_CHAT] send audio failed after retry (sent=%u)", (unsigned)samples_sent);
+      resetUplinkBatch();
+      noteWsSendFail("sendAudio");
+      if (!wsCanSend()) {
+        record_aborted_disconnect = true;
+        break;
+      }
+      round_scope.pump("uplink_fail");
+      taskYIELD();
+      continue;
+    }
+    samples_sent += kFrameSamples20ms;
+    round_scope.pump("uplink");
+    taskYIELD();
   }
 
   if (record_aborted_disconnect) {
@@ -1903,85 +1804,36 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       sendJson("{\"type\":\"audio_cancel\"}", /*critical=*/false);
     }
     discardPendingUplinkMedia();
-    resetVadForNewRound(use_vadnet);
     mic_capture_flush_queue();
     enhanceVoice_reset();
-    log_warn("[ASR_CHAT] round=%u end (disconnect discard, cancelled %u samples)",
-             (unsigned)round_id_, (unsigned)samples_sent);
+    log_warn("[ASR_CHAT] round=%u end (disconnect discard)", (unsigned)round_id_);
     return true;
   }
 
-  if (!voice_seen && !server_started_reply_) {
-    /* 整轮基本是静音：不发 audio JSON、不发 flush。
-     * 勿 pbReset 打断进行中的 TTS/pb 下行。 */
-    log_warn("[ASR_CHAT] round=%u skipped (no voice %ums%s, ring=%u)",
-             (unsigned)round_id_,
-             (unsigned)(samples_recorded * 1000UL / SAMPLE_RATE),
-             use_vadnet ? ", VADNet" : "",
-             (unsigned)ring_used);
-    if (!use_vadnet && peak_mean_round + DESKBOT_PDM_VOICE_MARGIN >= voice_threshold) {
-      log_warn("[ASR_CHAT] round=%u near-miss (peak=%u thr=%u delta_need>%u); speak louder",
-               (unsigned)round_id_, (unsigned)peak_mean_round, (unsigned)voice_threshold,
-               (unsigned)(voice_threshold - peak_mean_round));
-    }
-    if (!pb_active_ && !pb_expect_bin_) {
-      pbReset(/*stop_audio=*/true);
-      audio_stream_pcm16_stop();
-    }
-    mic_capture_flush_queue();
-    enhanceVoice_reset();
-    resetVadForNewRound(use_vadnet);
-    log_warn("[ASR_CHAT] round=%u end (skipped)", (unsigned)round_id_);
-    return true;
-  }
-
-  if (record_aborted_downlink) {
-    if (samples_sent > 0) {
-      sendJson("{\"type\":\"audio_cancel\"}", /*critical=*/false);
-    }
-    discardPendingUplinkMedia();
-    resetVadForNewRound(use_vadnet);
-    mic_capture_flush_queue();
-    enhanceVoice_reset();
-    log_warn("[ASR_CHAT] round=%u end (isSpeaking abort, cancelled %u samples)",
-             (unsigned)round_id_, (unsigned)samples_sent);
-    return true;
-  }
-
-  if (!server_started_reply_) {
-    if (!sendJson("{\"type\":\"flush\"}")) {
+  if (samples_sent > 0) {
+    if (!flushAudioOpusBatch()) {
+      log_warn("[ASR_CHAT] flush audio batch failed");
+    } else if (!sendJson("{\"type\":\"flush\"}")) {
       log_warn("[ASR_CHAT] send flush failed");
     } else {
       log_warn("[ASR_CHAT] round=%u flush sent (uploaded %u samples)",
                (unsigned)round_id_, (unsigned)samples_sent);
     }
-  } else if (samples_sent > 0) {
-    /* 下行 pb 已到达但仍须 flush，否则服务端 rom_pcm 不会送 ASR。 */
-    if (!sendJson("{\"type\":\"flush\"}")) {
-      log_warn("[ASR_CHAT] send flush failed (server replying)");
-    } else {
-      log_warn("[ASR_CHAT] round=%u flush sent while server replying (uploaded %u samples)",
-               (unsigned)round_id_, (unsigned)samples_sent);
-    }
   } else {
-    log_warn("[ASR_CHAT] round=%u skip flush (server replying, uploaded %u samples)",
-             (unsigned)round_id_, (unsigned)samples_sent);
+    log_warn("[ASR_CHAT] round=%u end (no audio sent)", (unsigned)round_id_);
   }
 
   vad_gate_open_ = false;
   voice_uplink_active_ = false;
-
-  /* flush 后不再 post-flush 上行；下行 TTS 由外层 loop() 处理。 */
   mic_capture_flush_queue();
   enhanceVoice_reset();
-  resetVadForNewRound(use_vadnet);
 
   round_scope.phase("i2s_tail");
   {
-    const unsigned long tail_end = millis() + kI2sDmaTailSuppressMs;
+    const unsigned long tail_end = millis() + (unsigned long)DESKBOT_TAIL_SUPPRESS_MS;
     while (millis() < tail_end) {
       handle_cmd();
-      loopLite();  /* 同理：不用 loop() 防止 pbPumpWsWhileExpectBin 卡死 tail wait */
+      loopLite();
       round_scope.pump("i2s_tail");
       taskYIELD();
     }
@@ -2070,6 +1922,7 @@ void AsrChatClient::onWebSocketEvent(WStype_t type, uint8_t* payload, size_t len
       ready_ = true;
       ws_needs_reconnect_ = false;
       ws_send_fail_streak_ = 0;
+      deskbot_uplink_set_ws_ready(true);
       log_info("[ASR_CHAT] event ready");
     } else if (t == "pong") {
       // no-op
@@ -2106,33 +1959,47 @@ void AsrChatClient::onWebSocketEvent(WStype_t type, uint8_t* payload, size_t len
       const PbBinKind bin_kind = pb_expect_bin_kind_;
 
       if (bin_kind == PbBinKind::kPcm) {
-        if ((length & 1u) != 0u) {
-          pbProtocolError("PCM binary length not even");
+        if (pb_sr_ == 0 || pb_ch_ == 0 || pb_fmt_.isEmpty()) {
+          pbProtocolError("binary without valid audio params");
           return;
         }
-        if (pb_sr_ == 0 || pb_ch_ == 0 || pb_fmt_ != "s16le") {
-          pbProtocolError("binary without valid audio params");
+        if (pb_fmt_ != "s16le" && pb_fmt_ != "opus") {
+          pbProtocolError("unsupported audio fmt");
+          return;
+        }
+        if (pb_fmt_ == "s16le" && (length & 1u) != 0u) {
+          pbProtocolError("PCM binary length not even");
           return;
         }
         if (pb_bins_rx_count_ < 255) {
           pb_bins_rx_count_++;
         }
         pb_pcm_bytes_rx_total_ += length;
-        uint8_t* pcm_bytes = (uint8_t*)heap_caps_malloc(length, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        int16_t* pcm_owned = nullptr;
+        size_t samples = 0;
         uint32_t free_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-        if (!pcm_bytes) {
-          pcm_bytes = (uint8_t*)heap_caps_malloc(length, MALLOC_CAP_DEFAULT);
-          free_caps = MALLOC_CAP_DEFAULT;
+        if (pb_fmt_ == "opus") {
+          if (!opus_downlink_decode(payload, length, (int)pb_sr_, pb_expect_opus_frames_,
+                                    &pcm_owned, &samples, &free_caps)) {
+            pbProtocolError("opus decode failed");
+            return;
+          }
+        } else {
+          pcm_owned = (int16_t*)heap_caps_malloc(length, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+          if (!pcm_owned) {
+            pcm_owned = (int16_t*)heap_caps_malloc(length, MALLOC_CAP_DEFAULT);
+            free_caps = MALLOC_CAP_DEFAULT;
+          }
+          if (!pcm_owned) {
+            pbProtocolError("pcm alloc failed");
+            return;
+          }
+          memcpy(pcm_owned, payload, length);
+          samples = length / 2;
         }
-        if (!pcm_bytes) {
-          pbProtocolError("pcm alloc failed");
-          return;
-        }
-        memcpy(pcm_bytes, payload, length);
-        const size_t samples = length / 2;
         if (!pb_audio_stream_started_) {
           if (!audio_stream_pcm16_begin(pb_sr_, pb_ch_, pb_volume_ratio_)) {
-            heap_caps_free(pcm_bytes);
+            heap_caps_free(pcm_owned);
             pbProtocolError("audio stream begin failed");
             return;
           }
@@ -2140,7 +2007,7 @@ void AsrChatClient::onWebSocketEvent(WStype_t type, uint8_t* payload, size_t len
           pb_last_buf_decay_ms_ = millis();
           pb_audio_buf_ms_est_ = 0;
         }
-        if (!audio_stream_pcm16_push_owned((int16_t*)pcm_bytes, samples, free_caps, pb_volume_ratio_)) {
+        if (!audio_stream_pcm16_push_owned(pcm_owned, samples, free_caps, pb_volume_ratio_)) {
           pbProtocolError("pcm push failed");
           return;
         }

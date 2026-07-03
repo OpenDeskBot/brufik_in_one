@@ -54,6 +54,15 @@ class DevicePipelineBroker:
     def max_events(self) -> int:
         return self._max_events
 
+    async def has_subscribers_for_device(self, device_id: Optional[str] = None) -> bool:
+        """是否有调试订阅者在监听该设备（或全部设备）。"""
+        device_id = str(device_id or "").strip() or None
+        async with self._lock:
+            for _ws, flt in self._subscribers.items():
+                if not flt or flt == device_id:
+                    return True
+        return False
+
     async def publish(self, event: dict) -> dict:
         async with self._lock:
             self._seq += 1

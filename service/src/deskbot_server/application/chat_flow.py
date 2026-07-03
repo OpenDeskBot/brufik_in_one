@@ -31,7 +31,7 @@ _SCHEDULED_TASK_PREFIX = "[系统定时任务]"
 
 
 class _TtsPrefetch:
-    """LLM 流式输出中 ``tts`` 就绪后提前启动音素 TTS 合成。"""
+    """LLM 流式输出中 ``tts`` 字段闭合后提前启动豆包 TTS 合成。"""
 
     def __init__(self, chat: "ChatService") -> None:
         self._chat = chat
@@ -42,6 +42,11 @@ class _TtsPrefetch:
             self.task.cancel()
         self.task = None
 
+    def detach_task(self) -> asyncio.Task | None:
+        task = self.task
+        self.task = None
+        return task
+
     async def on_ready(self, tts: str) -> None:
         text = (tts or "").strip()
         if not text:
@@ -49,6 +54,65 @@ class _TtsPrefetch:
         self.cancel()
         self.task = asyncio.create_task(self._chat.tts_phoneme_segments(text))
         logger.info("[LLM] 流式 tts 就绪，提前启动 TTS prefetch text=%r", text[:80])
+
+
+async def _play_interim_tts(
+    downlink: DownlinkPort,
+    chat: ChatService,
+    text: str,
+    prefetch: _TtsPrefetch,
+    *,
+    request_id: Optional[str],
+    device_id: Optional[str],
+    round_idx: int,
+) -> None:
+    """工具轮过渡语：复用流式 prefetch 任务，与工具执行并行下发 pb。"""
+    playback = (text or "").strip()
+    if not playback:
+        return
+    task = prefetch.detach_task()
+    if task is None:
+        task = asyncio.create_task(chat.tts_phoneme_segments(playback))
+    interim_result = ChatTurnResult()
+    parsed = {
+        "reply": playback,
+        "servo": [],
+        "moves": [],
+        "anims": [],
+        "json_ok": True,
+        "need_reply": True,
+        "raw": playback,
+    }
+    interim_rid = f"{request_id}_interim_{round_idx}" if request_id else None
+    logger.info(
+        "[LLM] 工具轮过渡 TTS device_id=%s req=%s round=%d text=%r",
+        device_id,
+        request_id,
+        round_idx,
+        playback[:80],
+    )
+    await downlink.emit_stage(
+        "tts_start",
+        request_id=interim_rid,
+        send_client=False,
+        event_fields={
+            "tts_text": playback,
+            "source": "llm_tool_interim",
+            "stage": f"llm_tool_{round_idx}",
+        },
+    )
+    await _run_pb_playback(
+        downlink,
+        chat,
+        reply_text=playback,
+        parsed=parsed,
+        llm_scenes=[],
+        request_id=interim_rid,
+        device_id=device_id,
+        result=interim_result,
+        t_asr_start=None,
+        prefetch_tts=task,
+    )
 
 
 def _is_scheduled_task_user_text(user_text: str) -> bool:
@@ -160,6 +224,18 @@ async def run_chat_turn(
                     history_messages = session_history_for_llm(device_id, session_id)
 
         tts_prefetch = _TtsPrefetch(chat)
+
+        async def _on_interim_tts_play(text: str, round_idx: int) -> None:
+            await _play_interim_tts(
+                downlink,
+                chat,
+                text,
+                tts_prefetch,
+                request_id=request_id,
+                device_id=device_id,
+                round_idx=round_idx,
+            )
+
         parsed, llm_tools, tool_results, answer = await complete_llm_with_tool_loop(
             chat,
             user_text,
@@ -171,6 +247,8 @@ async def run_chat_turn(
             dp_broker=pipeline_broker,
             pipeline_source="asr" if t_asr_start is not None else "text",
             on_tts_ready=tts_prefetch.on_ready,
+            tts_prefetch=tts_prefetch,
+            on_interim_tts_play=_on_interim_tts_play,
         )
 
         reply_text = parsed["reply"]

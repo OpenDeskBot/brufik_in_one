@@ -13,6 +13,7 @@ from deskbot_server.application.asr_chat_uplink import (
     AsrChatCameraPipeline,
     PendingUplinkBinary,
     coerce_next_bin_len,
+    coerce_opus_frames,
 )
 from deskbot_server.application.boot_wake import deliver_boot_wake_scene
 from deskbot_server.application.interaction_feedback import (
@@ -54,12 +55,22 @@ async def _feed_rom_uplink(
     device_id: Optional[str],
     sample_rate: Optional[int] = None,
     channels: Optional[int] = None,
+    opus_frames: Optional[int] = None,
+    websocket=None,
+    pipeline: Optional[ChatService] = None,
+    audio_cfg: Optional[AudioConfig] = None,
+    dp_broker: Optional[DevicePipelineBroker] = None,
+    registry: Optional[DeviceRegistry] = None,
+    turn_task_holder: Optional[list] = None,
+    device_pb_only: bool = False,
+    api_key_id: Optional[str] = None,
 ) -> None:
-    _pcm, uplink_started, _ = await session.feed_audio(
+    utterance, uplink_started, _ = await session.feed_audio(
         payload,
         codec,
         sample_rate=sample_rate,
         channels=channels,
+        opus_frames=opus_frames,
     )
     if uplink_started:
         logger.info(
@@ -71,6 +82,23 @@ async def _feed_rom_uplink(
             channels,
         )
         schedule_listen_feedback(asr_chat_hub, device_id)
+    if utterance and websocket is not None and pipeline is not None and audio_cfg is not None:
+        await _schedule_asr_turn(
+            websocket,
+            pipeline=pipeline,
+            audio_cfg=audio_cfg,
+            session=session,
+            pcm_segment=utterance,
+            device_id=device_id,
+            dp_broker=dp_broker,
+            registry=registry,
+            asr_chat_hub=asr_chat_hub,
+            turn_task_holder=turn_task_holder or [],
+            api_key_id=api_key_id,
+            uplink_sample_rate=session.rom_sr,
+            uplink_channels=session.rom_ch,
+            uplink_codec=session.rom_codec,
+        )
 
 
 async def _schedule_asr_turn(
@@ -141,8 +169,10 @@ async def _publish_asr_capture(
     channels: int = 1,
     codec: str = "pcm16",
 ) -> None:
-    """向 device_pipeline 订阅者推送 ASR 收音调试事件（ROM 首帧～flush 整段 WAV）。"""
+    """向 device_pipeline 订阅者推送 ASR 收音调试事件（仅调试台订阅时）。"""
     if not device_id or dp_broker is None or not pcm_segment:
+        return
+    if not await dp_broker.has_subscribers_for_device(device_id):
         return
     pcm_bytes = len(pcm_segment)
     audio_ms = int(pcm_bytes / 2 / max(1, sample_rate) * 1000)
@@ -442,7 +472,7 @@ async def _dispatch_rom_flush(
 ) -> None:
     flushed = session.flush()
     if flushed is None:
-        logger.info("[/asr_chat] flush 空上行 device_id=%s", device_id)
+        logger.info("[/asr_chat] flush 无有效语音段 device_id=%s（Silero 已丢弃静音）", device_id)
         return
     duration_ms = int(
         len(flushed.pcm) / 2 / max(1, flushed.sample_rate) * 1000
@@ -569,6 +599,7 @@ async def handle_asr_chat(
                     codec = pending.codec
                     uplink_sr = pending.sample_rate
                     uplink_ch = pending.channels
+                    uplink_frames = pending.opus_frames
                     pending = None
 
                     if kind == "camera_frame":
@@ -596,6 +627,15 @@ async def handle_asr_chat(
                         device_id=device_id,
                         sample_rate=uplink_sr,
                         channels=uplink_ch,
+                        opus_frames=uplink_frames,
+                        websocket=websocket,
+                        pipeline=pipeline,
+                        audio_cfg=audio_cfg,
+                        dp_broker=dp_broker,
+                        registry=registry,
+                        turn_task_holder=turn_task_holder,
+                        device_pb_only=device_pb_only,
+                        api_key_id=api_key_id,
                     )
                     continue
 
@@ -608,6 +648,14 @@ async def handle_asr_chat(
                         session=session,
                         asr_chat_hub=asr_chat_hub,
                         device_id=device_id,
+                        websocket=websocket,
+                        pipeline=pipeline,
+                        audio_cfg=audio_cfg,
+                        dp_broker=dp_broker,
+                        registry=registry,
+                        turn_task_holder=turn_task_holder,
+                        device_pb_only=device_pb_only,
+                        api_key_id=api_key_id,
                     )
                     continue
 
@@ -764,6 +812,7 @@ async def handle_asr_chat(
                             codec=data.get("codec"),
                             sample_rate=uplink_sr,
                             channels=uplink_ch,
+                            opus_frames=coerce_opus_frames(data),
                         )
                         continue
                     raw_b64 = data.get("data")
@@ -788,6 +837,14 @@ async def handle_asr_chat(
                             device_id=device_id,
                             sample_rate=uplink_sr,
                             channels=uplink_ch,
+                            websocket=websocket,
+                            pipeline=pipeline,
+                            audio_cfg=audio_cfg,
+                            dp_broker=dp_broker,
+                            registry=registry,
+                            turn_task_holder=turn_task_holder,
+                            device_pb_only=device_pb_only,
+                            api_key_id=api_key_id,
                         )
                     continue
 

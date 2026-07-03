@@ -1,6 +1,7 @@
 #include "audio_capture.h"
 
 #include "audio_player.h"
+#include "deskbot_uplink_state.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
@@ -42,7 +43,9 @@ void mic_capture_task(void* /*arg*/) {
     if (bytes_read < kMicCaptureFrameSamples * sizeof(int16_t)) {
       continue;
     }
-    mic_enqueue_drop_oldest(frame);
+    if (deskbot_uplink_capture_allowed()) {
+      mic_enqueue_drop_oldest(frame);
+    }
   }
 }
 
