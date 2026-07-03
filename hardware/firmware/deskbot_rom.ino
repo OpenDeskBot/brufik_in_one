@@ -24,6 +24,18 @@ AsrChatClient asrChatClient;
 
 unsigned long loop_start_time = 0;
 
+static void on_wifi_link_down() {
+  asrChatClient.onLinkDown("wifi lost");
+}
+
+static void on_wifi_link_up() {
+  asrChatClient.onLinkUp();
+}
+
+static void deskbot_network_poll() {
+  wifi_provision_maintain();
+}
+
 static bool setup_camera() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -114,6 +126,7 @@ void setup() {
     oled_boot_show("WiFi 连接失败", "请重启或配网");
     return;
   }
+  wifi_provision_set_link_handlers(on_wifi_link_down, on_wifi_link_up);
 
   setup_audio();
   if (!vadnet_gate_setup()) {
@@ -147,6 +160,7 @@ void setup() {
 
 void loop() {
   handle_cmd();
+  deskbot_network_poll();
   websocket_loop();
   log_task_tick();
 
@@ -160,6 +174,7 @@ void loop() {
     }
     for (;;) {
       handle_cmd();
+      deskbot_network_poll();
       log_task_tick();
       asrChatClient.loop();
 

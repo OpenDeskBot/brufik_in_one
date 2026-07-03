@@ -13,14 +13,14 @@
 
 | 文档 | 内容 |
 |------|------|
-| [../deskbot-server/README.md](../deskbot-server/README.md) | 主服务：端口、控制台、LLM 工具、豆包 TTS 配置 |
-| [../deskbot-server/docs/ARCHITECTURE.md](../deskbot-server/docs/ARCHITECTURE.md) | 代码分层、对话与定时任务链路 |
+| [SERVER.md](./SERVER.md) | 主服务：端口、控制台、LLM 工具、豆包 TTS 配置 |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | 代码分层、对话与定时任务链路 |
 
 ## 联调工具
 
 | 文档 | 内容 |
 |------|------|
-| [../deskbot-server/tools/README.md](../deskbot-server/tools/README.md) | WAV / 麦克风 / 相机测试客户端 |
+| [../tools/README.md](../tools/README.md) | WAV / 麦克风 / 相机测试客户端 |
 
 ## 协作与安全
 

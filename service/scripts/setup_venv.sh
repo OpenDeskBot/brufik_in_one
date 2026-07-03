@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# deskbot-server 统一启动脚本（Linux / macOS / Windows Git Bash）
+# 准备 Python venv 与依赖（由 start.sh 调用）
 #
 # 用法:
-#   ./start.sh                  安装/更新依赖并启动（默认）
-#   SKIP_SETUP=1 ./start.sh     仅启动，不装依赖
-#   SETUP_ONLY=1 ./start.sh     只准备 venv/依赖，不启动进程
-#   FAST_START=1 ./start.sh     跳过 pip 安装（venv 须已完整），然后启动
+#   SETUP_ONLY=1 ./scripts/setup_venv.sh     只准备 venv/依赖，不启动进程
+#   SKIP_SETUP=1 ./scripts/setup_venv.sh       仅启动 deskbot_server
+#   FAST_START=1 ./scripts/setup_venv.sh       跳过 pip 安装（venv 须已完整），然后启动
 #
 # 环境变量:
 #   PYTHON_BIN=             创建 venv 时使用的 Python（默认自动查找 >= 3.11）
@@ -13,10 +12,10 @@
 #   SKIP_SYSTEM_CHECK=1     跳过 ffmpeg 等系统依赖警告
 
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 # shellcheck source=/dev/null
-source "$ROOT/../scripts/platform.sh"
+source "$ROOT/scripts/platform.sh"
 
 REQUIRED_PY_MM="${REQUIRED_PY_MM:-3.11}"
 USE_CPU_TORCH="${USE_CPU_TORCH:-1}"

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# deskbot-server/ 目录（含 config.yaml、data/、models/）
+# service/ 项目根目录（含 config.yaml、data/、models/）
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 DATA_DIR = PROJECT_ROOT / "data"

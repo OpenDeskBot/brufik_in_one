@@ -22,7 +22,7 @@
 
 /** 1 = 经 /asr_chat 上传 camera_frame；0 = 暂停（本地仍可采集，不发 WS）。 */
 #ifndef DESKBOT_CAMERA_UPLINK_ENABLED
-#define DESKBOT_CAMERA_UPLINK_ENABLED 0
+#define DESKBOT_CAMERA_UPLINK_ENABLED 1
 #endif
 
 static inline bool deskbot_camera_uplink_enabled(void) {
@@ -138,7 +138,8 @@ static inline size_t deskbot_pdm_voice_hangover_thr(size_t ema) {
 #define DESKBOT_PDM_VOICE_TRIGGER_FRAMES     3
 #define DESKBOT_PDM_VOICE_THRESHOLD_MAX      24000
 #define DESKBOT_PDM_PRE_VOICE_FRAMES         50
-#define DESKBOT_PDM_SILENCE_END_MS           1000
+/** 说完后连续静音多久结束本轮（ms）；600–700 适合短指令，句内长停顿需靠 hangover 续录。 */
+#define DESKBOT_PDM_SILENCE_END_MS           650
 
 /** I2S 播放 chunk 的 mean-abs×volume 低于此值视为静音，isSpeaking 保持 false。 */
 #define DESKBOT_SPEAKER_AUDIBLE_MEAN_ABS     16

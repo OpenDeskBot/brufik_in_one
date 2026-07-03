@@ -1,6 +1,6 @@
 # 本地调试工具
 
-在 `deskbot-server/.venv` 激活后运行。WebSocket URL **须带 `device_id` 与 `api_key`**（可用 `data/.free_api_key` 中的免费 Key）。
+在 `.venv` 激活后运行。WebSocket URL **须带 `device_id` 与 `api_key`**（可用 `data/.free_api_key` 中的免费 Key）。
 
 ```bash
 source .venv/bin/activate

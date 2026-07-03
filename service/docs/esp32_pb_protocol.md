@@ -2,7 +2,7 @@
 
 单条 WebSocket：`ws://<host>:9000/asr_chat?device_id=<id>&api_key=<key>`。文本 JSON 与 binary 交替，**不用 base64**。长度由 **`next_bin_len`** 声明（上行在 JSON 根；下行在 `audio.next_bin_len`）。旧版 `audio.next_bin: 1` 已废弃。
 
-> **相关文档：** 部署与快速使用见 [README.md](../README.md)；主服务配置见 [deskbot-server/README.md](../deskbot-server/README.md)。定时任务、长期记忆、控制台管理等为**服务端能力**，不扩展本设备协议字段。
+> **相关文档：** 部署与快速使用见 [README.md](../README.md)；主服务配置见 [SERVER.md](./SERVER.md)。定时任务、长期记忆、控制台管理等为**服务端能力**，不扩展本设备协议字段。
 
 默认 **`asr_chat_device_pb_only: true`**：设备下行只处理 **`pb_*` + PCM**。服务端不再下发 `face_info`、`asr_*`、`llm_text`、TTS/错误类 JSON（如 `playback_done`、`tts_error`、`error`、`asr_rejected` 等）；轮次结果与耗时见 `/device_pipeline` 的 `pipeline_event` 或 Web 调试台。
 
@@ -349,7 +349,7 @@ c  = (R5 << 11) | (G6 << 5) | B5
 
 ## 9. 表情配置（服务端生成 `anim[]`）
 
-口播时服务端从 **`face_bundle`** JSON（`tts.pb_face_bundle_json` 或 `DESKBOT_PB_FACE_BUNDLE_JSON`）按音素查表组帧；保存文件后 **mtime 热重载**。示例：`deskbot-server/data/deskbot-face.json`（`phonemes` + `emotions`）。
+口播时服务端从 **`face_bundle`** JSON（`tts.pb_face_bundle_json` 或 `DESKBOT_PB_FACE_BUNDLE_JSON`）按音素查表组帧；保存文件后 **mtime 热重载**。示例：`data/global/deskbot-face.json`（`phonemes` + `emotions`）。
 
 | 顶层键 | 说明 |
 |--------|------|
@@ -362,7 +362,7 @@ c  = (R5 << 11) | (G6 << 5) | B5
 
 **offset**：口型 `offset (dx,dy)` 仅平移 **鼻、眼、extra** 坐标；**嘴不动**。未知音素用 `"_"` 或内置默认。
 
-固件只需解析 wire 上的 `anim[].elements`；编辑表情见仓库 `deskbot-server/data/`。
+固件只需解析 wire 上的 `anim[].elements`；编辑表情见仓库 `data/`。
 
 ---
 

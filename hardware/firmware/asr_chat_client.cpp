@@ -1,6 +1,7 @@
 #include "asr_chat_client.h"
 
 #include <ArduinoJson.h>
+#include <WiFi.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1043,6 +1044,17 @@ void AsrChatClient::forceWsReconnect(const char* why) {
   }
 }
 
+void AsrChatClient::onLinkDown(const char* why) {
+  forceWsReconnect(why ? why : "wifi lost");
+}
+
+void AsrChatClient::onLinkUp() {
+  ws_reconnect_backoff_ms_ = 2000;
+  ws_last_reconnect_attempt_ms_ = 0;
+  ws_needs_reconnect_ = true;
+  ws_send_fail_streak_ = 0;
+}
+
 bool AsrChatClient::wsCanSend() {
   return ws_.isConnected() && ready_ && !ws_needs_reconnect_;
 }
@@ -1080,6 +1092,9 @@ bool AsrChatClient::wsSendBin(const uint8_t* data, size_t len, const char* ctx, 
 }
 
 void AsrChatClient::maintainWsConnection() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
   if (wsCanSend()) {
     return;
   }
@@ -1112,6 +1127,9 @@ void AsrChatClient::maintainWsConnection() {
 }
 
 bool AsrChatClient::connect() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
   if (ws_.isConnected() && ready_ && !ws_needs_reconnect_) {
     return true;
   }
@@ -1760,11 +1778,14 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
         }
       }
       voice_seen = true;
-      silence_start = 0;
-    } else if (voice_seen) {
-      /* VADNet 音节间易判静音：用能量 hangover 续录，避免「举头…望明月」被截断。 */
+    }
+
+    if (voice_seen && !duplex_suppress) {
+      /* 音节间：能量 hangover 续录。说完后：低能量即计静音，不被 VAD 尾音/reverb 误触拖长。
+       * VADNet 路径下 lone vad speech（能量 < MIN_ABS）不再重置尾静音计时。 */
       const bool still_speech =
-          use_vadnet ? (active || frame_stats.abs_avg > hang_abs_thr)
+          use_vadnet ? (frame_stats.abs_avg > hang_abs_thr ||
+                        (active && frame_stats.abs_avg >= (size_t)DESKBOT_VADNET_MIN_ABS_AVG))
                      : (frame_stats.abs_avg > hang_abs_thr);
       if (still_speech) {
         silence_start = 0;

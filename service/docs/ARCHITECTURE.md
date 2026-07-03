@@ -70,7 +70,6 @@ Web 控制台独立进程：`python -m deskbot_server.web`（`:5050`，`start.sh
 ## 测试
 
 ```bash
-cd deskbot-server
 source .venv/bin/activate
 pytest tests/ -q
 ```

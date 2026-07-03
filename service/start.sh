@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 本地一键：校验 Python → 准备 deskbot-server venv → 启动主服务（可选 Flask 调试台）
+# 本地一键：校验 Python → 准备 venv → 启动主服务（可选 Flask 调试台）
 # 支持 Linux / macOS / Windows Git Bash（不调用 apt/yum，系统依赖请自行安装）
 #
-# 用法（在仓库根目录）:
+# 用法（在 service 目录）:
 #   ./start.sh
 #
 # 可选环境变量:
@@ -13,12 +13,11 @@
 #   DESKBOT_START_WEB=1     同时启动 Flask 调试台（默认 1，DESKBOT_WEB_PORT=5050）
 #   DESKBOT_START_WEB=0     不启动调试台
 #   SKIP_MODEL_DOWNLOAD=1   跳过 ASR / 人脸模型自动下载
-#   USE_CPU_TORCH=1         deskbot-server 使用 CPU 版 torch（默认 1）
+#   USE_CPU_TORCH=1         使用 CPU 版 torch（默认 1）
 #   SKIP_SYSTEM_CHECK=1     跳过 ffmpeg 等系统依赖警告
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-BS="$ROOT/deskbot-server"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/platform.sh"
 
@@ -59,39 +58,39 @@ ensure_python() {
   exit 1
 }
 
-setup_deskbot_venv() {
-  echo "[setup] deskbot-server venv（FunASR + torch ${PYTHON_MM} + requirements.txt）..."
+setup_venv() {
+  echo "[setup] venv（FunASR + torch ${PYTHON_MM} + requirements.txt）..."
   (
-    cd "$BS"
+    cd "$ROOT"
     export PYTHON_BIN
     export SETUP_ONLY=1
     export FAST_START="${FAST_START:-0}"
     export USE_CPU_TORCH="${USE_CPU_TORCH:-1}"
-    platform_run_sh "$BS/start.sh"
+    platform_run_sh "$ROOT/scripts/setup_venv.sh"
   )
 }
 
 venvs_look_ready() {
-  local bs_py
-  bs_py="$(platform_venv_python "$BS" 2>/dev/null)" || return 1
-  "$bs_py" -c "import numpy, websockets, yaml, webrtcvad, openai, opuslib_next, torch, torchaudio, funasr, croniter, deskbot_server" >/dev/null 2>&1 || return 1
+  local py
+  py="$(platform_venv_python "$ROOT" 2>/dev/null)" || return 1
+  "$py" -c "import numpy, websockets, yaml, webrtcvad, openai, opuslib_next, torch, torchaudio, funasr, croniter, deskbot_server" >/dev/null 2>&1 || return 1
 }
 
 ensure_local_scripts() {
-  if [[ ! -f "$BS/start.sh" ]]; then
-    echo "缺少脚本: $BS/start.sh" >&2
+  if [[ ! -f "$ROOT/scripts/setup_venv.sh" ]]; then
+    echo "缺少脚本: $ROOT/scripts/setup_venv.sh" >&2
     exit 1
   fi
 }
 
-ASR_MODEL_DIR="$BS/models/SenseVoiceSmall"
-FACE_MODEL_PATH="$BS/models/mediapipe/face_landmarker.task"
+ASR_MODEL_DIR="$ROOT/models/SenseVoiceSmall"
+FACE_MODEL_PATH="$ROOT/models/mediapipe/face_landmarker.task"
 FACE_MODEL_URL="https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
 
 asr_model_ready() {
   local py
   py="$(deskbot_venv_python 2>/dev/null)" || return 1
-  "$py" "$BS/scripts/check_asr_model.py" "$ASR_MODEL_DIR"
+  "$py" "$ROOT/scripts/check_asr_model.py" "$ASR_MODEL_DIR"
 }
 
 face_model_ready() {
@@ -99,27 +98,27 @@ face_model_ready() {
 }
 
 deskbot_venv_python() {
-  platform_venv_python "$BS" || {
-    echo "未找到 deskbot-server/.venv，请先完成 setup（不要设 SKIP_SETUP=1）。" >&2
+  platform_venv_python "$ROOT" || {
+    echo "未找到 .venv，请先完成 setup（不要设 SKIP_SETUP=1）。" >&2
     exit 1
   }
 }
 
 ensure_deskbot_env() {
-  if [[ ! -f "$BS/.env" && -f "$BS/.env.example" ]]; then
-    cp "$BS/.env.example" "$BS/.env"
-    echo "[setup] 已从 .env.example 创建 deskbot-server/.env"
-    echo "[setup] 请编辑 deskbot-server/.env 并填写 LLM_API_KEY（必填）"
+  if [[ ! -f "$ROOT/.env" && -f "$ROOT/.env.example" ]]; then
+    cp "$ROOT/.env.example" "$ROOT/.env"
+    echo "[setup] 已从 .env.example 创建 .env"
+    echo "[setup] 请编辑 .env 并填写 LLM_API_KEY（必填）"
   fi
 
-  if [[ -f "$BS/.env" ]]; then
+  if [[ -f "$ROOT/.env" ]]; then
     # shellcheck source=/dev/null
-    set -a && source "$BS/.env" && set +a
+    set -a && source "$ROOT/.env" && set +a
   fi
 
   if [[ -z "${LLM_API_KEY:-}${DASHSCOPE_API_KEY:-}${QWEN_API_KEY:-}" ]]; then
     echo "[warn] 未设置 LLM_API_KEY（或 DASHSCOPE_API_KEY / QWEN_API_KEY），语音对话将无法调用大模型。" >&2
-    echo "[warn] 请编辑 deskbot-server/.env 后重启。" >&2
+    echo "[warn] 请编辑 .env 后重启。" >&2
   fi
 }
 
@@ -128,7 +127,7 @@ download_asr_model() {
   local py
   py="$(deskbot_venv_python)"
   "$py" -m pip install -U modelscope
-  "$py" "$BS/scripts/download_model.py"
+  "$py" "$ROOT/scripts/download_model.py"
 }
 
 download_face_model() {
@@ -174,19 +173,19 @@ run_services() {
     local web_port="${DESKBOT_WEB_PORT:-5050}"
     echo "[web] 启动 Flask 调试台 0.0.0.0:${web_port}（局域网 http://<本机IP>:${web_port}/）"
     (
-      cd "$BS"
+      cd "$ROOT"
       # shellcheck source=/dev/null
       [[ -f .env ]] && set -a && source .env && set +a
-      web_py="$(platform_venv_python "$BS")"
+      web_py="$(platform_venv_python "$ROOT")"
       export DESKBOT_WEB_HOST="0.0.0.0"
       export DESKBOT_WEB_PORT="${DESKBOT_WEB_PORT:-5050}"
       exec "$web_py" -m deskbot_server.web
     ) &
   fi
 
-  echo "[1/1] 启动 deskbot-server ($BS) ..."
-  cd "$BS"
-  exec env SKIP_SETUP=1 bash "$BS/start.sh"
+  echo "[1/1] 启动 deskbot-server ($ROOT) ..."
+  cd "$ROOT"
+  exec env SKIP_SETUP=1 bash "$ROOT/scripts/setup_venv.sh"
 }
 
 # --- main ---
@@ -201,7 +200,7 @@ if [[ "${SKIP_SETUP:-0}" != "1" ]]; then
     echo "[setup] 检测到 venv 依赖已就绪，跳过 pip 安装（等同 FAST_START=1）。"
     export FAST_START=1
   fi
-  setup_deskbot_venv
+  setup_venv
 else
   echo "SKIP_SETUP=1，跳过 venv/依赖安装。"
 fi

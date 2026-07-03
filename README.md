@@ -13,8 +13,8 @@ Monorepo combining **Brufik hardware/firmware** and **opendesk-service backend**
 
 ```bash
 cd service
-cp deskbot-server/.env.example deskbot-server/.env
-# Edit deskbot-server/.env — set LLM_API_KEY
+cp .env.example .env
+# Edit .env — set LLM_API_KEY
 chmod +x start.sh
 ./start.sh
 ```

@@ -17,8 +17,8 @@ sudo apt install -y python3.11 python3.11-venv python3.11-dev ffmpeg curl git
 
 # 2. 配置大模型 Key（必填）
 cd opendesk-service
-cp deskbot-server/.env.example deskbot-server/.env
-# 编辑 deskbot-server/.env，填写 LLM_API_KEY=sk-...
+cp .env.example .env
+# 编辑 .env，填写 LLM_API_KEY=sk-...
 
 # 3. 一键启动（自动建 venv、下载模型、起主服务 + Web 控制台）
 chmod +x start.sh
@@ -38,7 +38,7 @@ FAST_START=1 ./start.sh
 | **Web 控制台** | `http://<本机IP>:5050/` | 注册登录、设备与 API Key、定时任务、记忆等 |
 | **设备 WebSocket** | `ws://<本机IP>:9000/asr_chat?device_id=<id>&api_key=<key>` | ESP32 语音对话主链路 |
 
-启动后终端会打印**免费体验 API Key** 路径：`deskbot-server/data/.free_api_key`（前缀 `odk_free_`，每日 1GB 配额）。
+启动后终端会打印**免费体验 API Key** 路径：`data/.free_api_key`（前缀 `odk_free_`，每日 1GB 配额）。
 
 ---
 
@@ -69,14 +69,13 @@ ws://<本机IP>:9000/asr_chat?device_id=<你的device_id>&api_key=<你的key>
 ### 5. 无硬件时本地试跑
 
 ```bash
-cd deskbot-server
 source .venv/bin/activate
 python tools/test_client.py \
   --ws-url "ws://127.0.0.1:9000/asr_chat?device_id=deskbot_dev&api_key=<key>" \
   --input-wav demo_16k_mono.wav
 ```
 
-WAV 须 **16 kHz / mono / s16le**。麦克风实时测试见 [deskbot-server/tools/README.md](deskbot-server/tools/README.md)。
+WAV 须 **16 kHz / mono / s16le**。麦克风实时测试见 [tools/README.md](tools/README.md)。
 
 ### 6. 控制台常用功能
 
@@ -90,7 +89,7 @@ WAV 须 **16 kHz / mono / s16le**。麦克风实时测试见 [deskbot-server/too
 | 用量看板 | 按 Key / 设备查看 ASR、人脸、LLM、TTS 字节统计 |
 | 调试台 | 设备在线、LLM 试聊、豆包 TTS、流水线等 |
 
-语音对话中，LLM 可通过工具创建定时提醒（`schedule_task`）、读写设备临时文件、联网搜索等，详见 [deskbot-server/README.md](deskbot-server/README.md)。
+语音对话中，LLM 可通过工具创建定时提醒（`schedule_task`）、读写设备临时文件、联网搜索等，详见 [docs/SERVER.md](docs/SERVER.md)。
 
 ---
 
@@ -109,7 +108,7 @@ WAV 须 **16 kHz / mono / s16le**。麦克风实时测试见 [deskbot-server/too
 └───────────────────────┘                    └─────────────────────────┘
 ```
 
-TTS 使用火山引擎豆包（`tts.provider: doubao`），凭证配置见 `deskbot-server/.env` 与调试台「TTS 调试」。
+TTS 使用火山引擎豆包（`tts.provider: doubao`），凭证配置见 `.env` 与调试台「TTS 调试」。
 
 ### 上行（设备 → 服务端）
 
@@ -138,10 +137,10 @@ TTS 使用火山引擎豆包（`tts.provider: doubao`），凭证配置见 `desk
 
 | 路径 | 说明 |
 |------|------|
-| `deskbot-server/data/opendesk.db` | 用户、API Key、设备绑定、定时任务（SQLite） |
-| `deskbot-server/data/.free_api_key` | 免费体验 Key（勿提交 Git） |
-| `deskbot-server/data/device/{device_id}/` | 按设备隔离的配置、session、记忆等（**不入 Git**） |
-| `deskbot-server/data/llm_system.txt` | 全局 LLM 人设模板（新设备首次使用时复制） |
+| `data/opendesk.db` | 用户、API Key、设备绑定、定时任务（SQLite） |
+| `data/.free_api_key` | 免费体验 Key（勿提交 Git） |
+| `data/device/{device_id}/` | 按设备隔离的配置、session、记忆等（**不入 Git**） |
+| `data/llm_system.txt` | 全局 LLM 人设模板（新设备首次使用时复制） |
 
 ---
 
@@ -151,9 +150,9 @@ TTS 使用火山引擎豆包（`tts.provider: doubao`），凭证配置见 `desk
 |------|------|
 | [docs/api_interfaces.md](docs/api_interfaces.md) | Web 控制台、deskbot 设备服务、TTS 侧车接口清单 |
 | [docs/esp32_pb_protocol.md](docs/esp32_pb_protocol.md) | ESP32 通信、鉴权、pb 协议 |
-| [deskbot-server/README.md](deskbot-server/README.md) | 主服务 API、配置、LLM 工具 |
-| [deskbot-server/docs/ARCHITECTURE.md](deskbot-server/docs/ARCHITECTURE.md) | 代码分层与模块 |
-| [deskbot-server/tools/README.md](deskbot-server/tools/README.md) | 本地联调脚本 |
+| [docs/SERVER.md](docs/SERVER.md) | 主服务 API、配置、LLM 工具 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 代码分层与模块 |
+| [tools/README.md](tools/README.md) | 本地联调脚本 |
 | [docs/README.md](docs/README.md) | 文档目录 |
 
 [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md)

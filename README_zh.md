@@ -13,8 +13,8 @@
 
 ```bash
 cd service
-cp deskbot-server/.env.example deskbot-server/.env
-# 编辑 deskbot-server/.env，填写 LLM_API_KEY
+cp .env.example .env
+# 编辑 .env，填写 LLM_API_KEY
 chmod +x start.sh
 ./start.sh
 ```

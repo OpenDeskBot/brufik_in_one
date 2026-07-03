@@ -23,8 +23,10 @@ class _WebsocketsServerNoiseFilter(logging.Filter):
     2) ``connection rejected (204 No Content)``：浏览器对 ``/api/*`` 的 **CORS 预检**
        （OPTIONS），``_build_http_request_handler`` 按设计返回 204；常见于 Flask 调试页
        在 :5050、而 ``fetch`` 指向 ``http(s)://…:9000`` 的跨源场景。
+    3) ``connection rejected (200 OK)``：Flask ``/proxy/deskbot`` 等转发到同端口 ``/api/*``
+       的普通 HTTP GET/POST；``process_request`` 正常返回 200，非 WebSocket 升级失败。
 
-    降级为 DEBUG 并去掉附带 traceback，避免 ``DESKBOT_SERVER_LOG_LEVEL=DEBUG`` 时刷屏。
+    以上降级为 DEBUG 并去掉附带 traceback，避免 ``DESKBOT_SERVER_LOG_LEVEL=DEBUG`` 时刷屏。
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -34,7 +36,7 @@ class _WebsocketsServerNoiseFilter(logging.Filter):
             msg = record.getMessage()
         except Exception:
             return True
-        if "connection rejected" in msg and "204" in msg:
+        if "connection rejected" in msg and ("204" in msg or "200 OK" in msg):
             if record.levelno >= logging.INFO:
                 record.levelno = logging.DEBUG
                 record.levelname = "DEBUG"

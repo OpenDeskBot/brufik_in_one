@@ -23,10 +23,169 @@ struct WifiCredential {
   String password;
 };
 
+static void oled_show_wifi_connected();
+bool try_connect_credential(const char* source_label, int max_attempts);
+int load_saved_wifi_list(WifiCredential* out, int max_out);
+int build_visible_saved_candidates(const WifiCredential* saved, int saved_count,
+                                   WifiCredential* out, int max_out);
+bool wifi_defaults_configured();
+
 WebServer server(80);
 bool done_config = false;
 String ssid;
 String password;
+
+WifiLinkHandler s_link_down_handler = nullptr;
+WifiLinkHandler s_link_up_handler = nullptr;
+bool s_wifi_handlers_registered = false;
+bool s_wifi_was_up = false;
+bool s_wifi_reconnect_pending = false;
+bool s_wifi_quick_reconnect_active = false;
+unsigned long s_wifi_last_check_ms = 0;
+unsigned long s_wifi_reconnect_backoff_ms = 3000;
+unsigned long s_wifi_last_reconnect_ms = 0;
+unsigned long s_wifi_quick_reconnect_start_ms = 0;
+volatile bool s_wifi_event_disconnected = false;
+volatile bool s_wifi_event_got_ip = false;
+
+static constexpr unsigned long kWifiCheckIntervalUpMs = 5000;
+static constexpr unsigned long kWifiCheckIntervalDownMs = 2000;
+static constexpr unsigned long kWifiQuickReconnectWaitMs = 8000;
+static constexpr int kWifiMaintainConnectAttempts = 20;
+
+static bool wifi_link_up() {
+  return WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0);
+}
+
+static void apply_wifi_runtime_keepalive() {
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+}
+
+static void notify_wifi_link_down() {
+  s_wifi_was_up = false;
+  s_wifi_reconnect_pending = true;
+  s_wifi_last_reconnect_ms = 0;
+  if (s_link_down_handler != nullptr) {
+    s_link_down_handler();
+  }
+}
+
+static void notify_wifi_link_up() {
+  s_wifi_reconnect_pending = false;
+  s_wifi_quick_reconnect_active = false;
+  s_wifi_reconnect_backoff_ms = 3000;
+  apply_wifi_runtime_keepalive();
+  oled_show_wifi_connected();
+  if (!s_wifi_was_up && s_link_up_handler != nullptr) {
+    s_link_up_handler();
+  }
+  s_wifi_was_up = true;
+}
+
+static void register_wifi_event_handlers_once() {
+  if (s_wifi_handlers_registered) {
+    return;
+  }
+  s_wifi_handlers_registered = true;
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+    (void)info;
+#if defined(ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+    if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+      s_wifi_event_disconnected = true;
+    } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+      s_wifi_event_got_ip = true;
+    }
+#elif defined(SYSTEM_EVENT_STA_DISCONNECTED)
+    if (event == SYSTEM_EVENT_STA_DISCONNECTED) {
+      s_wifi_event_disconnected = true;
+    } else if (event == SYSTEM_EVENT_STA_GOT_IP) {
+      s_wifi_event_got_ip = true;
+    }
+#endif
+  });
+}
+
+static bool attempt_runtime_wifi_reconnect() {
+  if (ssid.length() == 0) {
+    ssid = WiFi.SSID();
+  }
+
+  WifiCredential saved[kMaxSavedWifi];
+  const int saved_count = load_saved_wifi_list(saved, kMaxSavedWifi);
+
+  WifiCredential visible[kMaxSavedWifi];
+  const int visible_count =
+      build_visible_saved_candidates(saved, saved_count, visible, kMaxSavedWifi);
+  for (int i = 0; i < visible_count; ++i) {
+    ssid = visible[i].ssid;
+    password = visible[i].password;
+    Serial.printf("[wifi] maintain try saved visible [%d/%d] ssid=%s\r\n", i + 1,
+                  visible_count, ssid.c_str());
+    if (try_connect_credential("maintain", kWifiMaintainConnectAttempts)) {
+      return true;
+    }
+  }
+
+  if (wifi_defaults_configured()) {
+    ssid = WIFI_DEFAULT_SSID;
+    password = WIFI_DEFAULT_PASSWORD;
+    Serial.printf("[wifi] maintain try default ssid=%s\r\n", ssid.c_str());
+    if (try_connect_credential("maintain-default", kWifiMaintainConnectAttempts)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static void handle_wifi_events_in_main_context() {
+  if (s_wifi_event_disconnected) {
+    s_wifi_event_disconnected = false;
+    Serial.println("[wifi] event: disconnected");
+    notify_wifi_link_down();
+  }
+  if (s_wifi_event_got_ip) {
+    s_wifi_event_got_ip = false;
+    if (wifi_link_up()) {
+      Serial.printf("[wifi] event: got IP=%s RSSI=%d dBm\r\n",
+                    WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      notify_wifi_link_up();
+    }
+  }
+}
+
+static void wifi_try_reconnect_now() {
+  if (ssid.length() == 0) {
+    ssid = WiFi.SSID();
+  }
+  if (ssid.length() > 0) {
+    Serial.printf("[wifi] maintain quick reconnect ssid=%s\r\n", ssid.c_str());
+    WiFi.reconnect();
+    s_wifi_quick_reconnect_active = true;
+    s_wifi_quick_reconnect_start_ms = millis();
+    return;
+  }
+
+  Serial.println("[wifi] maintain full reconnect");
+  if (attempt_runtime_wifi_reconnect()) {
+    Serial.printf("[wifi] maintain reconnected IP=%s RSSI=%d dBm\r\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    notify_wifi_link_up();
+    return;
+  }
+
+  if (s_wifi_reconnect_backoff_ms < 60000UL) {
+    s_wifi_reconnect_backoff_ms *= 2;
+    if (s_wifi_reconnect_backoff_ms > 60000UL) {
+      s_wifi_reconnect_backoff_ms = 60000UL;
+    }
+  }
+  Serial.printf("[wifi] maintain reconnect failed, next in %lu ms\r\n",
+                (unsigned long)s_wifi_reconnect_backoff_ms);
+}
 
 static const char *wifiStatusStr(wl_status_t s) {
   switch (s) {
@@ -672,6 +831,7 @@ bool try_connect_credential(const char* source_label, int max_attempts) {
 bool wifi_provision_connect() {
   Serial.println("[wifi] connecting...");
   WiFi.persistent(false);
+  register_wifi_event_handlers_once();
 
   while (WiFi.status() != WL_CONNECTED) {
     WifiCredential saved[kMaxSavedWifi];
@@ -690,6 +850,8 @@ bool wifi_provision_connect() {
       if (try_connect_credential("saved", kMaxReconnectAttempts)) {
         Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
                       WiFi.RSSI());
+        apply_wifi_runtime_keepalive();
+        s_wifi_was_up = true;
         oled_show_wifi_connected();
         return true;
       }
@@ -702,6 +864,8 @@ bool wifi_provision_connect() {
       if (try_connect_credential("defaults", kMaxReconnectAttempts)) {
         Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
                       WiFi.RSSI());
+        apply_wifi_runtime_keepalive();
+        s_wifi_was_up = true;
         oled_show_wifi_connected();
         return true;
       }
@@ -718,8 +882,70 @@ bool wifi_provision_connect() {
 
   Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
                 WiFi.RSSI());
+  apply_wifi_runtime_keepalive();
+  s_wifi_was_up = true;
   oled_show_wifi_connected();
   return true;
+}
+
+void wifi_provision_set_link_handlers(WifiLinkHandler on_down, WifiLinkHandler on_up) {
+  s_link_down_handler = on_down;
+  s_link_up_handler = on_up;
+}
+
+bool wifi_provision_is_connected() {
+  return wifi_link_up();
+}
+
+void wifi_provision_maintain() {
+  register_wifi_event_handlers_once();
+  handle_wifi_events_in_main_context();
+
+  const unsigned long now = millis();
+  if (wifi_link_up()) {
+    s_wifi_reconnect_pending = false;
+    s_wifi_quick_reconnect_active = false;
+    if (!s_wifi_was_up) {
+      Serial.printf("[wifi] link restored IP=%s RSSI=%d dBm\r\n",
+                    WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      notify_wifi_link_up();
+    }
+    if (now - s_wifi_last_check_ms < kWifiCheckIntervalUpMs) {
+      return;
+    }
+    s_wifi_last_check_ms = now;
+    apply_wifi_runtime_keepalive();
+    return;
+  }
+
+  if (s_wifi_was_up) {
+    Serial.println("[wifi] link lost (poll)");
+    notify_wifi_link_down();
+  }
+
+  if (s_wifi_quick_reconnect_active) {
+    if (wifi_link_up()) {
+      Serial.printf("[wifi] quick reconnect ok IP=%s RSSI=%d dBm\r\n",
+                    WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      notify_wifi_link_up();
+      return;
+    }
+    if (now - s_wifi_quick_reconnect_start_ms < kWifiQuickReconnectWaitMs) {
+      return;
+    }
+    s_wifi_quick_reconnect_active = false;
+  }
+
+  if (!s_wifi_reconnect_pending && now - s_wifi_last_check_ms < kWifiCheckIntervalDownMs) {
+    return;
+  }
+  s_wifi_last_check_ms = now;
+
+  if (now - s_wifi_last_reconnect_ms < s_wifi_reconnect_backoff_ms) {
+    return;
+  }
+  s_wifi_last_reconnect_ms = now;
+  wifi_try_reconnect_now();
 }
 
 void wifi_provision_reset() {

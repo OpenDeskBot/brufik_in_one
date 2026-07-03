@@ -33,6 +33,11 @@ public:
   /** 主循环可否开新一轮录音（WS 可用 + 无 TTS + 无尾音抑制）。 */
   bool canStartVoiceRound();
 
+  /** WiFi 断线：立即标记 WS 需重连，避免对 unreachable 主机空转 connect。 */
+  void onLinkDown(const char* why = "wifi lost");
+  /** WiFi 恢复：重置 WS backoff，下一轮 loop 内尽快重连。 */
+  void onLinkUp();
+
   /* 空闲时头部姿态：TTS 结束后延迟低头；TTS 期间不重复触发。 */
   void updateAttentionDisplay();
 

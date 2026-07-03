@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""下载 SenseVoiceSmall 到 deskbot-server/models/。"""
+"""下载 SenseVoiceSmall 到 models/。"""
 from __future__ import annotations
 
 import inspect

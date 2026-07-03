@@ -163,13 +163,22 @@ tmp
 **/output.wav
 **/tts_reply.wav
 
-# 大模型文件：deskbot-server 通过 download_model.py 本地下载，不入仓库
-deskbot-server/models/
+# 大模型文件：通过 download_model.py 本地下载，不入仓库
+models/
 
 # ---------------------- 其他通用忽略 ----------------------
 my_wakeup_words.mp3
 uploadfile
-# 运行时/本地 JSON 产物（deskbot-server/data/ 下的示例数据需入库）
+# 运行时/本地 JSON 产物（data/ 下的示例数据需入库）
+data/.free_api_key
+data/.builtin_password
+data/opendesk.db
+data/opendesk.db-shm
+data/opendesk.db-wal
+data/device/
+data/user_memory.json
+data/face_profiles.json
+data/face_live_snapshot.json
 .e2e-results/
 **/secrets*.json
 **/local*.json

@@ -112,7 +112,7 @@ class CameraFaceDetector:
         if not os.path.isfile(path):
             raise FileNotFoundError(
                 f"找不到 face_landmarker.task（{path}）。请下载到 "
-                "deskbot-server/models/mediapipe/face_landmarker.task，"
+                "models/mediapipe/face_landmarker.task，"
                 "或设置 CAMERA_FACE_LANDMARKER_PATH。"
             )
 

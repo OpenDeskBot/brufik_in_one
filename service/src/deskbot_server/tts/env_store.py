@@ -1,4 +1,4 @@
-"""读写 deskbot-server/.env 中的豆包 TTS 配置。"""
+"""读写 .env 中的豆包 TTS 配置。"""
 
 from __future__ import annotations
 

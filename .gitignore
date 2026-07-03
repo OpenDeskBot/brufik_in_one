@@ -58,10 +58,10 @@ secrets.yaml
 .private_config.yaml
 **/secrets*.json
 **/local*.json
-deskbot-server/data/.free_api_key
+service/data/.free_api_key
 
 # --- Service large / generated ---
-deskbot-server/models/
+service/models/
 music/
 uploadfile
 *.tar.gz

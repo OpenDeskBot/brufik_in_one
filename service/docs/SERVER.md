@@ -5,10 +5,7 @@
 ## 启动
 
 ```bash
-# 推荐：仓库根目录一键启动
-../start.sh
-
-# 仅本服务
+# 一键启动（含 Web 控制台）
 ./start.sh
 SKIP_SETUP=1 ./start.sh
 ```
