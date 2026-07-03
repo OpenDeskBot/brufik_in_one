@@ -30,8 +30,9 @@ public:
   bool isMicTailSuppressed() const;
   /** VAD 已触发、本轮语音上行窗口内（含已发/待发 Opus）。 */
   bool isVadGateOpen() const;
-  /** 主循环可否开新一轮录音（WS 可用 + 无 TTS + 无尾音抑制）。 */
-  bool canStartVoiceRound();
+
+  /** 主循环泵 WS/pb；开听音轮前用 allow_camera=false 避免 JPEG send 阻塞。 */
+  void serviceLoop(bool allow_camera);
 
   /** ws_uplink RX 队列 → 原 onWebSocketEvent（须在主上下文调用）。 */
   void dispatchWebSocketEvent(WStype_t type, uint8_t* payload, size_t length);
@@ -57,6 +58,8 @@ private:
 
   WebSocketsClient ws_;
   bool ready_ = false;
+  /** 上电后首次收到 server ready 时置 true，重连不再重置，用于触发 boot_connect 上报。 */
+  bool boot_connect_sent_ = false;
   /* 本轮下行收尾标志：pbSignalTtsRoundComplete() 触发，等价于「pb 序列已完整结束」。 */
   bool reply_done_ = false;
   /* tts_active_：pb_start 置 true、pb 序列收尾 / pbSignalTtsRoundComplete 置 false。
@@ -78,12 +81,16 @@ private:
   bool vad_gate_open_ = false;
   /** camera_frame JSON+bin 同步发送中（规则 4：发完再发 audio）。 */
   bool camera_send_in_progress_ = false;
+  /** connect() 连续失败次数；达阈值时做 WiFi 软重连以清理 lwIP TCP 状态。 */
+  uint8_t connect_fail_streak_ = 0;
   /** runVoiceRound 录音环内标记（loopLite 可上传相机/VAD 未开时）。 */
   bool in_voice_record_loop_ = false;
   uint8_t uplink_batch_bin_[kUplinkBatchMaxBin];
   size_t uplink_batch_bin_len_ = 0;
   uint8_t uplink_batch_count_ = 0;
   unsigned long last_camera_uplink_ms_ = 0;
+  /** 相机 send 失败/过慢后退避，避免半开 TCP 上反复阻塞听音环。 */
+  unsigned long camera_backoff_until_ms_ = 0;
   bool capture_was_allowed_ = false;
 
   /* -----------------------------------------------------------------------
@@ -255,10 +262,7 @@ private:
   /** record loop / i2s_tail 专用轻量泵：单次 ws_.loop()，不做 pbPumpWsWhileExpectBin。
    *  避免大块 BIN（175KB TTS）一次 ws_.loop() 阻塞 30s 卡死录音循环。 */
   void loopLite();
-  /** loop() 主体；听音环内 allow_camera=false 以免 JPEG 与 Opus 争用 WS TX。 */
-  void serviceLoop(bool allow_camera);
   void pbTickExpectBinTimeout();
-  void pollMicUplinkGateLog();
   static constexpr size_t kPbDeferMaxBytes = 65536;
   static constexpr uint8_t kPbDeferQueueDepth = 16;
   uint8_t* pb_defer_bufs_[kPbDeferQueueDepth]{};

@@ -24,6 +24,34 @@ static int pb_json_number_to_int(JsonVariantConst v, int defv) {
   return (int)lround(v.as<double>());
 }
 
+/** 重连/断线诊断：WiFi SSID、设备 IP、服务端 host:port（LOG_LEVEL_WARN 可见）。 */
+static void logAsrChatNetContext(const char* tag) {
+  if (WiFi.status() == WL_CONNECTED) {
+    log_warn("[ASR_CHAT] net %s wifi=%s ip=%s rssi=%d server=ws://%s:%u",
+             tag ? tag : "?",
+             WiFi.SSID().c_str(),
+             WiFi.localIP().toString().c_str(),
+             (int)WiFi.RSSI(),
+             ASR_CHAT_HOST,
+             (unsigned)ASR_CHAT_PORT);
+  } else {
+    log_warn("[ASR_CHAT] net %s wifi=DISCONNECTED server=ws://%s:%u",
+             tag ? tag : "?",
+             ASR_CHAT_HOST,
+             (unsigned)ASR_CHAT_PORT);
+  }
+}
+
+static void pumpWsStackMs(WebSocketsClient* ws, unsigned long ms) {
+  const unsigned long start = millis();
+  while (millis() - start < ms) {
+    if (ws != nullptr) {
+      ws->loop();
+    }
+    taskYIELD();
+  }
+}
+
 /** pb 下行：audio.next_bin_len > 0 表示下一条 WS 为固定长度 audio binary。 */
 static size_t pb_read_audio_next_bin_len(const JsonDocument& doc) {
   if (!doc["audio"].is<JsonObjectConst>()) {
@@ -110,6 +138,17 @@ static bool pb_doc_has_nonempty_anim(const JsonDocument& doc) {
 
 static bool pb_doc_has_nonempty_servo(const JsonDocument& doc) {
   return doc["servo"].is<JsonArrayConst>() && doc["servo"].as<JsonArrayConst>().size() > 0;
+}
+
+static bool pb_doc_is_servo_only_gesture(const JsonDocument& doc) {
+  const String type = doc["type"].is<String>() ? doc["type"].as<String>() : String("");
+  if (type != "pb_single" && type != "pb_start") {
+    return false;
+  }
+  if (pb_read_audio_next_bin_len(doc) > 0 || pb_doc_has_asset_bins(doc)) {
+    return false;
+  }
+  return true;
 }
 
 extern AsrChatClient asrChatClient;
@@ -766,8 +805,24 @@ uint8_t AsrChatClient::pbDeferQueueDepth() const {
 
 void AsrChatClient::flushDeferredPbJson(bool pump_ws_after) {
   (void)pump_ws_after;
-  /* 迭代处理 defer 队列，避免递归 + JsonDocument 叠帧导致 loopTask 栈溢出。 */
-  while (!pb_expect_bin_ && pb_defer_head_ != pb_defer_tail_) {
+  /* 迭代处理 defer 队列；expect_bin 等待 TTS 音频时仍放行纯舵机/表情 pb_single。 */
+  while (pb_defer_head_ != pb_defer_tail_) {
+    if (pb_expect_bin_) {
+      const uint8_t slot = pb_defer_head_;
+      const size_t len = pb_defer_lens_[slot];
+      const uint8_t* const wire = pb_defer_bufs_[slot];
+      if (len == 0 || wire == nullptr) {
+        break;
+      }
+      JsonDocument peek;
+      if (deserializeJson(peek, wire, len)) {
+        break;
+      }
+      if (!pb_doc_is_servo_only_gesture(peek)) {
+        break;
+      }
+    }
+
     const uint8_t slot = pb_defer_head_;
     const size_t len = pb_defer_lens_[slot];
     const uint8_t* const wire = pb_defer_bufs_[slot];
@@ -849,7 +904,7 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
 
   const bool is_chain_head = (type == "pb_start" || type == "pb_single") && (idx == 0u);
   const size_t next_bin_len_head = pb_read_audio_next_bin_len(doc);
-  const bool servo_only_gesture = (type == "pb_single") && (next_bin_len_head == 0);
+  const bool servo_only_gesture = pb_doc_is_servo_only_gesture(doc);
   if (is_chain_head) {
     const PbQueueDecision qd = pbDecideChainHead(chunk_level, chunk_action);
     if (qd == PbQueueDecision::kDrop) {
@@ -861,14 +916,20 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
     const bool force_restart_same_req =
         pb_active_ && (req == pb_req_) && (chunk_action == PbEnqueueAction::kReplace);
     if (qd == PbQueueDecision::kClear || force_restart_same_req) {
-      /* 服务端「摇头 N 次」常拆成多帧 pb_single（仅 servo、无音频）；replace 时勿清空 motor 队列。 */
-      const bool drain_motor = !servo_only_gesture;
-      pbDrainWorkersForNewSequence(drain_motor);
-      if (servo_only_gesture) {
-        log_info("[PB] pb_single gesture: keep motor queue depth=%u",
-                 (unsigned)head_motor_input_queue_depth());
-      } else if (type == "pb_single") {
-        log_warn("[PB] pb_single with audio bin: motor queue cleared");
+      /* 听音中纯舵机 pb_single：不打断上行、不 reset 播放队列。 */
+      const bool voice_servo_only = in_voice_record_loop_ && servo_only_gesture;
+      if (!voice_servo_only) {
+        const bool drain_motor = !servo_only_gesture;
+        pbDrainWorkersForNewSequence(drain_motor);
+        if (servo_only_gesture) {
+          log_info("[PB] pb_single gesture: keep motor queue depth=%u",
+                   (unsigned)head_motor_input_queue_depth());
+        } else if (type == "pb_single") {
+          log_warn("[PB] pb_single with audio bin: motor queue cleared");
+        }
+      } else {
+        log_info("[PB] pb_single servo-only during voice: skip audio drain req=%s",
+                 req.c_str());
       }
       pb_inflight_seq_count_ = 0;
       pb_seq_level_count_ = 0;
@@ -890,8 +951,13 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
     pb_next_idx_ = 0;
     pb_bins_rx_count_ = 0;
     pb_pcm_bytes_rx_total_ = 0;
-    tts_active_ = true;
-    deskbot_mic_uplink_set_active(false);
+    const bool voice_servo_only = in_voice_record_loop_ && servo_only_gesture;
+    if (!voice_servo_only) {
+      tts_active_ = true;
+      deskbot_mic_uplink_set_active(false);
+    } else {
+      log_info("[PB] voice round: servo-only pb_single, keep mic uplink req=%s", req.c_str());
+    }
   } else if (!pb_active_ || req != pb_req_) {
     pbProtocolError("pb_chunk/pb_end without active matching req");
     return true;
@@ -1010,7 +1076,7 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
                            (pb_pending_servo_seg_count_ > 0) || expect_pcm_bin || expect_asset_bins ||
                            (mic_hint != PbMicHint::kNone);
   if (!has_payload) {
-    pbProtocolError("R0: chunk needs anim, servo, audio, assets or mic");
+    log_warn("[PB] skip empty chunk type=%s idx=%u req=%s", type.c_str(), (unsigned)idx, req.c_str());
     return true;
   }
 
@@ -1085,10 +1151,14 @@ void AsrChatClient::forceWsReconnect(const char* why) {
   ready_ = false;
   ws_needs_reconnect_ = true;
   ws_send_fail_streak_ = 0;
-  if (ws_.isConnected()) {
-    log_warn("[ASR_CHAT] force disconnect (%s)", why ? why : "?");
-    ws_.disconnect();
-  }
+  log_warn("[ASR_CHAT] force disconnect (%s)", why ? why : "?");
+  logAsrChatNetContext("force_disconnect");
+  ws_.disconnect();
+  /* 强制断线后立即切换 session：pumpWsStackMs 期间产生的 TCP cleanup DISCONNECTED 事件
+   * 会以新 session_id 入队，但因本 session 尚未见到 CONNECTED，drain_rx 会将其丢弃，
+   * 避免旧连接清理风暴触发 onWebSocketEvent(DISCONNECTED) 循环。 */
+  ws_uplink_new_session();
+  pumpWsStackMs(&ws_, (unsigned long)DESKBOT_WS_DISCONNECT_DRAIN_MS);
 }
 
 void AsrChatClient::onLinkDown(const char* why) {
@@ -1101,6 +1171,8 @@ void AsrChatClient::onLinkUp() {
   ws_last_reconnect_attempt_ms_ = 0;
   ws_needs_reconnect_ = true;
   ws_send_fail_streak_ = 0;
+  connect_fail_streak_ = 0;
+  camera_backoff_until_ms_ = 0;
 }
 
 bool AsrChatClient::wsCanSend() {
@@ -1162,12 +1234,14 @@ void AsrChatClient::maintainWsConnection() {
   log_warn("[ASR_CHAT] WS maintain reconnect (connected=%d ready=%d needs=%d streak=%u)",
            (int)ws_.isConnected(), (int)ready_, (int)ws_needs_reconnect_,
            (unsigned)ws_send_fail_streak_);
+  logAsrChatNetContext("reconnect_attempt");
   if (connect()) {
     ws_reconnect_backoff_ms_ = 2000;
     ws_needs_reconnect_ = false;
     ws_send_fail_streak_ = 0;
-    log_warn("[ASR_CHAT] WS reconnected ws://%s:%u", kHost, (unsigned)kPort);
+    logAsrChatNetContext("reconnected");
   } else {
+    logAsrChatNetContext("reconnect_failed");
     if (ws_reconnect_backoff_ms_ < 30000UL) {
       ws_reconnect_backoff_ms_ *= 2;
       if (ws_reconnect_backoff_ms_ > 30000UL) {
@@ -1214,31 +1288,59 @@ bool AsrChatClient::connect() {
   ready_ = false;
   reply_done_ = false;
 
-  if (ws_.isConnected()) {
-    ws_.disconnect();
+  /* 连续失败达 3 次：做 WiFi 软重连，清空 lwIP TCP 状态；避免旧连接占用端口或 lwIP 状态机卡死。 */
+  if (connect_fail_streak_ >= 3) {
+    log_warn("[ASR_CHAT] %u consecutive WS failures — WiFi soft reconnect to reset lwIP TCP state",
+             (unsigned)connect_fail_streak_);
+    connect_fail_streak_ = 0;
+    WiFi.disconnect(false);
+    unsigned long wifi_wait = millis();
+    while (WiFi.status() == WL_CONNECTED && millis() - wifi_wait < 2000) {
+      taskYIELD();
+    }
+    WiFi.reconnect();
+    wifi_wait = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - wifi_wait < 12000) {
+      handle_cmd();
+      taskYIELD();
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      log_warn("[ASR_CHAT] WiFi reconnect failed, will retry later");
+      ws_needs_reconnect_ = true;
+      return false;
+    }
+    log_warn("[ASR_CHAT] WiFi reconnected ip=%s", WiFi.localIP().toString().c_str());
   }
-  unsigned long disc_start = millis();
-  while (ws_.isConnected() && millis() - disc_start < 500) {
-    handle_cmd();
-    ws_uplink_pump();
-    ws_uplink_drain_rx(this);
-    taskYIELD();
-  }
+
+  ws_.disconnect();
+  pumpWsStackMs(&ws_, (unsigned long)DESKBOT_WS_DISCONNECT_DRAIN_MS);
+  /* 递增 session ID：drain_rx 会丢弃旧 session 的所有积压 DISCONNECTED 事件，
+   * 防止它们在新连接建立后覆盖 ready_ / ws_needs_reconnect_ 状态。 */
+  ws_uplink_new_session();
 
   char path[64];
   snprintf(path, sizeof(path), "/asr_chat?device_id=%s", get_device_id());
   char auth_header[96];
   snprintf(auth_header, sizeof(auth_header), "X-API-Key: %s", DESKBOT_API_KEY);
   ws_.setExtraHeaders(auth_header);
-  log_info("[ASR_CHAT] connecting ws://%s:%u%s (X-API-Key)", kHost, (unsigned)kPort, path);
+  log_warn("[ASR_CHAT] connecting ws://%s:%u%s device_id=%s",
+           kHost, (unsigned)kPort, path, get_device_id());
+  logAsrChatNetContext("connecting");
   deskbot_uplink_set_ws_ready(false);
   ws_.begin(kHost, kPort, path);
-  ws_.setReconnectInterval(2000);
+  /* 仅由 maintainWsConnection/connect 手动重连。
+   * 注意：setReconnectInterval(0) 含义是"立即重连"（每次 loop() 都触发 connect()），不是"禁用"。
+   * 设为极大值（~7天）= 实际禁用库的自动重连，由固件自己管理重连时机。 */
+  ws_.setReconnectInterval(7 * 24 * 3600 * 1000UL);
 
-  if (!ws_uplink_wait_connected(&ws_, this, 4000)) {
-    log_error("[ASR_CHAT] connect timeout ws://%s:%u (check host reachable from device WiFi, "
-              "DESKBOT_API_KEY, firewall)",
+  if (!ws_uplink_wait_connected(&ws_, this, (unsigned long)DESKBOT_WS_CONNECT_TIMEOUT_MS)) {
+    log_error("[ASR_CHAT] connect timeout ws://%s:%u (check WiFi route to server, API key, firewall)",
               kHost, (unsigned)kPort);
+    logAsrChatNetContext("connect_timeout");
+    ws_.disconnect();
+    pumpWsStackMs(&ws_, (unsigned long)DESKBOT_WS_DISCONNECT_DRAIN_MS);
+    ws_needs_reconnect_ = true;
+    connect_fail_streak_++;
     return false;
   }
 
@@ -1257,6 +1359,7 @@ bool AsrChatClient::connect() {
   }
   ws_needs_reconnect_ = false;
   ws_send_fail_streak_ = 0;
+  connect_fail_streak_ = 0;
   (void)opus_downlink_init();
   return true;
 }
@@ -1307,7 +1410,6 @@ void AsrChatClient::loopLite() {
   }
   flushPendingPbAck();
   pbTickExpectBinTimeout();
-  /* 听音环内不再上传相机（canUploadCamera 已含 in_voice_record_loop_ 判定）。 */
 }
 
 void AsrChatClient::serviceLoop(bool allow_camera) {
@@ -1362,45 +1464,15 @@ void AsrChatClient::serviceLoop(bool allow_camera) {
   }
   shouldSuppressMicUplink();
   maintainWsConnection();
-  if (allow_camera) {
-    pollMicUplinkGateLog();
-  }
 }
 
 void AsrChatClient::loop() {
   serviceLoop(/*allow_camera=*/true);
 }
 
-void AsrChatClient::pollMicUplinkGateLog() {
-  static bool s_idle_capture_ok = false;
-  if (in_voice_record_loop_) {
-    s_idle_capture_ok = false;
-    return;
-  }
-  const bool ws_ok = wsCanSend();
-  const bool can_start = canStartVoiceRound();
-  if (can_start && !s_idle_capture_ok) {
-    log_warn("[MIC_UPLINK] 开始正常录音 (待命) isSpeaking=%d ws_ok=%d",
-             (int)isSpeaking(), (int)ws_ok);
-    s_idle_capture_ok = true;
-  } else if (!can_start && s_idle_capture_ok) {
-    const char* reason = micCaptureBlockReason(ws_ok);
-    if (reason == nullptr && isMicTailSuppressed()) {
-      reason = "tail_suppress";
-    }
-    if (reason == nullptr && isSpeaking()) {
-      reason = "isSpeaking";
-    }
-    if (reason == nullptr) {
-      reason = "gate";
-    }
-    logMicCaptureBlockReason("(待命)", 0, reason);
-    s_idle_capture_ok = false;
-  }
-}
-
 bool AsrChatClient::isVisionUplinkPaused() const {
-  return isSpeaking() || isMicTailSuppressed();
+  /* 采集不因 TTS/尾音抑制停；上传节奏由 tryUploadCameraFrameIfDue 控制。 */
+  return camera_send_in_progress_;
 }
 
 bool AsrChatClient::isCameraUplinkPaused() const {
@@ -1417,16 +1489,6 @@ bool AsrChatClient::isMicTailSuppressed() const {
 
 bool AsrChatClient::isVadGateOpen() const {
   return vad_gate_open_;
-}
-
-bool AsrChatClient::canStartVoiceRound() {
-  if (!wsCanSend()) {
-    return false;
-  }
-  if (isSpeaking() || isMicTailSuppressed()) {
-    return false;
-  }
-  return true;
 }
 
 void AsrChatClient::updateAttentionDisplay() {
@@ -1491,10 +1553,7 @@ bool AsrChatClient::sendJson(const String& msg, bool critical) {
 
 bool AsrChatClient::tryUploadCameraFrameIfDue() {
   const unsigned long now = millis();
-  const unsigned long interval =
-      (in_voice_record_loop_ || voice_uplink_active_)
-          ? (unsigned long)DESKBOT_CAMERA_UPLINK_INTERVAL_DURING_LISTEN_MS
-          : (unsigned long)DESKBOT_CAMERA_UPLINK_INTERVAL_MS;
+  const unsigned long interval = (unsigned long)DESKBOT_CAMERA_UPLINK_INTERVAL_MS;
   if (last_camera_uplink_ms_ != 0 && (now - last_camera_uplink_ms_) < interval) {
     return false;
   }
@@ -1523,11 +1582,10 @@ bool AsrChatClient::canUploadCamera() {
   if (!wsCanSend()) {
     return false;
   }
-  /* 连续听音环内不发 JPEG，避免与 Opus 争用 WS TX。 */
-  if (in_voice_record_loop_ || voice_uplink_active_) {
+  if (camera_send_in_progress_) {
     return false;
   }
-  if (isSpeaking() || isMicTailSuppressed() || camera_send_in_progress_) {
+  if (camera_backoff_until_ms_ != 0 && millis() < camera_backoff_until_ms_) {
     return false;
   }
   return true;
@@ -1554,9 +1612,30 @@ bool AsrChatClient::tryUploadCameraFrame() {
            "{\"type\":\"camera_frame\",\"codec\":\"jpeg\",\"next_bin_len\":%u,\"seq\":%u}",
            (unsigned)jpeg_len, (unsigned)jpeg_seq);
   camera_send_in_progress_ = true;
-  bool ok = ws_uplink_send(cam_hdr, jpeg_buf, jpeg_len);
+  const unsigned long send_start = millis();
+  WsSendProfile cam_profile{};
+  cam_profile.max_wall_ms = 350;
+  cam_profile.max_attempts = 1;
+  bool stream_ok = true;
+  bool ok = ws_uplink_send(cam_hdr, jpeg_buf, jpeg_len, &cam_profile, &stream_ok);
+  const unsigned long send_ms = millis() - send_start;
+  if (send_ms > 300UL) {
+    log_warn("[CAM] camera_frame send slow ms=%lu ok=%d stream_ok=%d", (unsigned long)send_ms, (int)ok, (int)stream_ok);
+  }
   if (!ok) {
-    log_warn("[CAM] camera_frame send failed (drop frame)");
+    camera_backoff_until_ms_ = millis() + 8000UL;
+    if (!stream_ok) {
+      /* JSON 已发出但 binary 未发完 → WebSocket 协议流已污染，必须立即重连。
+       * 若不重连，后续音频 JSON 会被服务端误读为 camera binary 数据，导致协议彻底混乱。 */
+      log_warn("[CAM] camera_frame stream corrupted, force reconnect");
+      noteWsSendFail("camera_frame_binary");
+    } else {
+      log_warn("[CAM] camera_frame send failed (drop frame, backoff 8s)");
+      /* JSON 未发出 / 未超出截止时间就失败：流仍完整，丢帧即可，不触发重连。 */
+    }
+  } else {
+    camera_backoff_until_ms_ = 0;
+    noteWsSendOk();
   }
   camera_send_in_progress_ = false;
   camera_ws_release_frame();
@@ -1721,6 +1800,7 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       capture_was_allowed_ = false;
       handle_cmd();
       loopLite();
+      (void)tryUploadCameraFrameIfDue();
       round_scope.pump("listen");
       taskYIELD();
       continue;
@@ -1795,6 +1875,8 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       continue;
     }
     samples_sent += kFrameSamples20ms;
+    /* audio flush 完成后再试上传相机：此时 WS 发送缓冲刚释放，竞争最小。 */
+    (void)tryUploadCameraFrameIfDue();
     round_scope.pump("uplink");
     taskYIELD();
   }
@@ -1838,6 +1920,7 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       taskYIELD();
     }
   }
+  (void)tryUploadCameraFrameIfDue();
   log_warn("[ASR_CHAT] round=%u end", (unsigned)round_id_);
   return true;
 }
@@ -1869,6 +1952,7 @@ void AsrChatClient::onWebSocketEvent(WStype_t type, uint8_t* payload, size_t len
              (unsigned)pb_bins_rx_count_, (unsigned)pb_pcm_bytes_rx_total_,
              (unsigned)pb_last_ws_bin_len_, (unsigned)pb_last_ack_idx_, (unsigned)pb_next_idx_,
              (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    logAsrChatNetContext("disconnected");
     if (pb_expect_bin_ && pb_last_ws_bin_len_ == 0) {
       log_warn("[PB] disconnected while expect BIN=%u but no WStype_BIN ever received "
                "(server likely closed before BIN; check server [pb TX] binary %u)",
@@ -1911,6 +1995,10 @@ void AsrChatClient::onWebSocketEvent(WStype_t type, uint8_t* payload, size_t len
         }
         return;
       }
+      if (pb_doc_is_servo_only_gesture(doc)) {
+        (void)pbParseAndStage(doc);
+        return;
+      }
       if (!pbDeferEnqueue(payload, length)) {
         log_warn("[PB] defer enqueue failed type=%s len=%u", t.c_str(), (unsigned)length);
       } else if (!pb_expect_bin_) {
@@ -1923,7 +2011,13 @@ void AsrChatClient::onWebSocketEvent(WStype_t type, uint8_t* payload, size_t len
       ws_needs_reconnect_ = false;
       ws_send_fail_streak_ = 0;
       deskbot_uplink_set_ws_ready(true);
-      log_info("[ASR_CHAT] event ready");
+      if (!boot_connect_sent_) {
+        boot_connect_sent_ = true;
+        sendJson("{\"type\":\"boot_connect\"}", /*critical=*/false);
+        log_info("[ASR_CHAT] event ready → boot_connect sent (first power-on connect)");
+      } else {
+        log_info("[ASR_CHAT] event ready (reconnect, skip boot_connect)");
+      }
     } else if (t == "pong") {
       // no-op
     } else {

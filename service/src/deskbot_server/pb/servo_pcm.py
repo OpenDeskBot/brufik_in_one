@@ -453,6 +453,17 @@ def parse_pb_volume(raw: Any) -> int | None:
         return None
 
 
+def parse_pb_cam_fps(raw: Any) -> int | None:
+    """解析 ``cam_fps``（>0）；无效或 0 则 ``None``（wire 省略，设备不改动）。"""
+    if raw is None or raw == "":
+        return None
+    try:
+        fps = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return fps if fps > 0 else None
+
+
 def resolve_pb_volume_hint(volume: int | None = None) -> int | None:
     """仅当调用方显式传入 ``volume`` 时写入 pb；否则 wire 省略。"""
     return parse_pb_volume(volume) if volume is not None else None
@@ -512,6 +523,7 @@ def pb_json_messages(
     action: str = PB_ACTION_REPLACE,
     level: int = PB_LEVEL_TASK,
     volume: int | None = None,
+    cam_fps: int | None = None,
 ) -> list[tuple[dict[str, Any], list[bytes]]]:
     """生成 ``(pb 字典, 紧随 binary 列表)``；binary 顺序：PCM（若有）→ ``assets[]``。
 
@@ -520,7 +532,7 @@ def pb_json_messages(
     ``action``：``replace`` / ``append`` / ``default``；``level``：0–3，语义见协议文档。
     缺省 ``replace`` + ``level=1``（任务态）。
 
-    ``volume``：仅显式传入时写入 pb；省略表示设备保持现状。
+    ``volume`` / ``cam_fps``：仅显式传入时写入 pb；省略表示设备保持现状。
     """
     n = len(anim_rows)
     if n == 0:
@@ -583,7 +595,7 @@ def pb_json_messages(
                 for blob in row_assets
                 for aw, ah in (jpeg_blob_dimensions(blob),)
             ]
-        attach_pb_device_hints(msg, volume=volume)
+        attach_pb_device_hints(msg, volume=volume, cam_fps=cam_fps)
         binaries: list[bytes] = []
         if pcm:
             binaries.append(pcm)

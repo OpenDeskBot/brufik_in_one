@@ -9,17 +9,24 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from deskbot_server.application.llm_tool_runner import execute_llm_tools
 from deskbot_server.application.tool_interim_tts import build_tool_interim_tts
+from deskbot_server.device_camera_frame_store import (
+    capture_camera_for_device_async,
+    request_camera_uplink_boost,
+)
 from deskbot_server.llm.utils import parse_llm_reply
+from deskbot_server.pb.servo_pcm import parse_pb_cam_fps
 
 if TYPE_CHECKING:
     from deskbot_server.application.chat_service import ChatService
     from deskbot_server.application.chat_flow import _TtsPrefetch
+    from deskbot_server.ws.asr_chat_hub import AsrChatHub
 
 logger = logging.getLogger("deskbot-server")
 
 MAX_LLM_TOOL_ROUNDS = 8
 
-_TOOL_RESULT_STRIP_KEYS = frozenset({"jpeg_base64"})
+_CAPTURE_TOOLS = frozenset({"capture_camera", "get_camera_frame", "camera_capture"})
+_TOOL_RESULT_STRIP_KEYS = frozenset({"jpeg_base64", "image_display"})
 
 
 def is_llm_tool_call(parsed: dict[str, Any]) -> bool:
@@ -35,7 +42,19 @@ def _tool_result_for_llm(result: dict[str, Any]) -> dict[str, Any]:
         val = out.pop(key)
         if isinstance(val, str) and val:
             out[f"{key}_len"] = len(val)
+        elif isinstance(val, dict) and val:
+            out[f"{key}_ok"] = True
     return out
+
+
+def _tools_need_camera(tools: list[dict[str, Any]]) -> bool:
+    for raw in tools:
+        if not isinstance(raw, dict):
+            continue
+        tool = str(raw.get("tool") or raw.get("name") or "").strip()
+        if tool in _CAPTURE_TOOLS:
+            return True
+    return False
 
 
 def build_llm_tool_followup_message(tool_results: list[dict[str, Any]]) -> str:
@@ -51,6 +70,49 @@ def build_llm_tool_followup_message(tool_results: list[dict[str, Any]]) -> str:
     )
 
 
+async def _execute_tools_round(
+    tools: list[dict[str, Any]],
+    *,
+    device_id: str,
+    session_id: Optional[str],
+    asr_chat_hub: Optional["AsrChatHub"],
+    cam_fps: int | None,
+) -> list[dict[str, Any]]:
+    if cam_fps and asr_chat_hub:
+        await request_camera_uplink_boost(device_id, asr_chat_hub, cam_fps=cam_fps)
+
+    if _tools_need_camera(tools):
+        results: list[dict[str, Any]] = []
+        boost_fps = cam_fps or 5
+        for raw in tools:
+            if not isinstance(raw, dict):
+                continue
+            tool = str(raw.get("tool") or raw.get("name") or "").strip()
+            if tool in _CAPTURE_TOOLS:
+                cap = await capture_camera_for_device_async(
+                    device_id,
+                    hub=asr_chat_hub,
+                    cam_fps=boost_fps,
+                )
+                results.append({"tool": tool, **cap})
+            else:
+                partial = await asyncio.to_thread(
+                    execute_llm_tools,
+                    [raw],
+                    device_id=device_id,
+                    session_id=session_id,
+                )
+                results.extend(partial)
+        return results
+
+    return await asyncio.to_thread(
+        execute_llm_tools,
+        tools,
+        device_id=device_id,
+        session_id=session_id,
+    )
+
+
 async def complete_llm_with_tool_loop(
     chat: "ChatService",
     user_text: str,
@@ -62,6 +124,7 @@ async def complete_llm_with_tool_loop(
     request_id: Optional[str] = None,
     dp_broker: Optional[Any] = None,
     pipeline_source: Optional[str] = None,
+    asr_chat_hub: Optional["AsrChatHub"] = None,
     on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
     tts_prefetch: Optional["_TtsPrefetch"] = None,
     on_interim_tts_play: Optional[Callable[[str, int], Awaitable[None]]] = None,
@@ -100,6 +163,7 @@ async def complete_llm_with_tool_loop(
             )
             break
 
+        cam_fps = parse_pb_cam_fps(parsed.get("cam_fps"))
         interim_text = (parsed.get("reply") or "").strip()
         if not interim_text:
             interim_text = build_tool_interim_tts(tools)
@@ -110,22 +174,39 @@ async def complete_llm_with_tool_loop(
                     request_id,
                     interim_text[:80],
                 )
-        play_coro = None
-        if interim_text and on_interim_tts_play is not None:
-            play_coro = on_interim_tts_play(interim_text, round_idx + 1)
-        elif interim_text and tts_prefetch is not None:
-            tts_prefetch.cancel()
 
-        tool_coro = asyncio.to_thread(
-            execute_llm_tools,
-            tools,
-            device_id=device_id,
-            session_id=session_id,
-        )
-        if play_coro is not None:
-            tool_results, _ = await asyncio.gather(tool_coro, play_coro)
+        # 拍照须先拿到帧再播过渡 TTS（播报期间固件暂停 camera 上行）
+        if _tools_need_camera(tools):
+            if interim_text and tts_prefetch is not None:
+                tts_prefetch.cancel()
+            tool_results = await _execute_tools_round(
+                tools,
+                device_id=str(device_id),
+                session_id=session_id,
+                asr_chat_hub=asr_chat_hub,
+                cam_fps=cam_fps,
+            )
+            if interim_text and on_interim_tts_play is not None:
+                await on_interim_tts_play(interim_text, round_idx + 1)
         else:
-            tool_results = await tool_coro
+            play_coro = None
+            if interim_text and on_interim_tts_play is not None:
+                play_coro = on_interim_tts_play(interim_text, round_idx + 1)
+            elif interim_text and tts_prefetch is not None:
+                tts_prefetch.cancel()
+
+            tool_coro = _execute_tools_round(
+                tools,
+                device_id=str(device_id),
+                session_id=session_id,
+                asr_chat_hub=asr_chat_hub,
+                cam_fps=cam_fps,
+            )
+            if play_coro is not None:
+                tool_results, _ = await asyncio.gather(tool_coro, play_coro)
+            else:
+                tool_results = await tool_coro
+
         all_tools.extend(tools)
         all_tool_results.extend(tool_results)
         logger.info(
@@ -134,7 +215,7 @@ async def complete_llm_with_tool_loop(
             device_id,
             request_id,
             tools,
-            tool_results,
+            [_tool_result_for_llm(r) for r in tool_results],
         )
         if dp_broker is not None and device_id and request_id:
             tool_names = [

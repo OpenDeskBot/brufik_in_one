@@ -110,11 +110,32 @@ class AsrChatHub:
     async def attach(self, device_id: str, ws) -> None:
         if not device_id:
             return
+        stale: list[Any] = []
         async with self._lock:
+            conns = self._by_device.get(device_id, set())
+            stale = [old for old in conns if old is not ws]
             self._by_device.setdefault(device_id, set()).add(ws)
             self._asr_ws_dev[ws] = device_id
         setattr(ws, "_asr_chat_pb_serial_queue", self._device_pb_only)
+        for old in stale:
+            await self._close_superseded_connection(device_id, old)
         note_pb_idle_for_device(device_id)
+
+    async def _close_superseded_connection(self, device_id: str, ws) -> None:
+        """同 device 新连接接入时关闭旧 /asr_chat，避免 delivered=2 与 zombie 连接。"""
+        logger.info(
+            "[asr_chat_hub] 关闭同 device 旧 /asr_chat 连接 device_id=%s（新连接取代）",
+            device_id,
+        )
+        await self.detach(device_id, ws)
+        try:
+            await ws.close(code=1000, reason="superseded by new connection")
+        except Exception:
+            logger.debug(
+                "[asr_chat_hub] 旧连接 close 异常 device_id=%s",
+                device_id,
+                exc_info=True,
+            )
 
     async def detach(self, device_id: str, ws) -> None:
         if not device_id:

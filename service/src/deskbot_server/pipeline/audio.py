@@ -98,10 +98,21 @@ class ConnectionSession:
         channels: Optional[int] = None,
         opus_frames: Optional[int] = None,
     ) -> tuple[Optional[bytes], bool, Optional[bytes]]:
-        """返回 ``(utterance_pcm_or_none, uplink_started, None)``。"""
+        """返回 ``(utterance_pcm_or_none, uplink_started, None)``。
+
+        Opus 解码与 Silero VAD 推理均为 CPU 密集型同步操作，通过
+        ``run_in_executor`` 移到线程池执行，避免阻塞 asyncio 事件循环。
+        事件循环阻塞会导致 TCP 接收缓冲区积压，触发 zero-window 流控，
+        进而使 ESP32 端 TCP 发送缓冲区满，sendBIN 超时失败。
+        Lock 保证解码器与 VAD 的状态串行访问，与 run_in_executor 不冲突。
+        """
         async with self.lock:
+            loop = asyncio.get_running_loop()
+
+            # --- Opus 解码（CPU 密集，移到线程池）---
+            _decode_fn = lambda: self._decode(payload, codec, opus_frames=opus_frames)  # noqa: E731
             try:
-                pcm = self._decode(payload, codec, opus_frames=opus_frames)
+                pcm = await loop.run_in_executor(None, _decode_fn)
             except Exception as exc:
                 logger.warning(
                     "[ROM uplink] audio decode skip codec=%s len=%d sr=%d frames=%s: %s",
@@ -133,7 +144,11 @@ class ConnectionSession:
                     opus_frames,
                 )
 
-            utterance = self._vad.feed_pcm(pcm) if pcm else None
+            # --- Silero VAD 推理（CPU 密集，移到线程池）---
+            if pcm:
+                utterance = await loop.run_in_executor(None, self._vad.feed_pcm, pcm)
+            else:
+                utterance = None
             return utterance, uplink_started, None
 
     def flush(self) -> Optional[RomUplinkFlush]:

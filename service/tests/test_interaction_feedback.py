@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+
 def test_listen_feedback_gaze_when_face_recent():
     from deskbot_server.application import interaction_feedback as fb
 
@@ -24,6 +25,30 @@ def test_listen_feedback_gaze_when_face_recent():
     assert len(moves) == 1
     assert moves[0]["move"] == "__custom__"
     assert moves[0]["ms"] == fb._MOTION_MS
+
+
+def test_build_servo_only_pb_payload_no_audio():
+    from deskbot_server.application import interaction_feedback as fb
+
+    fb.clear_face_analysis("dev1")
+    fb.note_face_analysis(
+        "dev1",
+        {
+            "points": [{"name": "nose", "x": 160, "y": 120}],
+            "landmarks": [{"name": "nose", "x": 160, "y": 120}],
+            "image_w": 320,
+            "image_h": 240,
+        },
+    )
+    _kind, moves = fb.listen_feedback_moves("dev1")
+    built = fb.build_servo_only_pb_payload(moves, device_id="dev1", request_id="abc123")
+    assert built is not None
+    payload, req_id = built
+    assert req_id == "abc123"
+    assert payload["type"] == "pb_single"
+    assert payload.get("audio") is None
+    assert len(payload["servo"]) >= 1
+    assert payload["chunk_ms"] > 0
 
 
 def test_listen_feedback_patrol_without_face():

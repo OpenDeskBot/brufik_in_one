@@ -187,7 +187,7 @@ static bool ensure_decode_task(void) {
   }
   const uint32_t stack_words = kDecodeTaskStackBytes / sizeof(StackType_t);
   const BaseType_t created = xTaskCreatePinnedToCore(
-      decode_task_main, "opus_dec", stack_words, nullptr, 5, &s_task, 1);
+      decode_task_main, "opus_dec", stack_words, nullptr, 5, &s_task, 0);
   if (created != pdPASS || s_task == nullptr) {
     log_error("[OPUS] downlink task create failed stack_words=%u", (unsigned)stack_words);
     s_task = nullptr;

@@ -155,6 +155,47 @@ async def _schedule_asr_turn(
     turn_task_holder.append(task)
 
 
+async def _schedule_camera_jpeg(
+    camera_pipe: AsrChatCameraPipeline,
+    frame_bytes: bytes,
+    *,
+    image_broker: CameraImageBroker,
+    dp_broker: DevicePipelineBroker,
+    asr_chat_hub: AsrChatHub,
+    send_face_info_to_asr_chat: bool,
+    camera_task_holder: list,
+    device_id: Optional[str],
+) -> None:
+    """后台做人脸推理，避免阻塞 WS 读循环（flush / audio / pb_ack）。"""
+    prev = camera_task_holder[0] if camera_task_holder else None
+    if prev is not None and not prev.done():
+        logger.info(
+            "[/asr_chat] camera 推理进行中，跳过本帧 device_id=%s bytes=%d",
+            device_id,
+            len(frame_bytes),
+        )
+        return
+
+    async def _job() -> None:
+        try:
+            await camera_pipe.process_jpeg(
+                frame_bytes,
+                image_broker=image_broker,
+                dp_broker=dp_broker,
+                asr_chat_hub=asr_chat_hub,
+                send_face_info_to_asr_chat=send_face_info_to_asr_chat,
+            )
+        except Exception:
+            logger.exception(
+                "[/asr_chat] 后台 camera 推理异常 device_id=%s",
+                device_id,
+            )
+
+    task = asyncio.create_task(_job())
+    camera_task_holder.clear()
+    camera_task_holder.append(task)
+
+
 async def _publish_asr_capture(
     dp_broker: Optional[DevicePipelineBroker],
     device_id: Optional[str],
@@ -400,6 +441,20 @@ async def _run_asr_turn(
     nod_task: asyncio.Task | None = None
     if asr_chat_hub is not None and device_id:
         nod_done, nod_task = start_llm_wait_nod_feedback(asr_chat_hub, device_id)
+
+    async def _stop_nod_on_llm_error() -> None:
+        """LLM 报错时立即停止点头，再播兜底 TTS，避免同时有点头和摇头。"""
+        nonlocal nod_done, nod_task
+        _done, _task = nod_done, nod_task
+        nod_done, nod_task = None, None
+        if _done is not None:
+            await stop_llm_wait_nod_feedback(_done, _task)
+            logger.info(
+                "[ASR] LLM 失败，已停止点头 device_id=%s req=%s",
+                device_id,
+                request_id,
+            )
+
     try:
         flow = await run_ws_chat_turn(
             websocket,
@@ -411,6 +466,8 @@ async def _run_asr_turn(
             device_id=device_id,
             t_asr_start=t_asr_start,
             t_asr_text=t_asr_text,
+            asr_chat_hub=asr_chat_hub,
+            on_llm_error=_stop_nod_on_llm_error,
         )
     except Exception as exc:
         logger.exception(
@@ -540,6 +597,7 @@ async def handle_asr_chat(
     peer = _peer_str(websocket)
     pending: Optional[PendingUplinkBinary] = None
     turn_task_holder: list[asyncio.Task] = []
+    camera_task_holder: list[asyncio.Task] = []
     device_pb_only = getattr(pipeline, "asr_chat_device_pb_only", False)
     camera_pipe: Optional[AsrChatCameraPipeline] = None
     if device_id and camera_face_runtime is not None:
@@ -570,6 +628,8 @@ async def handle_asr_chat(
         await _safe_send(
             websocket, _json_msg({"type": "ready", "device_id": device_id})
         )
+        if device_id:
+            await deliver_boot_wake_scene(asr_chat_hub, device_id)
 
         async for message in websocket:
             try:
@@ -603,6 +663,16 @@ async def handle_asr_chat(
                     pending = None
 
                     if kind == "camera_frame":
+                        if device_id:
+                            from deskbot_server.device_camera_frame_store import (
+                                update_device_camera_frame,
+                            )
+
+                            update_device_camera_frame(
+                                device_id,
+                                payload,
+                                source="asr_chat",
+                            )
                         if camera_pipe is None or camera_image_broker is None:
                             logger.warning(
                                 "[/asr_chat] 收到 camera_frame 但未配置 camera 运行时"
@@ -610,12 +680,15 @@ async def handle_asr_chat(
                             continue
                         if api_key_id:
                             record_turn_usage(api_key_id, device_id=device_id, face_bytes=len(payload))
-                        await camera_pipe.process_jpeg(
+                        await _schedule_camera_jpeg(
+                            camera_pipe,
                             payload,
                             image_broker=camera_image_broker,
                             dp_broker=dp_broker,
                             asr_chat_hub=asr_chat_hub,
                             send_face_info_to_asr_chat=send_face_info_to_asr_chat,
+                            camera_task_holder=camera_task_holder,
+                            device_id=device_id,
                         )
                         continue
 

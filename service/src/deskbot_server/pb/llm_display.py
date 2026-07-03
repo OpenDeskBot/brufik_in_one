@@ -1,16 +1,14 @@
-"""LLM ``screen_text`` / ``images`` → pb ``anim`` + ``assets``。"""
+"""LLM ``images`` → pb ``anim`` + ``assets``。"""
 
 from __future__ import annotations
 
 import base64
-import copy
 import io
 import re
 import binascii
 from typing import Any
 
 from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
-from deskbot_server.pb.text_layout import text_primitives_from_block
 
 _B64_RE = re.compile(r"^data:image/[a-zA-Z0-9+.-]+;base64,", re.I)
 
@@ -96,16 +94,6 @@ def parse_llm_images(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _merge_extra_elements(elements: dict[str, Any], extra_prims: list[dict[str, Any]]) -> None:
-    if not extra_prims:
-        return
-    layer = elements.setdefault("extra", [])
-    if not isinstance(layer, list):
-        elements["extra"] = list(extra_prims)
-        return
-    layer.extend(extra_prims)
-
-
 def _attach_images_to_anim_item(
     item: dict[str, Any],
     images: list[dict[str, Any]],
@@ -137,17 +125,11 @@ def _attach_images_to_anim_item(
 def apply_llm_display_to_rows(
     rows: list[dict[str, Any]],
     *,
-    screen_text: str | None = None,
-    screen_text_color: Any = None,
     images: list[dict[str, Any]] | None = None,
 ) -> None:
-    """将 LLM 屏幕文案/图片叠加到 pb 行（就地修改）。"""
+    """将 LLM 图片叠加到 pb 行（就地修改）。"""
     if not rows:
         return
-    text_prims = text_primitives_from_block(
-        screen_text or "",
-        color=screen_text_color,
-    )
     imgs = list(images or [])
     asset_bytes = [img["bytes"] for img in imgs]
 
@@ -158,11 +140,6 @@ def apply_llm_display_to_rows(
         for item in anim:
             if not isinstance(item, dict):
                 continue
-            els = item.get("elements")
-            if not isinstance(els, dict):
-                item["elements"] = {}
-                els = item["elements"]
-            _merge_extra_elements(els, copy.deepcopy(text_prims))
             _attach_images_to_anim_item(item, imgs, asset_base=0)
 
         if asset_bytes:

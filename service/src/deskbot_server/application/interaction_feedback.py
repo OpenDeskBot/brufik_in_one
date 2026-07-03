@@ -18,9 +18,9 @@ from deskbot_server.application.camera_servo_follower import (
     _screen_angles_from_analysis,
 )
 from deskbot_server.auto_reply import get_asr_voice_auto_reply_enabled
-from deskbot_server.pb.shapes import PB_ACTION_DEFAULT, PB_LEVEL_IDLE
+from deskbot_server.pb.llm_plan import expand_llm_moves
 from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
-from deskbot_server.pb.wire import build_pb_wire_pairs
+from deskbot_server.pb.shapes import PB_ACTION_DEFAULT, PB_LEVEL_IDLE
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
 
 logger = logging.getLogger("deskbot-server")
@@ -29,7 +29,6 @@ _LISTEN_MIN_GAP_SEC = 5.0
 _FACE_STALE_SEC = 0.7
 _MOTION_MS = 2000
 _GAZE_SERVO_MS = 500
-_SAMPLE_RATE = 24000
 
 _listen_last_mono: dict[str, float] = {}
 _face_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -125,6 +124,41 @@ def llm_wait_nod_moves(*, device_id: Optional[str] = None) -> list[dict[str, Any
     ]
 
 
+def build_servo_only_pb_payload(
+    moves: list[dict[str, Any]],
+    *,
+    device_id: str,
+    request_id: Optional[str] = None,
+) -> Optional[tuple[dict[str, Any], str]]:
+    """LLM move 列表 → 纯舵机 ``pb_single``（无 audio/assets，避免 96KB 静音 PCM）。"""
+    steps = expand_llm_moves(moves, device_id=device_id)
+    if not steps:
+        return None
+    req_id = request_id or uuid.uuid4().hex[:16]
+    chunk_ms = sum(max(1, int(s.get("ms") or 0)) for s in steps)
+    payload: dict[str, Any] = {
+        "type": "pb_single",
+        "req": req_id,
+        "idx": 0,
+        "chunk_ms": chunk_ms,
+        "pb_ver": 2,
+        "action": PB_ACTION_DEFAULT,
+        "level": PB_LEVEL_IDLE,
+        "servo": [
+            {
+                "xm": int(s["xm"]),
+                "ym": int(s["ym"]),
+                "x": int(s["x"]),
+                "y": int(s["y"]),
+                "ms": int(s["ms"]),
+            }
+            for s in steps
+        ],
+    }
+    attach_pb_device_hints_from_config(payload)
+    return payload, req_id
+
+
 async def _send_servo_moves(
     hub: AsrChatHub,
     device_id: str,
@@ -133,37 +167,23 @@ async def _send_servo_moves(
     source: str,
     summary: str,
 ) -> int:
-    """下发 idle 级舵机反馈（level=0, action=default），可被口播等高优先级随时打断。"""
+    """下发 idle 级纯舵机 ``pb_single``，可被口播等高优先级随时打断。"""
     if not moves:
         return 0
-    pairs, req_id, n_frames, _sr = build_pb_wire_pairs(
-        [],
-        {},
-        moves=moves,
-        sample_rate=_SAMPLE_RATE,
-        request_id=uuid.uuid4().hex[:16],
-        device_id=device_id,
-        action=PB_ACTION_DEFAULT,
-    )
-    if not pairs:
+    built = build_servo_only_pb_payload(moves, device_id=device_id)
+    if built is None:
         return 0
-    frames = [msg for msg, _bins in pairs]
-    binaries = [list(bins) for _msg, bins in pairs]
-    attach_pb_device_hints_from_config(frames)
-    for msg in frames:
-        msg["level"] = PB_LEVEL_IDLE
-        msg["action"] = PB_ACTION_DEFAULT
-    delivered = await hub.send_pb_chain_ordered(
-        device_id, frames, binaries_per_frame=binaries
-    )
+    payload, req_id = built
+    delivered = await hub.send(device_id, payload)
     logger.info(
-        "[interaction_feedback] %s device_id=%s req=%s frames=%d delivered=%d summary=%s",
+        "[interaction_feedback] %s device_id=%s req=%s delivered=%d summary=%s "
+        "servo_n=%d audio_next_bin_len=0",
         source,
         device_id,
         req_id,
-        n_frames,
         delivered,
         summary,
+        len(payload.get("servo") or []),
     )
     if delivered > 0:
         from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event

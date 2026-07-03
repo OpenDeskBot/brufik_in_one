@@ -158,3 +158,13 @@ static inline size_t deskbot_pdm_voice_hangover_thr(size_t ema) {
 #define DESKBOT_PB_EXPECT_BIN_TIMEOUT_MS       12000
 #endif
 
+/** WS TCP 握手 + upgrade 等待上限（ms）；重连时适当加长。 */
+#ifndef DESKBOT_WS_CONNECT_TIMEOUT_MS
+#define DESKBOT_WS_CONNECT_TIMEOUT_MS          10000
+#endif
+
+/** disconnect 后泵 loop 清空 lwIP 发送队列（ms）。 */
+#ifndef DESKBOT_WS_DISCONNECT_DRAIN_MS
+#define DESKBOT_WS_DISCONNECT_DRAIN_MS         1500
+#endif
+

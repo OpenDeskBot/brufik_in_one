@@ -13,7 +13,7 @@ from deskbot_server.device_data import resolve_json_path
 from deskbot_server.face_design_store import resolve_face_design_path
 from deskbot_server.face_expr_scenes_store import load_face_expr_scenes_file
 from deskbot_server.pb.llm_display import parse_llm_images
-from deskbot_server.pb.servo_pcm import parse_pb_volume
+from deskbot_server.pb.servo_pcm import parse_pb_volume, parse_pb_cam_fps
 from deskbot_server.servo_config_store import load_servo_cfg_file
 
 _LLM_APPENDIX_CACHE: dict[str, tuple[float, str]] = {}
@@ -159,12 +159,11 @@ def llm_device_screen_appendix(device_id: Optional[str] = None) -> str:
     vol = get_device_volume(device_id)
     return (
         "设备屏幕与音量：\n"
-        f"  - 逻辑分辨率：**{FACE_LCD_WIDTH}×{FACE_LCD_HEIGHT}** 像素，原点左上角 (0,0)。"
-        " 屏幕文案请控制在此范围内；服务端会自动换行。\n"
+        f"  - 逻辑分辨率：**{FACE_LCD_WIDTH}×{FACE_LCD_HEIGHT}** 像素，原点左上角 (0,0)。\n"
         f"  - 当前播放音量：**{vol}**（0–100）。JSON 中写 ``volume`` 会下发到 ESP32 并**持久保存**；"
         "省略则保持当前音量。\n"
-        "  - 屏幕图文：可用 ``screen_text``（多行用 ``\\n``）+ 可选 ``screen_text_color``；"
-        "``images`` 数组项为 ``{b64, x?, y?, w?, h?}``（base64 JPEG/PNG），服务端转为 pb 下发。\n"
+        "  - 屏幕仅支持 ``images`` 数组展示图片（``{b64, x?, y?, w?, h?}``，base64 JPEG/PNG），"
+        "服务端转为 pb 下发；**不要**使用 ``screen_text`` 等屏幕文字字段。\n"
     )
 
 
@@ -382,8 +381,7 @@ def _coerce_llm_reply_object(obj: Any) -> Optional[dict[str, Any]]:
                 "moves",
                 "anims",
                 "volume",
-                "screen_text",
-                "screen_text_color",
+                "cam_fps",
                 "images",
                 "scenes",
                 "servo",
@@ -474,13 +472,7 @@ def parse_llm_reply(raw: str) -> dict:
                     if v:
                         scenes_out.append(v)
         vol = parse_pb_volume(parsed.get("volume"))
-        screen_raw = parsed.get("screen_text")
-        if screen_raw is None and isinstance(parsed.get("screen"), dict):
-            screen_raw = parsed["screen"].get("text")
-        screen_text = str(screen_raw or "").strip() or None
-        st_color = parsed.get("screen_text_color")
-        if st_color is None and isinstance(parsed.get("screen"), dict):
-            st_color = parsed["screen"].get("color")
+        cam_fps = parse_pb_cam_fps(parsed.get("cam_fps"))
         images_out = parse_llm_images(parsed.get("images"))
         return {
             "reply": reply,
@@ -490,8 +482,7 @@ def parse_llm_reply(raw: str) -> dict:
             "scenes": scenes_out,
             "servo": servo_out,
             "volume": vol,
-            "screen_text": screen_text,
-            "screen_text_color": st_color,
+            "cam_fps": cam_fps,
             "images": images_out,
             "need_reply": _parsed_json_need_reply(parsed),
             "json_ok": True,
@@ -506,8 +497,7 @@ def parse_llm_reply(raw: str) -> dict:
         "scenes": [],
         "servo": [],
         "volume": None,
-        "screen_text": None,
-        "screen_text_color": None,
+        "cam_fps": None,
         "images": [],
         "need_reply": True,
         "json_ok": False,

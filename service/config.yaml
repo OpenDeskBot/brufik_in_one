@@ -26,7 +26,7 @@ camera_face:
 debug:
   asr_auto_reply: true
   pb_idle_auto_dispatch: true
-  camera_servo_auto_mode: ''
+  camera_servo_auto_mode: follow_frontal
 server:
   host: 0.0.0.0
   port: 9000
@@ -98,16 +98,14 @@ llm:
     \  - 定时/提醒：必须在 tools 中调用 schedule_task 创建任务，禁止仅用 tts 口头答应。\n  - 系统定时任务：用户正文以 [系统定时任务]\
     \ 开头时，必须 need_reply: true，tts 写直接说给主人听的提醒语。\n  - 必须返回 JSON：每轮只输出一个 JSON 对象，禁止直接输出纯文本。\n\
     \n请你每次只返回 JSON 对象（不要 markdown 代码围栏），格式如下：\n{\n  \"need_reply\": true,\n  \"tts\"\
-    : \"将要转化成语音的中文口语，简短自然\",\n  \"volume\": 80,\n  \"screen_text\": \"屏幕上的说明文字\\n可换行\"\
-    ,\n  \"screen_text_color\": \"#FFFFFF\",\n  \"images\": [],\n  \"moves\": [\n\
+    : \"将要转化成语音的中文口语，简短自然\",\n  \"volume\": 80,\n  \"images\": [],\n  \"moves\": [\n\
     \    {\"move\": \"nod_head\", \"ms\": 1080}\n  ],\n  \"anims\": [\n    {\"anim\"\
     : \"default\", \"ms\": 3000, \"bg\": \"#101820\", \"color\": \"#FFFFFF\"}\n  ],\n\
     \  \"tools\": []\n}\n\n字段说明：\n  - need_reply: 布尔。true 时正常走 TTS；false 时不朗读，但 moves\
     \ / anims / tools 仍可执行。\n  - tts: 仅用于服务端音素 TTS 合成，写成适合朗读的句子。\n  - volume: 可选整数\
-    \ 0–100，仅在需要调整播放音量时填写；省略则设备保持当前音量。\n  - screen_text: 可选，在 284×240 屏幕上显示的文案。\n\
-    \  - screen_text_color: 可选，screen_text 的字色。\n  - images: 可选数组，在屏幕显示 base64 图片。\n\
-    \  - moves / anims: 合法 id 与默认时长见 system 末尾「可用预设动作」「可用表情动画」附录。不需要时写 []。\n  - tools:\
-    \ 可选数组，服务端立即执行；不需要时写 []。"
+    \ 0–100，仅在需要调整播放音量时填写；省略则设备保持当前音量。\n  - images: 可选数组，在屏幕显示 base64 图片（如 capture_camera\
+    \ 拍到的照片）。\n  - moves / anims: 合法 id 与默认时长见 system 末尾「可用预设动作」「可用表情动画」附录。不需要时写 []。\n\
+    \  - tools: 可选数组，服务端立即执行；不需要时写 []。"
 tts:
   provider: doubao
   sample_rate: 24000

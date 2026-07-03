@@ -72,8 +72,6 @@
   "need_reply": true,
   "tts": "将要转化成语音的中文口语，简短自然",
   "volume": 80,
-  "screen_text": "屏幕上的说明文字\n可换行",
-  "screen_text_color": "#FFFFFF",
   "images": [],
   "moves": [
     {"move": "nod_head", "ms": 1080}
@@ -88,8 +86,6 @@
   - need_reply: 布尔。true 时正常走 TTS；false 时不朗读，但 moves / anims / tools 仍可执行。
   - tts: 仅用于服务端音素 TTS 合成，写成适合朗读的句子。
   - volume: 可选整数 0–100，仅在需要调整播放音量时填写；省略则设备保持当前音量。
-  - screen_text: 可选，在 284×240 屏幕上显示的文案。
-  - screen_text_color: 可选，screen_text 的字色。
-  - images: 可选数组，在屏幕显示 base64 图片。
+  - images: 可选数组，在屏幕显示 base64 图片（如 capture_camera 拍到的照片）。
   - moves / anims: 合法 id 与默认时长见 system 末尾「可用预设动作」「可用表情动画」附录。不需要时写 []。
   - tools: 可选数组，服务端立即执行；不需要时写 []。

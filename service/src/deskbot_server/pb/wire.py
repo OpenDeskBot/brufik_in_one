@@ -90,9 +90,8 @@ def build_pb_wire_pairs(
     request_id: Optional[str] = None,
     random_servo_cfg: Optional[dict[str, Any]] = None,
     volume: int | None = None,
+    cam_fps: int | None = None,
     device_id: Optional[str] = None,
-    screen_text: str | None = None,
-    screen_text_color: Any = None,
     images: list[dict[str, Any]] | None = None,
     action: str = PB_ACTION_REPLACE,
 ) -> tuple[list[tuple[dict[str, Any], list[bytes]]], str, int, int]:
@@ -148,8 +147,6 @@ def build_pb_wire_pairs(
     )
     apply_llm_display_to_rows(
         merged_rows,
-        screen_text=screen_text,
-        screen_text_color=screen_text_color,
         images=images,
     )
     logger.info(
@@ -160,7 +157,10 @@ def build_pb_wire_pairs(
     )
 
     pb_req = request_id or uuid.uuid4().hex[:16]
+    from deskbot_server.pb.servo_pcm import parse_pb_cam_fps
+
     pb_vol = resolve_pb_device_hints(tts_cfg, volume=volume, device_id=device_id)
+    pb_cam_fps = parse_pb_cam_fps(cam_fps)
     output_fmt = str(tts_cfg.get("output_codec") or "s16le").lower()
     audio_blobs: list[bytes] = list(merged_pcm)
     opus_frames: list[int] | None = None
@@ -185,6 +185,7 @@ def build_pb_wire_pairs(
         pcm_per_idx=audio_blobs,
         opus_frames_per_idx=opus_frames,
         volume=pb_vol,
+        cam_fps=pb_cam_fps,
         action=action,
     )
     if random_servo_cfg:

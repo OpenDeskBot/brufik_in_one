@@ -100,6 +100,15 @@ class AsrChatCameraPipeline:
         asr_chat_hub: AsrChatHub,
         send_face_info_to_asr_chat: bool = False,
     ) -> None:
+        from deskbot_server.device_camera_frame_store import update_device_camera_frame
+
+        update_device_camera_frame(
+            self.device_id,
+            frame_bytes,
+            width=self.runtime.frame_width,
+            height=self.runtime.frame_height,
+            source="asr_chat",
+        )
         if not await self.ensure_ready():
             return
         assert self.detector is not None and self.face_tracker is not None

@@ -6,8 +6,13 @@ import logging
 import re
 import time
 import uuid
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
+from deskbot_server.application.llm_error_fallback import (
+    build_llm_error_fallback_plan,
+    start_llm_error_motion_feedback,
+    stop_llm_error_motion_feedback,
+)
 from deskbot_server.application.llm_tool_loop import complete_llm_with_tool_loop
 from deskbot_server.auto_reply import get_asr_voice_auto_reply_enabled
 from deskbot_server.core.ports.downlink import DownlinkPort, PipelineEventsPort
@@ -115,6 +120,72 @@ async def _play_interim_tts(
     )
 
 
+async def _play_llm_error_fallback(
+    downlink: DownlinkPort,
+    chat: "ChatService",
+    *,
+    request_id: Optional[str],
+    device_id: Optional[str],
+    result: ChatTurnResult,
+    asr_chat_hub: Optional[Any],
+    t_asr_start: Optional[float],
+    llm_exc: Exception,
+) -> None:
+    """LLM 调用失败：口播道歉 + 连续 idle 舵机，避免点头停后长时间无反馈。"""
+    if not get_asr_voice_auto_reply_enabled():
+        return
+    plan = build_llm_error_fallback_plan()
+    playback = plan["tts"]
+    parsed = plan["parsed"]
+    fallback_rid = f"{request_id}_llm_err" if request_id else None
+
+    motion_done, motion_task = start_llm_error_motion_feedback(asr_chat_hub, device_id)
+    logger.warning(
+        "[LLM] 调用失败，启动兜底 TTS device_id=%s req=%s err=%s tts=%r",
+        device_id,
+        request_id,
+        llm_exc,
+        playback,
+    )
+    try:
+        result.llm_text = playback
+        result.llm_raw = ""
+        result.need_reply = True
+        result.t_llm_end = time.monotonic()
+        await downlink.emit_stage(
+            "llm_error_fallback",
+            request_id=fallback_rid,
+            send_client=False,
+            event_fields={
+                "llm_text": playback,
+                "error": str(llm_exc),
+                "source": "asr" if t_asr_start is not None else "text",
+            },
+        )
+        await downlink.emit_stage(
+            "tts_start",
+            request_id=fallback_rid,
+            send_client=False,
+            event_fields={
+                "tts_text": playback,
+                "source": "llm_error_fallback",
+            },
+        )
+        await _run_pb_playback(
+            downlink,
+            chat,
+            reply_text=playback,
+            parsed=parsed,
+            llm_scenes=[],
+            request_id=fallback_rid,
+            device_id=device_id,
+            result=result,
+            t_asr_start=t_asr_start,
+        )
+    finally:
+        await stop_llm_error_motion_feedback(motion_done, motion_task)
+
+
 def _is_scheduled_task_user_text(user_text: str) -> bool:
     return str(user_text or "").strip().startswith(_SCHEDULED_TASK_PREFIX)
 
@@ -169,6 +240,8 @@ async def run_chat_turn(
     force_voice: bool = False,
     pipeline_broker: Optional["DevicePipelineBroker"] = None,
     reuse_session_id: Optional[str] = None,
+    asr_chat_hub: Optional[Any] = None,
+    on_llm_error: Optional[Any] = None,
 ) -> ChatTurnResult:
     """在已有用户侧文本后执行 LLM + TTS/pb 管道（应用层，不依赖 WebSocket 类型）。"""
     result = ChatTurnResult()
@@ -249,6 +322,7 @@ async def run_chat_turn(
             on_tts_ready=tts_prefetch.on_ready,
             tts_prefetch=tts_prefetch,
             on_interim_tts_play=_on_interim_tts_play,
+            asr_chat_hub=asr_chat_hub,
         )
 
         reply_text = parsed["reply"]
@@ -264,7 +338,9 @@ async def run_chat_turn(
 
         display_images = list(parsed.get("images") or [])
         for tr in tool_results:
-            if tr.get("ok") and tr.get("jpeg_base64"):
+            if tr.get("ok") and tr.get("image_display"):
+                display_images.append(tr["image_display"])
+            elif tr.get("ok") and tr.get("jpeg_base64"):
                 try:
                     display_images.append(
                         build_capture_image_for_display(str(tr["jpeg_base64"]))
@@ -331,7 +407,7 @@ async def run_chat_turn(
             )
 
         if not need_reply and not is_scheduled:
-            has_motion = bool(llm_moves or llm_anims or parsed.get("screen_text") or parsed.get("images"))
+            has_motion = bool(llm_moves or llm_anims or parsed.get("images"))
             if has_motion:
                 logger.info(
                     "[LLM] need_reply=false 但有 moves/anims/屏幕内容，下发动作 pb device_id=%s req=%s",
@@ -425,6 +501,33 @@ async def run_chat_turn(
         logger.exception("LLM 流程失败")
         result.status = "error"
         result.error = f"llm: {llm_exc}"
+        # 先停点头再播兜底 TTS，避免点头和摇头重叠
+        if on_llm_error is not None:
+            try:
+                if asyncio.iscoroutinefunction(on_llm_error):
+                    await on_llm_error()
+                else:
+                    on_llm_error()
+            except Exception:
+                logger.debug("[LLM] on_llm_error 回调异常（忽略）")
+        try:
+            await _play_llm_error_fallback(
+                downlink,
+                chat,
+                request_id=request_id,
+                device_id=device_id,
+                result=result,
+                asr_chat_hub=asr_chat_hub,
+                t_asr_start=t_asr_start,
+                llm_exc=llm_exc,
+            )
+        except Exception as fallback_exc:
+            logger.exception(
+                "[LLM] 错误兜底 TTS/pb 失败 device_id=%s req=%s",
+                device_id,
+                request_id,
+            )
+            result.error = f"llm: {llm_exc}; fallback: {fallback_exc}"
 
     return result
 
@@ -658,9 +761,8 @@ async def _run_pb_playback(
                 ),
                 random_servo_cfg=chat.settings.pb_random_servo_cfg() if chunk_is_first else None,
                 volume=parsed.get("volume") if chunk_is_first else None,
+                cam_fps=parsed.get("cam_fps") if chunk_is_first else None,
                 device_id=device_id,
-                screen_text=parsed.get("screen_text") if chunk_is_first else None,
-                screen_text_color=parsed.get("screen_text_color") if chunk_is_first else None,
                 images=list(parsed.get("images") or []) if chunk_is_first else None,
                 action=PB_ACTION_REPLACE if chunk_is_first else PB_ACTION_APPEND,
             )

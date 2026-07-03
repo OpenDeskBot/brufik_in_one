@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from deskbot_server.application.chat_flow import publish_chat_turn, run_chat_turn
 from deskbot_server.core.types import ChatTurnResult
@@ -25,6 +25,8 @@ async def run_ws_chat_turn(
     device_id: Optional[str] = None,
     t_asr_start: Optional[float] = None,
     t_asr_text: Optional[float] = None,
+    asr_chat_hub: Optional[Any] = None,
+    on_llm_error: Optional[Any] = None,
 ) -> dict:
     downlink = WsDownlinkAdapter(
         websocket,
@@ -42,6 +44,8 @@ async def run_ws_chat_turn(
         t_asr_start=t_asr_start,
         t_asr_text=t_asr_text,
         pipeline_broker=dp_broker,
+        asr_chat_hub=asr_chat_hub,
+        on_llm_error=on_llm_error,
     )
     return turn.as_dict()
 

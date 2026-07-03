@@ -26,6 +26,7 @@ ARK_OPENAI_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DEFAULT_TIMEOUT_SECONDS = 60
+LLM_FIRST_TOKEN_TIMEOUT_SECONDS = 5.0
 
 VOLCENGINE_PROTOCOLS = {"ark", "volcengine", "doubao"}
 OPENAI_COMPAT_PROTOCOLS = {
@@ -438,6 +439,7 @@ async def chat_acompletion(
     json_mode: bool = True,
     stream: bool = False,
     on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
+    first_token_timeout: float = LLM_FIRST_TOKEN_TIMEOUT_SECONDS,
 ) -> tuple[str, dict[str, Any]]:
     """Call an OpenAI-compatible Chat Completions endpoint."""
     cfg = config or resolve_llm_config(device_id)
@@ -455,22 +457,59 @@ async def chat_acompletion(
     if use_stream:
         tts_extractor = JsonTtsStreamExtractor()
         pending_tts: dict[str, Optional[str]] = {"text": None}
+        loop = asyncio.get_running_loop()
+        first_token_event = asyncio.Event()
 
         def _on_delta(piece: str) -> None:
             if tts_extractor is None:
                 return
+            if piece and not first_token_event.is_set():
+                loop.call_soon_threadsafe(first_token_event.set)
             ready = tts_extractor.feed(piece)
             if ready:
                 pending_tts["text"] = ready
 
-        content, usage_dict = await asyncio.to_thread(
-            _request_chat_completion_stream,
-            messages,
-            cfg,
-            temperature=temperature,
-            json_mode=json_mode,
-            on_delta=_on_delta,
+        stream_task = asyncio.create_task(
+            asyncio.to_thread(
+                _request_chat_completion_stream,
+                messages,
+                cfg,
+                temperature=temperature,
+                json_mode=json_mode,
+                on_delta=_on_delta,
+            )
         )
+
+        # 首字超时检测：first_token_timeout 秒内若无任何 delta 则放弃
+        if first_token_timeout > 0:
+            token_wait_task = asyncio.create_task(first_token_event.wait())
+            done, _ = await asyncio.wait(
+                {token_wait_task, stream_task},
+                timeout=first_token_timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            # 清理 token 等待 task
+            if not token_wait_task.done():
+                token_wait_task.cancel()
+                try:
+                    await token_wait_task
+                except asyncio.CancelledError:
+                    pass
+            # 若超时且 stream 仍未完成、且未收到首字 → 放弃
+            if stream_task not in done and not first_token_event.is_set():
+                stream_task.cancel()
+                try:
+                    await stream_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                raise TimeoutError(
+                    f"LLM 首字超时（{first_token_timeout:.0f}s 内无内容返回）"
+                )
+            # stream 已完成（可能是错误），但未收到首字 → 让 await stream_task 正常抛出错误
+            # stream 仍在运行但已收到首字 → 正常继续等待
+
+        content, usage_dict = await stream_task
+
         if pending_tts["text"]:
             await _fire_tts_ready(pending_tts["text"])
         elif tts_extractor is not None and not tts_extractor._fired:

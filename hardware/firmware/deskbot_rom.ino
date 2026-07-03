@@ -175,15 +175,12 @@ void loop() {
       handle_cmd();
       deskbot_network_poll();
       log_task_tick();
-      asrChatClient.loop();
 
       if (CHAT_LOOP_MAX_MS > 0 && (millis() - loop_start_time >= (unsigned long)CHAT_LOOP_MAX_MS)) {
         break;
       }
 
-      if (!asrChatClient.canStartVoiceRound()) {
-        continue;
-      }
+      asrChatClient.serviceLoop(/*allow_camera=*/true);
 
       if (!asrChatClient.runVoiceRound(RECORD_TIME)) {
         log_error("[CHAT] asr_chat round failed, reconnect retry in 2s");

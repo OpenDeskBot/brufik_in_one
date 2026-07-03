@@ -143,6 +143,8 @@ static void play(const int16_t* data, size_t length, float volume_ratio, bool yi
   s_i2s_play_in_progress = true;
   if (audible) {
     s_audible_play_in_progress = true;
+    /* 首段可听 PCM 再挡麦；stream begin 时不置位，避免 pb JSON 先到、TTS 未播就停录音。 */
+    deskbot_uplink_set_speaker_active(true);
   }
   constexpr size_t kBlock = 256;
   int16_t scratch[kBlock];
@@ -459,7 +461,6 @@ void audio_play_task_main(void* /*arg*/) {
                         job.pcm_channels == 2 ? I2S_CHANNEL_STEREO : I2S_CHANNEL_MONO);
             s_stream_pcm_active = true;
             s_stream_vol = job.volume;
-            deskbot_uplink_set_speaker_active(true);
             *job.ok_out = true;
           }
         }

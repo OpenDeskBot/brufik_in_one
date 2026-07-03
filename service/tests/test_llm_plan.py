@@ -187,23 +187,19 @@ def test_resize_jpeg_for_lcd_display():
     assert jpeg_blob_dimensions(dec["bytes"]) == (284, 240)
 
 
-def test_parse_llm_reply_screen_and_images():
+def test_parse_llm_reply_images():
     import base64
 
     b64 = base64.standard_b64encode(b"\xff\xd8\xff\xe0" + b"\x00" * 8).decode()
     raw = json.dumps(
         {
             "tts": "看",
-            "screen_text": "第一行\n第二行",
-            "screen_text_color": "#FFF",
             "images": [{"b64": b64, "x": 0, "y": 0, "w": 100, "h": 80}],
         },
         ensure_ascii=False,
     )
     parsed = parse_llm_reply(raw)
     assert parsed["json_ok"] is True
-    assert parsed["screen_text"] == "第一行\n第二行"
-    assert parsed["screen_text_color"] == "#FFF"
     assert len(parsed["images"]) == 1
 
 
