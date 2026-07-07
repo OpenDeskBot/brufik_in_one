@@ -5,7 +5,7 @@
    ============================================================ */
 
 :root{
-  --bg:#f6f1e8; --panel:#fffdfa; --panel2:#efe7da;
+  --bg:#f2f6f1; --panel:#fffdfa; --panel2:#e7efea;
   --ink:#27231d; --dim:#6d655a; --faint:#9c9385;
   --line:#3a3328;
   --accent:#dc6b36; --accent-ink:#fffdfa;
@@ -21,8 +21,8 @@
 *{box-sizing:border-box}
 body{
   margin:0; background:var(--bg); color:var(--ink);
-  background-image:linear-gradient(rgba(42,39,34,.035) 1px,transparent 1px),
-                   linear-gradient(90deg,rgba(42,39,34,.035) 1px,transparent 1px);
+  background-image:linear-gradient(rgba(42,69,56,.035) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(42,69,56,.035) 1px,transparent 1px);
   background-size:56px 56px; background-position:-1px -1px;
   font-family:'Space Grotesk',-apple-system,'PingFang SC','PingFang TC',system-ui,sans-serif;
   -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
@@ -481,6 +481,109 @@ input[type=range]{width:100%;accent-color:var(--accent);height:6px}
 .debug-output small{display:block;color:var(--dim);font-family:var(--mono);font-size:10px;margin-top:4px;word-break:break-all}
 .debug-output pre{margin:10px 0 0;max-height:260px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.45;
   white-space:pre-wrap;word-break:break-word}
+
+/* ===== calm retro refinements ===== */
+.expr-tabs button,
+.voice-tabbar button,
+.adv-tabs button,
+.debug-subtabs button,
+.thumb,
+.maprow,
+.design-loader,
+.design-ai-body,
+.image-ai-body,
+.progress-strip,
+.design-warnings,
+.tts-config,
+.voice-clone-panel,
+.clone-file,
+.preview-audio,
+.vcard,
+.vbtn,
+.slider-card,
+.note,
+.tl .body,
+.person .pa,
+.dev,
+.advlist,
+.adv-panel,
+.metric,
+.adv-table-wrap,
+.new-key-box,
+.debug-audio,
+.debug-output,
+.setup-card,
+.empty-banner,
+.empty-banner .eb-ic{
+  border-color:rgba(58,51,40,.18);
+  box-shadow:var(--shadow-sm);
+}
+.expr-tabs button.on,
+.voice-tabbar button.on,
+.adv-tabs button.on,
+.debug-subtabs button.on,
+.thumb.sel,
+.vcard.cur,
+.metric.accent{
+  background:var(--accent-soft);
+  color:var(--ink);
+  border-color:rgba(220,107,54,.42);
+  box-shadow:none;
+}
+.vcard.cur small,
+.vcard.cur em,
+.metric.accent span,
+.metric.accent small{
+  color:var(--dim);
+  opacity:1;
+}
+.note .memtag,
+.tagdev,
+.curtag,
+.slider-card .t .val{
+  background:var(--accent-soft);
+  color:var(--accent);
+  border-color:rgba(220,107,54,.36);
+}
+.vcard.cur .curtag,
+.vcard.cur .vbtn.play,
+.vcard.cur .vbtn.set{
+  background:var(--panel);
+  color:var(--ink);
+}
+.vbtn:hover,
+.vbtn:active{
+  transform:none;
+  background:var(--accent-soft);
+  border-color:rgba(220,107,54,.42);
+  color:var(--accent);
+}
+.vbtn.set{
+  background:var(--accent);
+  color:var(--accent-ink);
+  border-color:var(--accent);
+}
+.tl .bar{
+  width:5px;
+  border-color:transparent;
+  border-radius:999px;
+}
+.person .pa.owner{
+  background:var(--accent-soft);
+  color:var(--accent);
+}
+.dev .di,
+.generated-svg-preview,
+.llm-current,
+.toast{
+  background:#242821;
+  color:#fffdfa;
+  border-color:rgba(36,40,33,.35);
+}
+.llm-current span,
+.llm-current small{
+  color:#c8d1c4;
+}
 
 /* ===== misc ===== */
 .lead{color:var(--dim);font-size:13px;margin-top:14px}

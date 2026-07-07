@@ -212,8 +212,9 @@ def test_2c_theme_uses_calm_retro_tokens():
     ).read_text(encoding="utf-8")
 
     assert "设计语言：Soft retro console" in css
-    assert "--bg:#f6f1e8" in css
+    assert "--bg:#f2f6f1" in css
     assert "--panel:#fffdfa" in css
+    assert "--panel2:#e7efea" in css
     assert "--line:#3a3328" in css
     assert "--accent:#dc6b36" in css
     assert "--shadow:0 10px 24px rgba(42,39,34,.08)" in css
