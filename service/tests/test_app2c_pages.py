@@ -571,7 +571,7 @@ def test_old_app_pages_removed_but_apis_kept(temp_db):
     client.post("/login", data={"email": "retire-app@example.com", "password": "password1234"})
     client.post("/app/api/devices/select", json={"device_id": "deskbot_retire"})
 
-    for page in ["/app/usage", "/app/settings", "/app/llm-models", "/app/scheduled-tasks", "/app/face-profiles", "/app/configure", "/app/memories", "/app/devices"]:
+    for page in ["/app/", "/app/usage", "/app/settings", "/app/llm-models", "/app/scheduled-tasks", "/app/face-profiles", "/app/configure", "/app/memories", "/app/devices"]:
         assert client.get(page).status_code == 404, page
 
     assert client.get("/app/api/scheduled-tasks").status_code == 200
