@@ -142,8 +142,9 @@ def test_2c_voice_page_links_to_model_config_and_keeps_player(temp_db):
     advanced = client.get("/advanced")
     assert advanced.status_code == 200
     advanced_html = advanced.get_data(as_text=True)
-    assert "声音能力 · 火山引擎语音技术" in advanced_html
-    assert "DOUBAO_TTS_API_KEY" in advanced_html
+    assert "声音能力" in advanced_html
+    assert "火山引擎语音技术" in advanced_html
+    assert "声音高级参数" in advanced_html
     assert "saveTtsConfig" in advanced_html
 
 
@@ -201,26 +202,30 @@ def test_2c_voice_preview_controls_are_compact_and_aligned(temp_db):
     assert "height:var(--voice-control-h)" in css
 
 
-def test_2c_theme_uses_calm_retro_tokens():
-    css = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "deskbot_server"
-        / "web"
-        / "static"
-        / "theme_2c.css"
-    ).read_text(encoding="utf-8")
+def test_2c_theme_uses_bold_retro_tokens():
+    web_dir = Path(__file__).resolve().parents[1] / "src" / "deskbot_server" / "web"
+    css = (web_dir / "static" / "theme_2c.css").read_text(encoding="utf-8")
+    base = (web_dir / "templates" / "base_2c.html").read_text(encoding="utf-8")
+    auth_base = (web_dir / "templates" / "auth_base.html").read_text(encoding="utf-8")
 
-    assert "设计语言：Soft retro console" in css
-    assert "--bg:#f2f6f1" in css
-    assert "--panel:#fffdfa" in css
-    assert "--panel2:#e7efea" in css
-    assert "--line:#3a3328" in css
-    assert "--accent:#dc6b36" in css
-    assert "--shadow:0 10px 24px rgba(42,39,34,.08)" in css
-    assert "background-size:56px 56px" in css
+    assert "设计语言：Neo-brutalist retro console" in css
+    assert "--bg:#e9e7de" in css
+    assert "--panel:#fff" in css
+    assert "--panel2:#f2f0e8" in css
+    assert "--line:#16171b" in css
+    assert "--accent:#ff6700" in css
+    assert "--shadow:2px 2px 0 var(--line)" in css
+    assert "background-size:32px 32px" in css
     assert ".stage .brackets span{position:absolute" in css
     assert ".face .scanline{position:absolute" in css
+    assert ".stage .brackets{display:none}" not in css
+    assert ".face .scanline{display:none}" not in css
+    assert "final calm overrides" not in css
+    assert "@media(max-width:600px)" in css
+    assert "white-space:nowrap" in css
+    assert ".topbar .tb-sub,.topbar .tb-clock{display:none}" in css
+    assert "?v=20260707-modelhierarchy" in base
+    assert "?v=20260707-modelhierarchy" in auth_base
 
 
 def test_2c_voice_page_exposes_voice_clone_workflow(temp_db):
@@ -663,6 +668,42 @@ def test_2c_advanced_keeps_heavy_features_collapsed(temp_db):
     assert "/api/paddlespeech/phoneme_tts" not in html
     assert "还没完成 AI 能力配置" in html
     assert "需要配置大模型" not in html
+
+
+def test_2c_advanced_model_config_has_clear_primary_secondary_hierarchy(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("advanced-hierarchy2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "advanced-hierarchy2c@example.com", "password": "password1234"})
+
+    resp = client.get("/advanced?tab=llm")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "model-config-stack" in html
+    assert "model-card primary-model-card" in html
+    assert "model-card secondary-model-card" in html
+    assert "必需配置" in html
+    assert "声音能力" in html
+    assert "voice-advanced-fields" in html
+    assert "声音高级参数" in html
+
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "deskbot_server"
+        / "web"
+        / "static"
+        / "theme_2c.css"
+    ).read_text(encoding="utf-8")
+    assert ".primary-model-card" in css
+    assert ".secondary-model-card" in css
+    assert ".voice-advanced-fields" in css
+    assert "details.voice-advanced-fields:not([open]) .voice-advanced-grid{display:none}" in css
+    assert ".model-form-actions" in css
 
 
 def test_2c_consumer_apis_are_not_developer_locked(temp_db, monkeypatch):

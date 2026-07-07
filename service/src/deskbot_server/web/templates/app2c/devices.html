@@ -1,5 +1,6 @@
 {% extends "base_2c.html" %}
 {% block page_title %}我的设备 · 小歪{% endblock %}
+{% block global_setup_suppress_device %}1{% endblock %}
 {% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
 {% block content %}
 <div id="app">

@@ -191,7 +191,7 @@ createApp({
         this.speakers = s.speakers || [];
         const c = await this.api('/api/doubao_tts/config');
         this.applyConfig(c.config || {});
-        if(!this.cfg.api_key_set) this.msg = '请先到「高级 · 模型配置」里完成 AI 能力配置，然后再试听或设置音色。';
+        // 未配置时页顶已有全局提示条引导去「高级 · 模型配置」，这里不再重复提示
       }catch(e){
         this.msg = '声音配置加载失败：' + this.errText(e);
       }
