@@ -34,6 +34,7 @@ from deskbot_server.llm_config_store import (
     get_active_model_id,
     list_llm_models,
 )
+from deskbot_server.web.blueprints.app_bp import _flatten_usage_daily_rows
 from deskbot_server.web.session_device import get_current_device_id
 
 # No url_prefix: 2C consumer routes live at root (/home, /voice, /my/*)
@@ -140,6 +141,17 @@ def advanced_summary_get():
     usage = get_user_usage_summary(current_user.id, days=14)
     device_usage = get_user_device_usage_summary(current_user.id, days=14)
     user_today = get_user_usage_today(current_user.id)
+    device_daily_rows = _flatten_usage_daily_rows(
+        device_usage.get("device_stats") or [],
+        label_key="display_name",
+        sub_id_key="device_id",
+    )
+    key_daily_rows = _flatten_usage_daily_rows(
+        usage.get("key_stats") or [],
+        label_key="name",
+        sub_id_key="api_key_id",
+        sub_label_key="key_prefix",
+    )
 
     llm = {
         "device_id": current_device_id,
@@ -211,6 +223,8 @@ def advanced_summary_get():
                 "today": _totals_payload(user_today),
                 "fourteen_day": _totals_payload(usage.get("totals") or {}),
                 "today_by_device": device_usage.get("today_by_device") or [],
+                "device_daily_rows": device_daily_rows,
+                "key_daily_rows": key_daily_rows,
             },
             "api_keys": [_api_key_payload(k) for k in keys],
             "llm": llm,

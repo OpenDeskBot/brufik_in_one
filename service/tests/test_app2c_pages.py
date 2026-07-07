@@ -582,3 +582,25 @@ def test_2c_advanced_llm_form_has_test_connection(temp_db):
     assert "testLlmModel" in html
     assert "/app/api/llm-models/test" in html
     assert 'v-model="llmForm.test_prompt"' in html
+
+
+def test_2c_advanced_usage_includes_daily_breakdown(temp_db):
+    from deskbot_server.auth.device_service import bind_device
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    user = create_user("usage-daily2c@example.com", "password1234")
+    bind_device(user.id, "deskbot_usage")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "usage-daily2c@example.com", "password": "password1234"})
+    client.post("/app/api/devices/select", json={"device_id": "deskbot_usage"})
+
+    payload = client.get("/api/advanced").get_json()
+    assert "device_daily_rows" in payload["usage"]
+    assert "key_daily_rows" in payload["usage"]
+    assert isinstance(payload["usage"]["device_daily_rows"], list)
+
+    html = client.get("/advanced").get_data(as_text=True)
+    assert "近 14 日设备明细" in html
+    assert "近 14 日 API Key 明细" in html

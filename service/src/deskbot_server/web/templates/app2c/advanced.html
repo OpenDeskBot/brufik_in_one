@@ -49,6 +49,42 @@
         </tbody>
       </table>
     </div>
+    <div class="blocktitle">近 14 日设备明细</div>
+    <div class="adv-table-wrap">
+      <table class="adv-table">
+        <thead><tr><th>日期</th><th>设备</th><th>ASR</th><th>人脸</th><th>LLM</th><th>TTS</th><th>合计</th></tr></thead>
+        <tbody>
+          <tr v-for="(r, i) in usage.device_daily_rows" :key="r.date + '|' + r.sub_id + '|' + i">
+            <td>[[ r.date ]]</td>
+            <td><b>[[ r.label || r.sub_id ]]</b><small>[[ r.sub_id ]]</small></td>
+            <td>[[ fmtBytes(r.asr_bytes) ]]</td>
+            <td>[[ fmtBytes(r.face_bytes) ]]</td>
+            <td>[[ fmtBytes(r.llm_bytes) ]]</td>
+            <td>[[ fmtBytes(r.tts_bytes) ]]</td>
+            <td><b>[[ fmtBytes(r.total_bytes) ]]</b></td>
+          </tr>
+          <tr v-if="!usage.device_daily_rows.length"><td colspan="7">暂无设备明细</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="blocktitle">近 14 日 API Key 明细</div>
+    <div class="adv-table-wrap">
+      <table class="adv-table">
+        <thead><tr><th>日期</th><th>API Key</th><th>ASR</th><th>人脸</th><th>LLM</th><th>TTS</th><th>合计</th></tr></thead>
+        <tbody>
+          <tr v-for="(r, i) in usage.key_daily_rows" :key="r.date + '|' + r.sub_id + '|' + i">
+            <td>[[ r.date ]]</td>
+            <td><b>[[ r.label || r.sub_id ]]</b><small>[[ r.sub_label ]]</small></td>
+            <td>[[ fmtBytes(r.asr_bytes) ]]</td>
+            <td>[[ fmtBytes(r.face_bytes) ]]</td>
+            <td>[[ fmtBytes(r.llm_bytes) ]]</td>
+            <td>[[ fmtBytes(r.tts_bytes) ]]</td>
+            <td><b>[[ fmtBytes(r.total_bytes) ]]</b></td>
+          </tr>
+          <tr v-if="!usage.key_daily_rows.length"><td colspan="7">暂无 API Key 明细</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <div class="adv-panel" v-if="active==='keys'">
@@ -303,7 +339,7 @@ createApp({
     password:{old_password:'',new_password:'',confirm_password:''},
     devices:[], currentDeviceId:'',
     advancedOpen:{keys:false,llm:false,account:false,debug:false},
-    usage:{today:{}, fourteen_day:{}, today_by_device:[]},
+    usage:{today:{}, fourteen_day:{}, today_by_device:[], device_daily_rows:[], key_daily_rows:[]},
     apiKeys:[], newKeyName:'', rawKey:'',
     llm:{protocols:['ark','openai'], models:[], active_model_id:null, active:null, system_default:null, error:''},
     editingModelId:'', llmTesting:false, llmTestResult:null,
