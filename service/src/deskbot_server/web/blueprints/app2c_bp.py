@@ -28,7 +28,14 @@ from deskbot_server.face_mouth_config_store import (
     load_face_mouth_cfg_file,
     save_face_mouth_cfg_file,
 )
-from deskbot_server.llm.runtime import resolve_llm_config, resolve_system_llm_config
+from deskbot_server.llm.env_store import save_llm_env
+from deskbot_server.llm.runtime import (
+    ResolvedLlmConfig,
+    build_chat_model,
+    chat_completion,
+    resolve_llm_config,
+    resolve_system_llm_config,
+)
 from deskbot_server.llm_config_store import (
     SUPPORTED_PROTOCOLS,
     get_active_model_id,
@@ -87,6 +94,108 @@ def devices():
 @login_required
 def advanced():
     return render_template("app2c/advanced.html", active_nav="advanced")
+
+
+@bp.get("/onboarding")
+@login_required
+def onboarding():
+    return render_template("app2c/onboarding.html")
+
+
+def _system_llm_payload() -> dict:
+    sys = resolve_system_llm_config()
+    api_key_set = _llm_api_key_set(sys.api_key)
+    return {
+        "config": {
+            "display_name": sys.display_name,
+            "model_name": sys.model,
+            "protocol": sys.protocol,
+            "base_url": sys.api_base or "",
+            "api_key_set": api_key_set,
+        },
+        "protocols": list(SUPPORTED_PROTOCOLS),
+        "needs_config": not api_key_set,
+    }
+
+
+@bp.get("/api/setup/llm")
+@login_required
+def setup_llm_get():
+    return jsonify({"ok": True, **_system_llm_payload()})
+
+
+@bp.post("/api/setup/llm")
+@login_required
+def setup_llm_post():
+    payload = request.get_json(silent=True) or {}
+    model_name = str(payload.get("model_name") or "").strip()
+    protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
+    if not model_name:
+        return jsonify({"ok": False, "error": "请填写模型名称"}), 400
+    if protocol not in SUPPORTED_PROTOCOLS:
+        return jsonify({"ok": False, "error": f"不支持的协议: {protocol}"}), 400
+    save_llm_env(
+        {
+            "api_key": payload.get("api_key"),
+            "protocol": protocol,
+            "model_name": model_name,
+            "base_url": payload.get("base_url"),
+        }
+    )
+    result = _system_llm_payload()
+    if result["needs_config"]:
+        return jsonify({"ok": False, "error": "API Key 未生效，请确认已填写 ARK_API_KEY"}), 400
+    return jsonify({"ok": True, **result})
+
+
+@bp.post("/api/setup/llm/test")
+@login_required
+def setup_llm_test():
+    payload = request.get_json(silent=True) or {}
+    current = resolve_system_llm_config()
+    model_name = str(payload.get("model_name") or "").strip() or current.model
+    protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
+    # base_url 留空时交给协议默认解析（ark→火山方舟地址），不要沿用旧的系统默认地址
+    base_url = str(payload.get("base_url") or "").strip()
+    api_key = str(payload.get("api_key") or "").strip()
+    if not api_key or "*" in api_key or "•" in api_key:
+        api_key = str(current.api_key or "").strip()
+    prompt = str(payload.get("prompt") or "你好，请用一句话介绍你自己。").strip()
+
+    if not model_name:
+        return jsonify({"ok": False, "error": "请填写模型名称"}), 400
+    if protocol not in SUPPORTED_PROTOCOLS:
+        return jsonify({"ok": False, "error": f"不支持的协议: {protocol}"}), 400
+    if not _llm_api_key_set(api_key):
+        return jsonify({"ok": False, "error": "请填写 ARK_API_KEY"}), 400
+
+    try:
+        config = ResolvedLlmConfig(
+            model=build_chat_model(protocol, model_name),
+            api_key=api_key,
+            api_base=base_url or None,
+            protocol=protocol,
+            source="test",
+            display_name=model_name,
+        )
+        reply, meta = chat_completion(
+            [{"role": "user", "content": prompt}],
+            config=config,
+            json_mode=False,
+            temperature=0.7,
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001 - surface provider error to the user
+        return jsonify({"ok": False, "error": str(exc)}), 502
+
+    return jsonify(
+        {
+            "ok": True,
+            "reply": reply,
+            "meta": {"model": meta.get("model"), "display_name": meta.get("display_name")},
+        }
+    )
 
 
 def _totals_payload(row: dict) -> dict:

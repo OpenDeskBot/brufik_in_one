@@ -10,10 +10,10 @@
   --ink:#16171b; --dim:#56564f; --faint:#86867c;
   --line:#16171b;
   --accent:#ff6700; --accent-ink:#fff;          /* 小米橙 */
-  --bw:2.5px;                                    /* 边框粗细 */
-  --r:6px; --rl:9px; --rs:5px;                   /* 圆角：常规 / 大 / 小 */
-  --shadow:4px 4px 0 var(--line);
-  --shadow-sm:2px 2px 0 var(--line);
+  --bw:1.5px;                                    /* 边框粗细（轻量化：2.5→1.5）*/
+  --r:7px; --rl:10px; --rs:6px;                  /* 圆角略增，观感更柔 */
+  --shadow:2px 2px 0 var(--line);                /* 硬阴影偏移减小：4→2 */
+  --shadow-sm:1px 1px 0 var(--line);
   --mono:'Space Mono',ui-monospace,Menlo,monospace;
   --topbar-h:56px;
 }
@@ -439,3 +439,14 @@ input[type=range]{width:100%;accent-color:var(--accent);height:6px}
   .generated-svg-card{grid-template-columns:1fr}
   .side{display:none}
 }
+
+/* 首页：大模型未配置引导条 */
+.llm-cta{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;padding:13px 18px;
+  background:var(--accent);color:var(--accent-ink);border:var(--bw) solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow-sm);text-decoration:none;transition:transform .12s,box-shadow .12s}
+.llm-cta:hover{transform:translate(1px,1px);box-shadow:none}
+.llm-cta .llm-cta-txt{display:flex;flex-direction:column;gap:2px}
+.llm-cta .llm-cta-txt b{font-size:14px}
+.llm-cta .llm-cta-txt small{font-size:12px;opacity:.92}
+.llm-cta .llm-cta-btn{flex:none;background:var(--panel);color:var(--ink);border:var(--bw) solid var(--line);
+  border-radius:var(--rs);padding:7px 14px;font-weight:700;font-size:13px;box-shadow:var(--shadow-sm)}

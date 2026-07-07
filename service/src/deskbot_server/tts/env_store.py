@@ -61,8 +61,13 @@ def read_env_file() -> dict[str, str]:
     return out
 
 
-def update_env_keys(updates: dict[str, str], *, keys: Iterable[str] | None = None) -> None:
-    """更新 .env 中指定键，保留其它行与注释。值为空时不覆盖已有行。"""
+def update_env_keys(
+    updates: dict[str, str], *, keys: Iterable[str] | None = None, comment: str = "# 配置"
+) -> None:
+    """更新 .env 中指定键，保留其它行与注释。值为空时不覆盖已有行。
+
+    新增缺失键时，会在其上方写入 ``comment`` 作为分节标题。
+    """
     allowed = set(keys or DOUBAO_TTS_ENV_KEYS)
     filtered = {k: (updates.get(k) or "").strip() for k in allowed if k in updates}
     if not filtered:
@@ -98,7 +103,7 @@ def update_env_keys(updates: dict[str, str], *, keys: Iterable[str] | None = Non
     if missing:
         if new_lines and new_lines[-1].strip():
             new_lines.append("")
-        new_lines.append("# 豆包语音 TTS 2.0")
+        new_lines.append(comment)
         for key in missing:
             new_lines.append(f"{key}={_quote_env_value(filtered[key])}")
 
@@ -122,5 +127,5 @@ def save_doubao_tts_env(payload: dict[str, str]) -> None:
         if not raw:
             raw = (existing.get(env_key) or "").strip()
         updates[env_key] = raw
-    update_env_keys(updates)
+    update_env_keys(updates, comment="# 豆包语音 TTS 2.0")
     load_dotenv()

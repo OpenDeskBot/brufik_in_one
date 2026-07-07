@@ -75,6 +75,12 @@ def register_post():
     login_user(FlaskUser(user), remember=True)
     remove_session()
     flash("注册成功，欢迎加入！", "success")
+    # 新用户：若还没有可用的大模型（本地未配置 Ark/LLM 密钥），先引导去配置。
+    from deskbot_server.llm.runtime import resolve_system_llm_config
+
+    key = str(resolve_system_llm_config().api_key or "").strip()
+    if not key or "请替换" in key:
+        return redirect(url_for("app2c.onboarding"))
     return redirect(url_for("app2c.home"))
 
 

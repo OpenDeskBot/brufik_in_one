@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>配置大模型 · BRUFIK CONSOLE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme_2c.css') }}?v=20260707-onboarding" />
+  <script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+  <style>
+    .ob-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px 20px;background:var(--bg);
+      background-image:linear-gradient(var(--panel2) 1px,transparent 1px),linear-gradient(90deg,var(--panel2) 1px,transparent 1px);
+      background-size:26px 26px}
+    .ob-card{width:100%;max-width:560px;background:var(--panel);border:var(--bw) solid var(--line);
+      border-radius:var(--rl);box-shadow:var(--shadow);padding:26px 28px 24px}
+    .ob-brand{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+    .ob-brand .mark{width:32px;height:32px;background:var(--accent);border:var(--bw) solid var(--line);border-radius:var(--rs);
+      display:flex;align-items:center;justify-content:center;color:var(--accent-ink);font-weight:700;font-size:16px;box-shadow:var(--shadow-sm)}
+    .ob-brand .name{font-family:var(--mono);font-size:13px;letter-spacing:.1em;font-weight:700}
+    .ob-brand .sub{font-family:var(--mono);font-size:13px;letter-spacing:.1em;color:var(--faint)}
+    .ob-steps{display:flex;gap:8px;margin-bottom:22px}
+    .ob-steps .dot{flex:1;height:5px;border-radius:99px;background:var(--panel2);border:1px solid var(--line)}
+    .ob-steps .dot.on{background:var(--accent)}
+    .ob-card h1{font-size:24px;margin:0 0 8px;font-weight:700;letter-spacing:-.02em}
+    .ob-card .lead{margin:0 0 18px;color:var(--dim);font-size:14px;line-height:1.6}
+    .ob-note{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin:0 0 16px}
+    .ob-note ol{margin:0;padding-left:18px}
+    .ob-note li{font-size:13px;color:var(--ink);line-height:1.9}
+    .ob-note code{font-family:var(--mono);font-size:12px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+    .ob-note a{color:var(--accent);font-weight:700;text-decoration:none;border-bottom:1.5px solid var(--accent)}
+    .ob-field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+    .ob-field label{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--faint);text-transform:uppercase}
+    .ob-field .hint{font-size:11px;color:var(--faint)}
+    .ob-card .tinput{width:100%;box-sizing:border-box}
+    .ob-adv-toggle{background:none;border:none;color:var(--dim);font-family:var(--mono);font-size:11px;cursor:pointer;padding:0 0 12px;text-decoration:underline}
+    .ob-result{border:var(--bw) solid var(--line);border-radius:var(--r);padding:12px 14px;margin:2px 0 16px;font-size:13px;box-shadow:var(--shadow-sm)}
+    .ob-result.ok{background:var(--panel2)}
+    .ob-result.err{background:var(--accent);color:var(--accent-ink)}
+    .ob-testing{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:13px;margin:2px 0 16px}
+    .ob-spin{width:16px;height:16px;border:2.5px solid var(--panel2);border-top-color:var(--accent);border-radius:50%;animation:obspin .8s linear infinite}
+    @keyframes obspin{to{transform:rotate(360deg)}}
+    .ob-actions{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:20px}
+    .ob-actions .grow{flex:1}
+    .ob-skip{background:none;border:none;color:var(--faint);font-size:12px;cursor:pointer;text-decoration:underline}
+    .ob-done{text-align:center;padding:14px 0 6px}
+    .ob-done .big{font-size:40px;line-height:1;margin-bottom:12px}
+  </style>
+</head>
+<body>
+<div class="ob-wrap">
+  <div class="ob-card" id="ob">
+    <div class="ob-brand"><span class="mark">歪</span><span class="name">BRUFIK</span><span class="sub">SETUP</span></div>
+    <div class="ob-steps">
+      <span class="dot" :class="{on: step>=1}"></span>
+      <span class="dot" :class="{on: step>=2}"></span>
+      <span class="dot" :class="{on: step>=3}"></span>
+    </div>
+
+    <!-- Step 1: why -->
+    <div v-if="step===1">
+      <h1>先配置大模型</h1>
+      <p class="lead">小歪的 <b>AI 表情设计</b> 和 <b>对话</b> 都由大模型驱动。配置一次火山方舟（Ark）的密钥，之后所有功能就能用了。整个过程大约 1 分钟。</p>
+      <div class="ob-actions">
+        <button class="ob-skip" type="button" @click="skip">稍后再说</button>
+        <button class="btn primary" type="button" @click="step=2">开始配置</button>
+      </div>
+    </div>
+
+    <!-- Step 2: get Ark key -->
+    <div v-if="step===2">
+      <h1>获取火山方舟密钥</h1>
+      <p class="lead">只需在火山方舟控制台拿到一个 <b>API Key</b>，再选一个<b>模型名称</b>即可 —— 无需创建推理接入点。</p>
+      <div class="ob-note">
+        <ol>
+          <li>开通并创建 <b>API Key</b>（即 <code>ARK_API_KEY</code>）。</li>
+          <li>选一个模型名称直接使用，例如 <code>doubao-seed-1-6</code>、<code>doubao-1.5-pro-32k</code>。</li>
+          <li>控制台入口：<a href="https://console.volcengine.com/ark" target="_blank" rel="noopener">console.volcengine.com/ark ↗</a></li>
+        </ol>
+      </div>
+      <p class="lead" style="font-size:13px">已经有 API Key？直接进入下一步填写即可。</p>
+      <div class="ob-actions">
+        <button class="btn ghost" type="button" @click="step=1">上一步</button>
+        <button class="btn primary" type="button" @click="step=3">我已获取，去填写</button>
+      </div>
+    </div>
+
+    <!-- Step 3: fill + test -->
+    <div v-if="step===3">
+      <h1>填写并测试</h1>
+      <p class="lead">填入 API Key 和模型名称，点「测试连接」确认可用后保存。</p>
+      <div class="ob-field">
+        <label>模型名称</label>
+        <input class="tinput" v-model="form.model_name" placeholder="例如 doubao-seed-1-6">
+        <span class="hint">直接填火山方舟支持的模型名，无需创建推理接入点</span>
+      </div>
+      <div class="ob-field">
+        <label>ARK_API_KEY</label>
+        <input class="tinput" v-model="form.api_key" type="password" placeholder="粘贴你的火山方舟 API Key">
+      </div>
+      <button class="ob-adv-toggle" type="button" @click="advOpen=!advOpen">[[ advOpen ? '收起高级选项' : '高级选项（协议 / Base URL）' ]]</button>
+      <div v-show="advOpen">
+        <div class="ob-field">
+          <label>协议</label>
+          <select class="tinput" v-model="form.protocol">
+            <option v-for="p in protocols" :key="p" :value="p">[[ p ]]</option>
+          </select>
+        </div>
+        <div class="ob-field">
+          <label>Base URL（Ark 可留空）</label>
+          <input class="tinput" v-model="form.base_url" placeholder="留空使用火山方舟默认地址">
+        </div>
+      </div>
+
+      <div class="ob-testing" v-if="testing"><span class="ob-spin"></span><span>正在连接大模型，请稍候…</span></div>
+      <div class="ob-result" :class="testResult.ok ? 'ok' : 'err'" v-if="testResult && !testing">
+        <b v-if="testResult.ok">连接成功 · [[ testResult.meta && (testResult.meta.display_name || testResult.meta.model) ]]</b>
+        <b v-else>连接失败：[[ testResult.error ]]</b>
+        <div v-if="testResult.ok && testResult.reply" style="margin-top:6px;color:var(--dim)">[[ testResult.reply ]]</div>
+      </div>
+
+      <div class="ob-actions">
+        <button class="btn ghost" type="button" @click="step=2">上一步</button>
+        <div class="grow"></div>
+        <button class="btn ghost" type="button" @click="test" :disabled="testing || !canSubmit">测试连接</button>
+        <button class="btn primary" type="button" @click="save" :disabled="saving || !canSubmit">[[ saving ? '保存中…' : '保存并完成' ]]</button>
+      </div>
+      <p class="lead" v-if="msg" style="margin-top:12px;color:var(--accent)">[[ msg ]]</p>
+    </div>
+
+    <!-- Step 4: done -->
+    <div v-if="step===4">
+      <div class="ob-done">
+        <div class="big">✅</div>
+        <h1>配置完成</h1>
+        <p class="lead">大模型已就绪，现在可以去捏表情、让小歪聊天了。</p>
+      </div>
+      <div class="ob-actions">
+        <div class="grow"></div>
+        <a class="btn primary" href="{{ url_for('app2c.home') }}">进入控制台</a>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const { createApp } = Vue;
+createApp({
+  delimiters:['[[',']]'],
+  data(){ return {
+    step:1, advOpen:false, testing:false, saving:false, testResult:null, msg:'',
+    protocols:['ark','openai'],
+    form:{ model_name:'', api_key:'', protocol:'ark', base_url:'' },
+  }; },
+  computed:{
+    canSubmit(){ return this.form.model_name.trim() && this.form.api_key.trim(); },
+  },
+  methods:{
+    async api(url, body){
+      const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      const d = await r.json().catch(()=>({ok:false,error:'响应解析失败'}));
+      if(!r.ok && d.ok===undefined) d.ok=false;
+      return d;
+    },
+    async test(){
+      this.msg=''; this.testResult=null; this.testing=true;
+      try{ this.testResult = await this.api('/api/setup/llm/test', this.form); }
+      catch(e){ this.testResult = {ok:false, error:(e&&e.message)||'测试失败'}; }
+      finally{ this.testing=false; }
+    },
+    async save(){
+      this.msg=''; this.saving=true;
+      try{
+        const d = await this.api('/api/setup/llm', this.form);
+        if(d.ok){ this.step=4; }
+        else { this.msg = d.error || '保存失败'; }
+      }catch(e){ this.msg = (e&&e.message)||'保存失败'; }
+      finally{ this.saving=false; }
+    },
+    skip(){ window.location.href='{{ url_for("app2c.home") }}'; },
+  },
+}).mount('#ob');
+</script>
+</body>
+</html>
