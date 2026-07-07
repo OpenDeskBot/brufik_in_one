@@ -10,17 +10,17 @@ from typing import Any
 
 from deskbot_server.tts.env_store import read_env_file, update_env_keys
 
-# resolve_system_llm_config 读取的通用键（LLM_* 优先于各家专用键），
-# 统一写这几个即可覆盖任意协议（含 Ark）。
+# 密钥统一写 ARK_API_KEY：图片(ark_face_svg)与文本(resolve_system_llm_config)都会读它，
+# 且写了 ARK_API_KEY 后协议会自动推断为 ark，无需用户再选。
 LLM_ENV_KEYS = (
-    "LLM_API_KEY",
+    "ARK_API_KEY",
     "LLM_PROTOCOL",
     "LLM_MODEL",
     "LLM_BASE_URL",
 )
 
 _ENV_KEY_BY_FIELD = {
-    "api_key": "LLM_API_KEY",
+    "api_key": "ARK_API_KEY",
     "protocol": "LLM_PROTOCOL",
     "model_name": "LLM_MODEL",
     "base_url": "LLM_BASE_URL",
@@ -42,7 +42,7 @@ def save_llm_env(payload: dict[str, Any]) -> None:
         if field not in payload:
             continue
         val = str(payload.get(field) or "").strip()
-        if env_key == "LLM_API_KEY" and _looks_masked(val):
+        if env_key == "ARK_API_KEY" and _looks_masked(val):
             continue  # 保留已保存的 Key
         updates[env_key] = val
     if updates:

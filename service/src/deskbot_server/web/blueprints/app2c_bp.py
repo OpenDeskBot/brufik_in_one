@@ -102,6 +102,10 @@ def onboarding():
     return render_template("app2c/onboarding.html")
 
 
+# 引导只让用户填 API Key；文本类功能默认路由到这个火山方舟模型（与图片生成同款），用户可切换。
+DEFAULT_TEXT_MODEL = "doubao-seed-2-1-pro-260628"
+
+
 def _system_llm_payload() -> dict:
     sys = resolve_system_llm_config()
     api_key_set = _llm_api_key_set(sys.api_key)
@@ -113,6 +117,7 @@ def _system_llm_payload() -> dict:
             "base_url": sys.api_base or "",
             "api_key_set": api_key_set,
         },
+        "default_model": DEFAULT_TEXT_MODEL,
         "protocols": list(SUPPORTED_PROTOCOLS),
         "needs_config": not api_key_set,
     }
@@ -128,10 +133,11 @@ def setup_llm_get():
 @login_required
 def setup_llm_post():
     payload = request.get_json(silent=True) or {}
-    model_name = str(payload.get("model_name") or "").strip()
+    api_key = str(payload.get("api_key") or "").strip()
+    model_name = str(payload.get("model_name") or "").strip() or DEFAULT_TEXT_MODEL
     protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
-    if not model_name:
-        return jsonify({"ok": False, "error": "请填写模型名称"}), 400
+    if not api_key or "*" in api_key or "•" in api_key:
+        return jsonify({"ok": False, "error": "请填写火山方舟 API Key"}), 400
     if protocol not in SUPPORTED_PROTOCOLS:
         return jsonify({"ok": False, "error": f"不支持的协议: {protocol}"}), 400
     save_llm_env(
@@ -153,7 +159,7 @@ def setup_llm_post():
 def setup_llm_test():
     payload = request.get_json(silent=True) or {}
     current = resolve_system_llm_config()
-    model_name = str(payload.get("model_name") or "").strip() or current.model
+    model_name = str(payload.get("model_name") or "").strip() or DEFAULT_TEXT_MODEL
     protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
     # base_url 留空时交给协议默认解析（ark→火山方舟地址），不要沿用旧的系统默认地址
     base_url = str(payload.get("base_url") or "").strip()

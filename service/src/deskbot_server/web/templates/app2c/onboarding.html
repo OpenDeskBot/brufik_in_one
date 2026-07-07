@@ -61,7 +61,7 @@
     <!-- Step 1: why -->
     <div v-if="step===1">
       <h1>先配置大模型</h1>
-      <p class="lead">小歪的 <b>AI 表情设计</b> 和 <b>对话</b> 都由大模型驱动。配置一次火山方舟（Ark）的密钥，之后所有功能就能用了。整个过程大约 1 分钟。</p>
+      <p class="lead">小歪的 <b>AI 表情设计</b> 和 <b>对话</b> 都由大模型驱动。你只需填一个火山方舟 API Key，用到哪个模型我们会自动帮你路由好。<br><b>🔒 密钥只保存在你本机，不会上传云端。</b></p>
       <div class="ob-actions">
         <button class="ob-skip" type="button" @click="skip">稍后再说</button>
         <button class="btn primary" type="button" @click="step=2">开始配置</button>
@@ -70,16 +70,16 @@
 
     <!-- Step 2: get Ark key -->
     <div v-if="step===2">
-      <h1>获取火山方舟密钥</h1>
-      <p class="lead">只需在火山方舟控制台拿到一个 <b>API Key</b>，再选一个<b>模型名称</b>即可 —— 无需创建推理接入点。</p>
+      <h1>获取火山方舟 API Key</h1>
+      <p class="lead">你只需要一个 <b>API Key</b> —— 用到哪个模型我们会自动帮你选好（可切换），无需创建推理接入点。</p>
       <div class="ob-note">
         <ol>
-          <li>开通并创建 <b>API Key</b>（即 <code>ARK_API_KEY</code>）。</li>
-          <li>选一个模型名称直接使用，例如 <code>doubao-seed-1-6</code>、<code>doubao-1.5-pro-32k</code>。</li>
+          <li>打开火山方舟控制台，开通并创建 <b>API Key</b>（即 <code>ARK_API_KEY</code>）。</li>
+          <li>在控制台「开通管理」里开通模型 <code>doubao-seed-2-1-pro</code>（首次使用需开通，对话/表情/图片都用它）。</li>
           <li>控制台入口：<a href="https://console.volcengine.com/ark" target="_blank" rel="noopener">console.volcengine.com/ark ↗</a></li>
         </ol>
       </div>
-      <p class="lead" style="font-size:13px">已经有 API Key？直接进入下一步填写即可。</p>
+      <p class="lead" style="font-size:13px">已经有 API Key？直接进入下一步粘贴即可。</p>
       <div class="ob-actions">
         <button class="btn ghost" type="button" @click="step=1">上一步</button>
         <button class="btn primary" type="button" @click="step=3">我已获取，去填写</button>
@@ -88,19 +88,20 @@
 
     <!-- Step 3: fill + test -->
     <div v-if="step===3">
-      <h1>填写并测试</h1>
-      <p class="lead">填入 API Key 和模型名称，点「测试连接」确认可用后保存。</p>
+      <h1>粘贴 API Key</h1>
+      <p class="lead">填入火山方舟 API Key，点「测试连接」确认可用后保存即可。模型已自动选好，无需填写。</p>
       <div class="ob-field">
-        <label>模型名称</label>
-        <input class="tinput" v-model="form.model_name" placeholder="例如 doubao-seed-1-6">
-        <span class="hint">直接填火山方舟支持的模型名，无需创建推理接入点</span>
+        <label>火山方舟 API Key</label>
+        <input class="tinput" v-model="form.api_key" type="password" placeholder="粘贴你的 ARK_API_KEY">
+        <span class="hint">🔒 只保存在你本机（服务端 .env），不会上传云端</span>
       </div>
-      <div class="ob-field">
-        <label>ARK_API_KEY</label>
-        <input class="tinput" v-model="form.api_key" type="password" placeholder="粘贴你的火山方舟 API Key">
-      </div>
-      <button class="ob-adv-toggle" type="button" @click="advOpen=!advOpen">[[ advOpen ? '收起高级选项' : '高级选项（协议 / Base URL）' ]]</button>
+      <button class="ob-adv-toggle" type="button" @click="advOpen=!advOpen">[[ advOpen ? '收起高级' : '高级：切换模型 / 协议 / Base URL' ]]</button>
       <div v-show="advOpen">
+        <div class="ob-field">
+          <label>文本模型</label>
+          <input class="tinput" v-model="form.model_name" placeholder="doubao-seed-2-1-pro-260628">
+          <span class="hint">默认与图片生成同款；也可换成你已开通的其它模型</span>
+        </div>
         <div class="ob-field">
           <label>协议</label>
           <select class="tinput" v-model="form.protocol">
@@ -150,10 +151,10 @@ createApp({
   data(){ return {
     step:1, advOpen:false, testing:false, saving:false, testResult:null, msg:'',
     protocols:['ark','openai'],
-    form:{ model_name:'', api_key:'', protocol:'ark', base_url:'' },
+    form:{ model_name:'doubao-seed-2-1-pro-260628', api_key:'', protocol:'ark', base_url:'' },
   }; },
   computed:{
-    canSubmit(){ return this.form.model_name.trim() && this.form.api_key.trim(); },
+    canSubmit(){ return !!this.form.api_key.trim(); },
   },
   methods:{
     async api(url, body){
