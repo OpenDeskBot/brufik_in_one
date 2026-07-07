@@ -604,3 +604,23 @@ def test_2c_advanced_usage_includes_daily_breakdown(temp_db):
     html = client.get("/advanced").get_data(as_text=True)
     assert "近 14 日设备明细" in html
     assert "近 14 日 API Key 明细" in html
+
+
+def test_old_app_pages_removed_but_apis_kept(temp_db):
+    from deskbot_server.auth.device_service import bind_device
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    user = create_user("retire-app@example.com", "password1234")
+    bind_device(user.id, "deskbot_retire")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "retire-app@example.com", "password": "password1234"})
+    client.post("/app/api/devices/select", json={"device_id": "deskbot_retire"})
+
+    for page in ["/app/usage", "/app/settings", "/app/llm-models", "/app/scheduled-tasks", "/app/face-profiles", "/app/configure", "/app/memories", "/app/devices"]:
+        assert client.get(page).status_code == 404, page
+
+    assert client.get("/app/api/scheduled-tasks").status_code == 200
+    assert client.get("/app/api/llm-models?device_id=deskbot_retire").status_code == 200
+    assert client.get("/app/api/tts/speakers").status_code == 200

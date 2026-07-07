@@ -19,7 +19,7 @@ def require_developer(view):
             if request.path.startswith("/api/") or request.accept_mimetypes.best == "application/json":
                 return jsonify({"ok": False, "error": "需要开发者权限"}), 403
             flash("需要开发者权限", "error")
-            return redirect(url_for("app.dashboard"))
+            return redirect(url_for("app2c.home"))
         return view(*args, **kwargs)
 
     return wrapped
