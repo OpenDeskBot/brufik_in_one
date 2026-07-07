@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import mimetypes
+
 from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 
@@ -287,6 +289,25 @@ def _owned_device_or_error():
     return device_id, None
 
 
+def _image_mime_from_upload(filename: str, content_type: str, image_bytes: bytes) -> str:
+    mime_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if mime_type.startswith("image/"):
+        return mime_type
+    guessed = mimetypes.guess_type(filename or "")[0] or ""
+    guessed = guessed.split(";", 1)[0].strip().lower()
+    if guessed.startswith("image/"):
+        return guessed
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    if image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    return mime_type
+
+
 @bp.get("/api/emotion_expr_map")
 @login_required
 def emotion_expr_map_get():
@@ -377,3 +398,28 @@ def face_mouth_by_phoneme_post():
     except FileNotFoundError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
     return jsonify({"ok": True, "device_id": device_id, "mouth_by_phoneme_groups": groups})
+
+
+@bp.post("/api/face_design/generate-from-image")
+@login_required
+def face_design_generate_from_image_post():
+    device_id, err = _owned_device_or_error()
+    if err:
+        return err
+    upload = request.files.get("image") or request.files.get("file")
+    if upload is None or not upload.filename:
+        return jsonify({"ok": False, "error": "请先上传图片"}), 400
+    image_bytes = upload.read()
+    prompt = str(request.form.get("prompt") or "").strip()
+    mime_type = _image_mime_from_upload(upload.filename, upload.mimetype or upload.content_type or "", image_bytes)
+    try:
+        from deskbot_server.ark_face_svg import generate_face_svg_from_image
+
+        result = generate_face_svg_from_image(image_bytes, mime_type, prompt=prompt)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
+    return jsonify({"device_id": device_id, **result})

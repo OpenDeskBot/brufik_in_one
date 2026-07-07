@@ -319,6 +319,12 @@ def test_2c_expr_page_exposes_professional_design_tab(temp_db):
     assert "AI 辅助生成" in html
     assert "generateProfessionalDesign" in html
     assert "/api/face_design/generate" in html
+    assert "exprTab==='image'" in html
+    assert "图片生成 / ARK SEED" in html
+    assert "图片表情包生成" in html
+    assert "generateImageExpression" in html
+    assert "/api/face_design/generate-from-image" in html
+    assert html.index("图片生成 / ARK SEED") < html.index("专业设计 / VISEMESYNC")
     assert "preserveMap:true" in html
     assert "/api/face_mouth_by_phoneme" in html
 
