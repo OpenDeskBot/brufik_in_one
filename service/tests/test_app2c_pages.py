@@ -563,3 +563,22 @@ def test_2c_expr_ai_generation_reminds_llm_config_required(temp_db):
     assert "loadLlmConfigStatus" in html
     assert "llmNeedsConfig" in html
     assert "/advanced" in html
+
+
+def test_2c_advanced_llm_form_has_test_connection(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("llm-test2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "llm-test2c@example.com", "password": "password1234"})
+
+    resp = client.get("/advanced")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "测试连接" in html
+    assert "testLlmModel" in html
+    assert "/app/api/llm-models/test" in html
+    assert 'v-model="llmForm.test_prompt"' in html

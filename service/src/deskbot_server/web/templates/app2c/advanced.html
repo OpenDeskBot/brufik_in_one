@@ -120,11 +120,17 @@
         </select>
         <input class="tinput" v-model="llmForm.base_url" placeholder="Base URL，Ark 可留空">
         <input class="tinput" v-model="llmForm.api_key" type="password" :placeholder="editingModelId ? 'API Key 留空则不修改' : 'ARK_API_KEY'">
+        <input class="tinput" v-model="llmForm.test_prompt" placeholder="测试 Prompt，例如 你好，请用一句话介绍你自己。">
         <div class="btngroup">
           <button type="submit" class="btn primary">[[ editingModelId ? '保存模型' : '添加模型' ]]</button>
+          <button type="button" class="btn ghost" @click="testLlmModel" :disabled="llmTesting">[[ llmTesting ? '测试中…' : '测试连接' ]]</button>
           <button type="button" class="btn ghost" v-if="editingModelId" @click="resetLlmForm">取消编辑</button>
         </div>
       </form>
+      <div class="debug-output" v-if="llmTestResult">
+        <b>[[ llmTestResult.ok ? (llmTestResult.reply || '连接成功') : (llmTestResult.error || '测试失败') ]]</b>
+        <small v-if="llmTestResult.meta">[[ llmTestResult.meta.display_name || llmTestResult.meta.model ]]</small>
+      </div>
 
       <div class="adv-table-wrap">
         <table class="adv-table">
@@ -300,8 +306,8 @@ createApp({
     usage:{today:{}, fourteen_day:{}, today_by_device:[]},
     apiKeys:[], newKeyName:'', rawKey:'',
     llm:{protocols:['ark','openai'], models:[], active_model_id:null, active:null, system_default:null, error:''},
-    editingModelId:'',
-    llmForm:{name:'', model_name:'', protocol:'ark', base_url:'', api_key:''},
+    editingModelId:'', llmTesting:false, llmTestResult:null,
+    llmForm:{name:'', model_name:'', protocol:'ark', base_url:'', api_key:'', test_prompt:'你好，请用一句话介绍你自己。'},
     debug:{
       health:null, token:'', tokenExpires:0,
       systemPrompt:'', llmText:'你好，做一个简短自检。', llmResult:null,
@@ -391,8 +397,8 @@ createApp({
       }catch(e){ this.msg=e.message||'切换失败'; }
     },
     resetLlmForm(){
-      this.editingModelId='';
-      this.llmForm={name:'',model_name:'',protocol:(this.llm.protocols&&this.llm.protocols[0])||'ark',base_url:'',api_key:''};
+      this.editingModelId=''; this.llmTestResult=null;
+      this.llmForm={name:'',model_name:'',protocol:(this.llm.protocols&&this.llm.protocols[0])||'ark',base_url:'',api_key:'',test_prompt:'你好，请用一句话介绍你自己。'};
     },
     editLlmModel(m){
       this.editingModelId=m.id;
@@ -408,6 +414,17 @@ createApp({
         await this.api(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         this.resetLlmForm(); await this.load(); this.active='llm'; this.msg='模型已保存';
       }catch(e){ this.msg=e.message||'保存失败'; }
+    },
+    async testLlmModel(){
+      if(!this.currentDeviceId){ this.msg='请先选择设备'; return; }
+      this.llmTesting=true; this.llmTestResult=null;
+      const payload=Object.assign({}, this.llmForm, {prompt:this.llmForm.test_prompt});
+      if(this.editingModelId){ payload.model_id=this.editingModelId; }
+      try{
+        this.llmTestResult=await this.api('/app/api/llm-models/test?device_id='+encodeURIComponent(this.currentDeviceId),
+          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      }catch(e){ this.llmTestResult={ok:false,error:e.message||'测试失败'}; }
+      finally{ this.llmTesting=false; }
     },
     async selectLlmModel(m){
       try{
