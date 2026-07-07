@@ -1,4 +1,5 @@
 #include "asr_chat_client.h"
+#include "camera_uplink_client.h"
 
 #include <ArduinoJson.h>
 #include <WiFi.h>
@@ -154,7 +155,7 @@ static bool pb_doc_is_servo_only_gesture(const JsonDocument& doc) {
 extern AsrChatClient asrChatClient;
 
 bool deskbot_vision_uplink_paused(void) {
-  return asrChatClient.isCameraUplinkPaused();
+  return cameraUplinkClient.isCapturePaused();
 }
 
 namespace {
@@ -1151,6 +1152,7 @@ void AsrChatClient::forceWsReconnect(const char* why) {
   ready_ = false;
   ws_needs_reconnect_ = true;
   ws_send_fail_streak_ = 0;
+  ws_uplink_discard_tx_queue();
   log_warn("[ASR_CHAT] force disconnect (%s)", why ? why : "?");
   logAsrChatNetContext("force_disconnect");
   ws_.disconnect();
@@ -1172,7 +1174,6 @@ void AsrChatClient::onLinkUp() {
   ws_needs_reconnect_ = true;
   ws_send_fail_streak_ = 0;
   connect_fail_streak_ = 0;
-  camera_backoff_until_ms_ = 0;
 }
 
 bool AsrChatClient::wsCanSend() {
@@ -1215,6 +1216,9 @@ void AsrChatClient::maintainWsConnection() {
   if (WiFi.status() != WL_CONNECTED) {
     return;
   }
+  if (connect_in_progress_) {
+    return;
+  }
   if (wsCanSend()) {
     return;
   }
@@ -1252,6 +1256,15 @@ void AsrChatClient::maintainWsConnection() {
 }
 
 bool AsrChatClient::connect() {
+  if (connect_in_progress_) {
+    return wsCanSend();
+  }
+  struct ConnectGuard {
+    AsrChatClient& self;
+    explicit ConnectGuard(AsrChatClient& s) : self(s) { self.connect_in_progress_ = true; }
+    ~ConnectGuard() { self.connect_in_progress_ = false; }
+  } connect_guard(*this);
+
   if (WiFi.status() != WL_CONNECTED) {
     return false;
   }
@@ -1327,12 +1340,25 @@ bool AsrChatClient::connect() {
            kHost, (unsigned)kPort, path, get_device_id());
   logAsrChatNetContext("connecting");
   deskbot_uplink_set_ws_ready(false);
+  /* 连接阶段允许库每 500ms 重试 TCP+WS；成功后再禁用自动重连（防重连风暴）。 */
+  ws_.setReconnectInterval(500);
   ws_.begin(kHost, kPort, path);
-  /* 连接阶段：每 400ms 重试一次 TCP+WS 握手（10s 窗口内约 25 次）。
-   * 连接成功后设为极大值，禁用库内自动重连（由 maintainWsConnection 管理）。 */
-  ws_.setReconnectInterval(400);
 
-  if (!ws_uplink_wait_connected(&ws_, this, (unsigned long)DESKBOT_WS_CONNECT_TIMEOUT_MS)) {
+  {
+    const unsigned long connect_deadline = millis() + (unsigned long)DESKBOT_WS_CONNECT_TIMEOUT_MS;
+    while ((long)(millis() - connect_deadline) < 0) {
+      handle_cmd();
+      ws_uplink_pump();
+      ws_uplink_drain_rx(this);
+      if (ws_.isConnected()) {
+        break;
+      }
+      taskYIELD();
+    }
+  }
+
+  if (!ws_.isConnected()) {
+    ws_.setReconnectInterval(7UL * 24UL * 3600UL * 1000UL);
     log_error("[ASR_CHAT] connect timeout ws://%s:%u (check WiFi route to server, API key, firewall)",
               kHost, (unsigned)kPort);
     logAsrChatNetContext("connect_timeout");
@@ -1342,7 +1368,6 @@ bool AsrChatClient::connect() {
     connect_fail_streak_++;
     return false;
   }
-  ws_.setReconnectInterval(7 * 24 * 3600 * 1000UL);
 
   unsigned long start = millis();
   while (!ready_ && millis() - start < 3000) {
@@ -1357,6 +1382,7 @@ bool AsrChatClient::connect() {
   } else {
     log_warn("[ASR_CHAT] ready received ws://%s:%u", kHost, (unsigned)kPort);
   }
+  ws_.setReconnectInterval(7UL * 24UL * 3600UL * 1000UL);
   ws_needs_reconnect_ = false;
   ws_send_fail_streak_ = 0;
   connect_fail_streak_ = 0;
@@ -1459,24 +1485,20 @@ void AsrChatClient::serviceLoop(bool allow_camera) {
   if (!pb_active_) {
     updateAttentionDisplay();
   }
-  if (allow_camera && canUploadCamera()) {
-    tryUploadCameraFrameIfDue();
-  }
   shouldSuppressMicUplink();
   maintainWsConnection();
 }
 
 void AsrChatClient::loop() {
-  serviceLoop(/*allow_camera=*/true);
+  serviceLoop(/*allow_camera=*/false);
 }
 
 bool AsrChatClient::isVisionUplinkPaused() const {
-  /* 采集不因 TTS/尾音抑制停；上传节奏由 tryUploadCameraFrameIfDue 控制。 */
-  return camera_send_in_progress_;
+  return cameraUplinkClient.isCapturePaused();
 }
 
 bool AsrChatClient::isCameraUplinkPaused() const {
-  return isSpeaking() || camera_send_in_progress_;
+  return cameraUplinkClient.isCapturePaused();
 }
 
 bool AsrChatClient::isSpeaking() const {
@@ -1551,19 +1573,6 @@ bool AsrChatClient::sendJson(const String& msg, bool critical) {
   return sendJson(msg.c_str(), critical);
 }
 
-bool AsrChatClient::tryUploadCameraFrameIfDue() {
-  const unsigned long now = millis();
-  const unsigned long interval = (unsigned long)DESKBOT_CAMERA_UPLINK_INTERVAL_MS;
-  if (last_camera_uplink_ms_ != 0 && (now - last_camera_uplink_ms_) < interval) {
-    return false;
-  }
-  if (!tryUploadCameraFrame()) {
-    return false;
-  }
-  last_camera_uplink_ms_ = now;
-  return true;
-}
-
 bool AsrChatClient::shouldSuppressMicUplink() {
   return !deskbot_uplink_capture_allowed();
 }
@@ -1575,78 +1584,9 @@ void AsrChatClient::engageVoiceUplink() {
   voice_uplink_active_ = true;
 }
 
-bool AsrChatClient::canUploadCamera() {
-  if (!deskbot_camera_uplink_enabled()) {
-    return false;
-  }
-  if (!wsCanSend()) {
-    return false;
-  }
-  if (camera_send_in_progress_) {
-    return false;
-  }
-  if (camera_backoff_until_ms_ != 0 && millis() < camera_backoff_until_ms_) {
-    return false;
-  }
-  return true;
-}
-
-bool AsrChatClient::tryUploadCameraFrame() {
-  if (!canUploadCamera()) {
-    return false;
-  }
-  const uint8_t* jpeg_buf = nullptr;
-  size_t jpeg_len = 0;
-  uint32_t jpeg_seq = 0;
-  if (!camera_ws_take_frame(&jpeg_buf, &jpeg_len, &jpeg_seq)) {
-    return false;
-  }
-  static uint32_t s_cam_last_log_seq = 0;
-  if (jpeg_seq <= 1u || jpeg_seq % 30u == 0u || jpeg_seq != s_cam_last_log_seq) {
-    s_cam_last_log_seq = jpeg_seq;
-    log_warn("[CAM] camera_frame seq=%u jpeg=%uB (%.1f KB)",
-             (unsigned)jpeg_seq, (unsigned)jpeg_len, jpeg_len / 1024.0f);
-  }
-  char cam_hdr[128];
-  snprintf(cam_hdr, sizeof(cam_hdr),
-           "{\"type\":\"camera_frame\",\"codec\":\"jpeg\",\"next_bin_len\":%u,\"seq\":%u}",
-           (unsigned)jpeg_len, (unsigned)jpeg_seq);
-  camera_send_in_progress_ = true;
-  const unsigned long send_start = millis();
-  WsSendProfile cam_profile{};
-  cam_profile.max_wall_ms = 350;
-  cam_profile.max_attempts = 1;
-  bool stream_ok = true;
-  bool ok = ws_uplink_send(cam_hdr, jpeg_buf, jpeg_len, &cam_profile, &stream_ok);
-  const unsigned long send_ms = millis() - send_start;
-  if (send_ms > 300UL) {
-    log_warn("[CAM] camera_frame send slow ms=%lu ok=%d stream_ok=%d", (unsigned long)send_ms, (int)ok, (int)stream_ok);
-  }
-  if (!ok) {
-    camera_backoff_until_ms_ = millis() + 8000UL;
-    if (!stream_ok) {
-      /* JSON 已发出但 binary 未发完 → WebSocket 协议流已污染，必须立即重连。
-       * 若不重连，后续音频 JSON 会被服务端误读为 camera binary 数据，导致协议彻底混乱。 */
-      log_warn("[CAM] camera_frame stream corrupted, force reconnect");
-      noteWsSendFail("camera_frame_binary");
-    } else {
-      log_warn("[CAM] camera_frame send failed (drop frame, backoff 8s)");
-      /* JSON 未发出 / 未超出截止时间就失败：流仍完整，丢帧即可，不触发重连。 */
-    }
-  } else {
-    camera_backoff_until_ms_ = 0;
-    noteWsSendOk();
-  }
-  camera_send_in_progress_ = false;
-  camera_ws_release_frame();
-  return ok;
-}
-
 void AsrChatClient::discardPendingUplinkMedia() {
-  camera_ws_discard_pending();
   vad_gate_open_ = false;
   voice_uplink_active_ = false;
-  camera_send_in_progress_ = false;
   resetUplinkBatch();
 }
 
@@ -1704,7 +1644,12 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
 
   round_scope.phase("ws_connect");
   if (!connect()) {
-    return false;
+    maintainWsConnection();
+    if (!wsCanSend()) {
+      log_warn("[ASR_CHAT] round=%u skip voice (ws unavailable, camera continues)",
+               (unsigned)round_id_);
+      return true;
+    }
   }
 
   if (max_record_seconds == 0 || max_record_seconds > 60) {
@@ -1800,7 +1745,7 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       capture_was_allowed_ = false;
       handle_cmd();
       loopLite();
-      (void)tryUploadCameraFrameIfDue();
+      cameraUplinkClient.serviceLoop();
       round_scope.pump("listen");
       taskYIELD();
       continue;
@@ -1875,8 +1820,7 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       continue;
     }
     samples_sent += kFrameSamples20ms;
-    /* audio flush 完成后再试上传相机：此时 WS 发送缓冲刚释放，竞争最小。 */
-    (void)tryUploadCameraFrameIfDue();
+    cameraUplinkClient.serviceLoop();
     round_scope.pump("uplink");
     taskYIELD();
   }
@@ -1920,7 +1864,7 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       taskYIELD();
     }
   }
-  (void)tryUploadCameraFrameIfDue();
+  cameraUplinkClient.serviceLoop();
   log_warn("[ASR_CHAT] round=%u end", (unsigned)round_id_);
   return true;
 }

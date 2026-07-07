@@ -527,7 +527,8 @@ async def _dispatch_rom_flush(
     turn_task_holder: list,
     api_key_id: Optional[str] = None,
 ) -> None:
-    flushed = session.flush()
+    loop = asyncio.get_running_loop()
+    flushed = await loop.run_in_executor(None, session.flush)
     if flushed is None:
         logger.info("[/asr_chat] flush 无有效语音段 device_id=%s（Silero 已丢弃静音）", device_id)
         return
@@ -689,6 +690,11 @@ async def handle_asr_chat(
                             send_face_info_to_asr_chat=send_face_info_to_asr_chat,
                             camera_task_holder=camera_task_holder,
                             device_id=device_id,
+                        )
+                        logger.info(
+                            "[/asr_chat] camera_frame ok device_id=%s bytes=%d",
+                            device_id,
+                            len(payload),
                         )
                         continue
 
@@ -853,8 +859,61 @@ async def handle_asr_chat(
                     continue
 
                 if msg_type == "camera_frame":
+                    raw_b64 = data.get("data")
+                    if raw_b64:
+                        try:
+                            payload = base64.b64decode(raw_b64)
+                        except Exception:
+                            logger.warning(
+                                "[/asr_chat] camera_frame base64 解码失败 device_id=%s",
+                                device_id,
+                            )
+                            continue
+                        if device_id:
+                            from deskbot_server.device_camera_frame_store import (
+                                update_device_camera_frame,
+                            )
+
+                            update_device_camera_frame(
+                                device_id,
+                                payload,
+                                source="asr_chat",
+                            )
+                        if camera_pipe is None or camera_image_broker is None:
+                            logger.warning(
+                                "[/asr_chat] 收到 camera_frame 但未配置 camera 运行时"
+                            )
+                            continue
+                        if api_key_id:
+                            record_turn_usage(
+                                api_key_id, device_id=device_id, face_bytes=len(payload)
+                            )
+                        await _schedule_camera_jpeg(
+                            camera_pipe,
+                            payload,
+                            image_broker=camera_image_broker,
+                            dp_broker=dp_broker,
+                            asr_chat_hub=asr_chat_hub,
+                            send_face_info_to_asr_chat=send_face_info_to_asr_chat,
+                            camera_task_holder=camera_task_holder,
+                            device_id=device_id,
+                        )
+                        logger.info(
+                            "[/asr_chat] camera_frame ok device_id=%s bytes=%d enc=base64",
+                            device_id,
+                            len(payload),
+                        )
+                        continue
                     nbl = coerce_next_bin_len(data)
                     if nbl > 0:
+                        if pending is not None:
+                            logger.warning(
+                                "[/asr_chat] camera_frame 覆盖未完成的 pending "
+                                "device_id=%s old_len=%d new_len=%d",
+                                device_id,
+                                pending.length,
+                                nbl,
+                            )
                         pending = PendingUplinkBinary(
                             kind="camera_frame",
                             length=nbl,

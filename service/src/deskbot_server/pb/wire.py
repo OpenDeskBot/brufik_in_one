@@ -94,6 +94,7 @@ def build_pb_wire_pairs(
     device_id: Optional[str] = None,
     images: list[dict[str, Any]] | None = None,
     action: str = PB_ACTION_REPLACE,
+    leading_move_steps: int = 0,
 ) -> tuple[list[tuple[dict[str, Any], list[bytes]]], str, int, int]:
     """音素 TTS 分片 → pb wire (msg, binaries) 列表。"""
     face_bundle = resolve_pb_face_bundle(tts_cfg, device_id=device_id)
@@ -101,15 +102,34 @@ def build_pb_wire_pairs(
     anim_frames = expand_llm_anims(anims, device_id=device_id)
     parallel_anim: list[dict[str, Any] | None] | None = None
 
+    leading_n = max(0, int(leading_move_steps or 0))
+    if leading_n > len(move_steps):
+        leading_n = len(move_steps)
+
     if move_steps or anim_frames:
+        if leading_n > 0:
+            from deskbot_server.pb.servo_pcm import _silence_phoneme_seg
+
+            prefix_segs = [
+                _silence_phoneme_seg(
+                    max(40, int(move_steps[i].get("ms", 40))),
+                    sample_rate,
+                )
+                for i in range(leading_n)
+            ]
+            segs = prefix_segs + list(segs)
         segs, parallel_servo, parallel_anim = interleave_tts_segs_with_llm_plan(
             segs, move_steps, anim_frames, sample_rate
         )
+        if leading_n and parallel_anim is not None:
+            for i in range(min(leading_n, len(parallel_anim))):
+                parallel_anim[i] = None
         logger.info(
-            "[pb TX] LLM moves/anims 交错后 segments=%d（move_steps=%d anim_frames=%d）",
+            "[pb TX] LLM moves/anims 交错后 segments=%d（move_steps=%d anim_frames=%d leading=%d）",
             len(segs),
             len(move_steps),
             len(anim_frames),
+            leading_n,
         )
     else:
         segs, parallel_servo = interleave_tts_phoneme_segs_with_servo_plan(
@@ -142,18 +162,40 @@ def build_pb_wire_pairs(
             n_llm_servo,
         )
 
-    merged_rows, merged_pcm = merge_pb_subchunks(
-        anim_rows, pcm_list, sample_rate=sample_rate
-    )
+    if leading_n > 0 and leading_n < len(anim_rows):
+        lead_rows = anim_rows[:leading_n]
+        tail_rows = anim_rows[leading_n:]
+        lead_pcm = pcm_list[:leading_n]
+        tail_pcm = pcm_list[leading_n:]
+        merged_lead, merged_lead_pcm = merge_pb_subchunks(
+            lead_rows, lead_pcm, sample_rate=sample_rate
+        )
+        merged_tail, merged_tail_pcm = merge_pb_subchunks(
+            tail_rows, tail_pcm, sample_rate=sample_rate
+        )
+        merged_rows = merged_lead + merged_tail
+        merged_pcm = merged_lead_pcm + merged_tail_pcm
+        logger.info(
+            "[pb TX] 分片合并 leading/tail %d+%d → %d+%d（leading=%d，预热与口播分包）",
+            len(lead_rows),
+            len(tail_rows),
+            len(merged_lead),
+            len(merged_tail),
+            leading_n,
+        )
+    else:
+        merged_rows, merged_pcm = merge_pb_subchunks(
+            anim_rows, pcm_list, sample_rate=sample_rate
+        )
+        logger.info(
+            "[pb TX] 分片合并 %d → %d（单包 chunk_ms 上限 %d ms）",
+            len(anim_rows),
+            len(merged_rows),
+            PB_CHUNK_MS_MAX,
+        )
     apply_llm_display_to_rows(
         merged_rows,
         images=images,
-    )
-    logger.info(
-        "[pb TX] 分片合并 %d → %d（单包 chunk_ms 上限 %d ms）",
-        len(anim_rows),
-        len(merged_rows),
-        PB_CHUNK_MS_MAX,
     )
 
     pb_req = request_id or uuid.uuid4().hex[:16]

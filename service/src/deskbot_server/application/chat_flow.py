@@ -542,6 +542,7 @@ async def run_device_tts_only(
     scenes: Optional[list] = None,
     moves: Optional[list] = None,
     anims: Optional[list] = None,
+    leading_move_steps: int = 0,
 ) -> ChatTurnResult:
     """跳过 LLM，将给定文本走音素 TTS 并下发 pb；可选在同一条链锁内追加场景 pb 帧。"""
     reply_text = (text or "").strip()
@@ -566,6 +567,7 @@ async def run_device_tts_only(
         "raw": reply_text,
         "moves": list(moves or []),
         "anims": list(anims or []),
+        "leading_move_steps": max(0, int(leading_move_steps or 0)),
     }
     if not reply_text:
         result.status = "error"
@@ -594,6 +596,82 @@ async def run_device_tts_only(
         logger.exception("[device_tts] TTS 流程失败 device_id=%s", device_id)
         result.status = "error"
         result.error = f"tts: {tts_exc}"
+    return result
+
+
+async def run_device_playbook(
+    downlink: DownlinkPort,
+    chat: "ChatService",
+    playbook: dict,
+    *,
+    request_id: Optional[str] = None,
+    device_id: Optional[str] = None,
+) -> ChatTurnResult:
+    """场景编排：按阶段串行下发（舵机 → 口播前表情 → 口播+并行轨）。"""
+    from deskbot_server.scene_playbook_runner import playbook_to_phases
+
+    phases = playbook_to_phases(playbook, device_id=device_id)
+    if not phases:
+        result = ChatTurnResult()
+        result.status = "error"
+        result.error = "empty playbook"
+        return result
+
+    result = ChatTurnResult()
+    for pi, phase in enumerate(phases):
+        phase_req = f"{request_id}_p{pi}" if request_id and len(phases) > 1 else request_id
+        kind = str(phase.get("kind") or "speech")
+        if kind == "motion":
+            parsed = {
+                "reply": "",
+                "servo": [],
+                "scenes": [],
+                "json_ok": True,
+                "need_reply": True,
+                "raw": "",
+                "moves": list(phase.get("moves") or []),
+                "anims": list(phase.get("anims") or []),
+                "leading_move_steps": 0,
+            }
+            try:
+                await _run_pb_playback(
+                    downlink,
+                    chat,
+                    reply_text="",
+                    parsed=parsed,
+                    llm_scenes=[],
+                    request_id=phase_req,
+                    device_id=device_id,
+                    result=result,
+                    t_asr_start=result.t_llm_end or time.monotonic(),
+                    motion_only=True,
+                )
+            except Exception as exc:
+                logger.exception("[scene_playbook] motion phase failed device_id=%s", device_id)
+                result.status = "error"
+                result.error = f"motion phase: {exc}"
+                return result
+            continue
+
+        text = str(phase.get("text") or "").strip()
+        if not text:
+            text = "。"
+        turn = await run_device_tts_only(
+            downlink,
+            chat,
+            text,
+            request_id=phase_req,
+            device_id=device_id,
+            scenes=None,
+            moves=list(phase.get("moves") or []),
+            anims=list(phase.get("anims") or []),
+            leading_move_steps=int(phase.get("leading_move_steps") or 0),
+        )
+        if turn.error:
+            result.status = turn.status
+            result.error = turn.error
+            return result
+        result = turn
     return result
 
 
@@ -765,6 +843,9 @@ async def _run_pb_playback(
                 device_id=device_id,
                 images=list(parsed.get("images") or []) if chunk_is_first else None,
                 action=PB_ACTION_REPLACE if chunk_is_first else PB_ACTION_APPEND,
+                leading_move_steps=int(parsed.get("leading_move_steps") or 0)
+                if chunk_is_first
+                else 0,
             )
             total_pb += n_pb
 

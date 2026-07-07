@@ -31,6 +31,7 @@ from deskbot_server.servo_config_store import (
     load_servo_cfg_file,
     normalize_servo_document,
     save_servo_cfg_file,
+    servo_limits,
 )
 from deskbot_server.pb.scenes import (
     _pb_scene_entry_by_name,
@@ -409,12 +410,13 @@ def _build_http_request_handler(
                     400,
                     {"error": "invalid ym (use 0=absolute|1=relative)", "t": time.time()},
                 )
+            lim = servo_limits(device_id=dev)
             if xm == 0:
-                ix = int(round(max(0.0, min(180.0, dyaw))))
+                ix = int(round(max(float(lim["xMin"]), min(float(lim["xMax"]), dyaw))))
             else:
                 ix = int(round(max(-90.0, min(90.0, dyaw))))
             if ym == 0:
-                iy = int(round(max(0.0, min(180.0, dpitch))))
+                iy = int(round(max(float(lim["yMin"]), min(float(lim["yMax"]), dpitch))))
             else:
                 iy = int(round(max(-90.0, min(90.0, dpitch))))
             if xm not in (0, 1) or ym not in (0, 1):
@@ -822,6 +824,133 @@ def _build_http_request_handler(
                     "text": text,
                     "scene": scene_q or None,
                     "req": req_id,
+                    "t": time.time(),
+                },
+            )
+
+        if path_only == "/api/scene_playbook/run":
+            from deskbot_server.application.chat_flow import run_device_playbook
+            from deskbot_server.infrastructure.ws.downlink_adapter import WsDownlinkAdapter
+            from deskbot_server.scene_playbooks_store import (
+                find_playbook_by_name,
+                load_scene_playbooks_file,
+                normalize_playbook,
+            )
+
+            dev = ""
+            playbook_raw: object = None
+            if method == "POST":
+                try:
+                    raw_body = (getattr(request, "body", None) or b"").decode("utf-8")
+                    payload = json.loads(raw_body) if raw_body.strip() else {}
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return _json_resp(
+                        400,
+                        {"ok": False, "error": "invalid JSON body", "t": time.time()},
+                    )
+                if isinstance(payload, dict):
+                    dev = str(payload.get("device_id") or "").strip()
+                    if "playbook" in payload:
+                        playbook_raw = payload.get("playbook")
+                    elif payload.get("name"):
+                        rows = load_scene_playbooks_file(
+                            seed_if_missing=False, device_id=dev or None
+                        ) or []
+                        playbook_raw = find_playbook_by_name(rows, str(payload.get("name")))
+            else:
+                dev = (qargs.get("device_id") or "").strip()
+                name_q = (qargs.get("name") or "").strip()
+                if name_q:
+                    rows = load_scene_playbooks_file(
+                        seed_if_missing=False, device_id=dev or None
+                    ) or []
+                    playbook_raw = find_playbook_by_name(rows, name_q)
+            if not dev:
+                return _json_resp(
+                    400,
+                    {"ok": False, "error": "missing device_id", "t": time.time()},
+                )
+            denied = _device_access_denied(dev)
+            if denied is not None:
+                return denied
+            if not playbook_raw:
+                return _json_resp(
+                    400,
+                    {"ok": False, "error": "missing playbook or unknown name", "t": time.time()},
+                )
+            try:
+                playbook = normalize_playbook(playbook_raw)
+            except ValueError as exc:
+                return _json_resp(
+                    400,
+                    {"ok": False, "error": str(exc), "t": time.time()},
+                )
+            ws = await asr_chat_hub.first_ws(dev)
+            if ws is None:
+                return _json_resp(
+                    200,
+                    {
+                        "ok": False,
+                        "error": "device not connected on /asr_chat",
+                        "device_id": dev,
+                        "delivered": 0,
+                        "hint": "请确认 ESP32 已用相同 device_id 连接 /asr_chat",
+                        "t": time.time(),
+                    },
+                )
+            req_id = uuid.uuid4().hex[:16]
+            settings = chat.settings
+            broker = device_pipeline_broker
+
+            async def _playbook_job() -> None:
+                downlink = WsDownlinkAdapter(
+                    ws,
+                    settings=settings,
+                    device_id=dev,
+                    dp_broker=broker,
+                )
+                try:
+                    turn = await run_device_playbook(
+                        downlink,
+                        chat,
+                        playbook,
+                        request_id=req_id,
+                        device_id=dev,
+                    )
+                    ok = (turn.status or "ok") == "ok" and not turn.error
+                    logger.info(
+                        "[HTTP] /api/scene_playbook/run done device_id=%s req=%s name=%s ok=%s err=%s",
+                        dev,
+                        req_id,
+                        playbook.get("name"),
+                        ok,
+                        turn.error,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[HTTP] /api/scene_playbook/run failed device_id=%s req=%s",
+                        dev,
+                        req_id,
+                    )
+
+            asyncio.create_task(_playbook_job())
+            logger.info(
+                "[HTTP] %s /api/scene_playbook/run accepted peer=%s device_id=%s req=%s name=%s",
+                method,
+                peer,
+                dev,
+                req_id,
+                playbook.get("name"),
+            )
+            return _json_resp(
+                200,
+                {
+                    "ok": True,
+                    "accepted": True,
+                    "device_id": dev,
+                    "name": playbook.get("name"),
+                    "req": req_id,
+                    "interleaved": True,
                     "t": time.time(),
                 },
             )

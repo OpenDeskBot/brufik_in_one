@@ -13,8 +13,8 @@
 #define SERVO_DELAY 5
 
 /** 舵机物理极限（°）；所有运动均 constrain 于此。 */
-#define X_MIN_LIMIT 60
-#define X_MAX_LIMIT 120
+#define X_MIN_LIMIT 0
+#define X_MAX_LIMIT 180
 #define Y_MIN_LIMIT 70
 #define Y_MAX_LIMIT 110
 /** 舵机 PWM 更新周期（ms）= 50Hz，motor_task 每拍间隔。 */

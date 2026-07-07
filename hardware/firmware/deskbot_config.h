@@ -11,7 +11,7 @@
 #define WIFI_DEFAULT_SSID "deskbot_wifi"
 #define WIFI_DEFAULT_PASSWORD "hello2026"
 
-#define DESKBOT_WS_HOST "39.107.38.241"
+#define DESKBOT_WS_HOST "10.221.64.74"
 #define DESKBOT_WS_PORT 9000
 
 /* 服务端 WebSocket 鉴权 Key（odk_... 或 odk_free_...）。留空则无法连接 /asr_chat。 */
@@ -20,7 +20,12 @@
 #define ASR_CHAT_HOST DESKBOT_WS_HOST
 #define ASR_CHAT_PORT DESKBOT_WS_PORT
 
-/** 1 = 经 /asr_chat 上传 camera_frame；0 = 暂停（本地仍可采集，不发 WS）。 */
+/** 相机 JPEG 独立 WebSocket 路径（与 /asr_chat 分离）。 */
+#ifndef DESKBOT_CAMERA_WS_PATH
+#define DESKBOT_CAMERA_WS_PATH "/camera_uplink"
+#endif
+
+/** 1 = 经独立 /camera_uplink 上传 camera_frame；0 = 暂停。 */
 #ifndef DESKBOT_CAMERA_UPLINK_ENABLED
 #define DESKBOT_CAMERA_UPLINK_ENABLED 1
 #endif

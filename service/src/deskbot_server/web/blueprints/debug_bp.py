@@ -27,6 +27,7 @@ from deskbot_server.constants import (
     FACE_PROFILES_FILE,
     SERVO_CFG_FILE,
     USER_MEMORY_FILE,
+    SCENE_PLAYBOOKS_FILE,
 )
 from deskbot_server.device_data import (
     load_llm_system_prompt,
@@ -41,6 +42,14 @@ from deskbot_server.servo_config_store import (
     normalize_servo_document,
     save_servo_cfg_file,
 )
+from deskbot_server.scene_playbooks_store import (
+    collect_missing_servo_presets,
+    load_scene_playbooks_file,
+    normalize_playbook,
+    normalize_scene_playbooks,
+    save_scene_playbooks_file,
+)
+from deskbot_server.face_expr_scenes_store import load_face_expr_scenes_file
 from deskbot_server.util import pcm_to_wav_bytes
 from deskbot_server.web.helpers import (
     ALLOWED_LLM_ROLES,
@@ -1096,6 +1105,105 @@ def api_user_memory_delete(entry_id: str):
     if not ok:
         return jsonify({"ok": False, "error": "not found", "t": time.time()}), 404
     return jsonify({"ok": True, "id": entry_id, "t": time.time()})
+
+
+@bp.get("/api/face_expr_scenes")
+def api_face_expr_scenes_get():
+    device_id = _effective_device_id(required=False)
+    try:
+        rows = load_face_expr_scenes_file(
+            seed_if_missing=True,
+            device_id=device_id or None,
+        ) or []
+    except (OSError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
+    return jsonify(
+        {
+            "ok": True,
+            "scenes": rows,
+            "device_id": device_id or None,
+            "t": time.time(),
+        }
+    )
+
+
+@bp.get("/api/scene_playbooks")
+def api_scene_playbooks_get():
+    device_id, err = _require_device_id()
+    if err:
+        return err
+    cfg_path = resolve_json_path(SCENE_PLAYBOOKS_FILE, device_id)
+    try:
+        rows = load_scene_playbooks_file(seed_if_missing=True, device_id=device_id)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
+    return jsonify(
+        {
+            "ok": True,
+            "config": rows or [],
+            "exists": os.path.isfile(cfg_path),
+            "file": os.path.basename(cfg_path),
+            "device_id": device_id,
+            "t": time.time(),
+        }
+    )
+
+
+@bp.post("/api/scene_playbooks")
+def api_scene_playbooks_post():
+    device_id, err = _require_device_id()
+    if err:
+        return err
+    payload = request.get_json(silent=True)
+    cfg_path = resolve_json_path(SCENE_PLAYBOOKS_FILE, device_id)
+    try:
+        rows = normalize_scene_playbooks(payload if payload is not None else [])
+        save_scene_playbooks_file(rows, device_id=device_id)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 400
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
+    missing = collect_missing_servo_presets(rows, device_id=device_id)
+    out = {
+        "ok": True,
+        "config": rows,
+        "file": os.path.basename(cfg_path),
+        "device_id": device_id,
+        "t": time.time(),
+    }
+    if missing:
+        out["missing_servo_presets"] = missing
+        out["warning"] = (
+            "部分 pb 包引用的舵机 preset 未写入 servo.json，设备下发时会跳过："
+            + ", ".join(missing)
+        )
+    return jsonify(out)
+
+
+@bp.post("/api/scene_playbook/export_plan")
+def api_scene_playbook_export_plan():
+    """导出单条编排 + 展开后的 LLM 计划（供排查）。"""
+    device_id, err = _require_device_id()
+    if err:
+        return err
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not payload.get("playbook"):
+        return jsonify({"ok": False, "error": "missing playbook", "t": time.time()}), 400
+    try:
+        pb = normalize_playbook(payload.get("playbook"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 400
+    from deskbot_server.scene_playbook_runner import playbook_debug_snapshot
+
+    snap = playbook_debug_snapshot(pb, device_id=device_id)
+    return jsonify(
+        {
+            "ok": True,
+            "device_id": device_id,
+            **snap,
+            "t": time.time(),
+        }
+    )
 
 
 @bp.get("/api/health")

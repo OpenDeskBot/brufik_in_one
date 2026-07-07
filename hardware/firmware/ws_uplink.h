@@ -36,9 +36,17 @@ bool ws_uplink_send_json(const char* json);
 
 void ws_uplink_drain_rx(AsrChatClient* client);
 
-/** 兼容旧接口：无 TX 队列时为 no-op。 */
+/** 入队 TEXT JSON（拷贝 payload）；队列满则返回 false。 */
+bool ws_uplink_enqueue_text(const char* json);
+
+/** 发送队列中最多一条（须在主线程调用）；返回是否处理了队列项。 */
+bool ws_uplink_drain_tx(AsrChatClient* client);
+
+/** 兼容旧接口：清空待发 TX 队列。 */
 void ws_uplink_discard_tx_queue(void);
 uint32_t ws_uplink_tx_slots_free(void);
+/** TX 队列有待发项或正在发送 camera/其它入队 JSON。 */
+bool ws_uplink_camera_tx_busy(void);
 
 bool ws_uplink_wait_connected(WebSocketsClient* ws, AsrChatClient* client, unsigned long timeout_ms);
 

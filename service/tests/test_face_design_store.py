@@ -6,9 +6,45 @@ import json
 from deskbot_server.face_design_store import (
     find_emotion_expression,
     find_phoneme_expression,
+    merged_emotion_expressions,
     normalize_face_design_doc,
     pick_expression_elements,
 )
+
+
+def test_merged_emotion_expressions_includes_builtin():
+    doc = normalize_face_design_doc({"phonemes": [], "emotions": []})
+    merged = merged_emotion_expressions(doc)
+    names = {e["name"] for e in merged}
+    assert "angry" in names
+    assert "sad" in names
+    assert len(merged) >= 7
+
+
+def test_merged_emotion_expressions_file_overrides_builtin():
+    doc = normalize_face_design_doc(
+        {
+            "phonemes": [],
+            "emotions": [
+                {
+                    "name": "angry",
+                    "title": "自定义生气",
+                    "frames": [{"ms": 100, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}],
+                }
+            ],
+        }
+    )
+    merged = merged_emotion_expressions(doc)
+    angry = next(e for e in merged if e["name"] == "angry")
+    assert angry["title"] == "自定义生气"
+    assert len([e for e in merged if e["name"] == "angry"]) == 1
+
+
+def test_find_emotion_expression_resolves_builtin():
+    doc = normalize_face_design_doc({"phonemes": [], "emotions": []})
+    angry = find_emotion_expression(doc, "angry")
+    assert angry is not None
+    assert angry["title"] == "生气"
 
 
 def test_normalize_legacy_field_names():

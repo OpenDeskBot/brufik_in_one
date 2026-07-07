@@ -177,6 +177,7 @@ async def main():
         host,
         port,
         max_size=None,
+        max_queue=128,
         ping_interval=ping_interval,
         ping_timeout=ping_timeout,
         process_request=http_handler,

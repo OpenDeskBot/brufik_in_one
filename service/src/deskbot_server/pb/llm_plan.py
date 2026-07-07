@@ -19,7 +19,11 @@ from deskbot_server.pb.servo_pcm import (
     anim_elements_from_row,
     make_anim_item,
 )
-from deskbot_server.servo_config_store import load_servo_cfg_file
+from deskbot_server.servo_config_store import (
+    clamp_servo_step,
+    load_servo_cfg_file,
+    resolve_move_for_perspective,
+)
 
 logger = logging.getLogger("deskbot-server")
 
@@ -124,7 +128,10 @@ def expand_llm_moves(
     for item in moves or []:
         if not isinstance(item, dict):
             continue
-        move_id = str(item.get("move") or "").strip()
+        move_id = resolve_move_for_perspective(
+            str(item.get("move") or "").strip(),
+            device_id=device_id,
+        )
         try:
             target_ms = int(item.get("ms", 0))
         except (TypeError, ValueError):
@@ -134,13 +141,16 @@ def expand_llm_moves(
         if move_id == "__custom__":
             try:
                 out.append(
-                    {
-                        "xm": int(item.get("xm", 0)),
-                        "ym": int(item.get("ym", 0)),
-                        "x": int(item.get("x", 90)),
-                        "y": int(item.get("y", 90)),
-                        "ms": int(target_ms),
-                    }
+                    clamp_servo_step(
+                        {
+                            "xm": int(item.get("xm", 0)),
+                            "ym": int(item.get("ym", 0)),
+                            "x": int(item.get("x", 90)),
+                            "y": int(item.get("y", 90)),
+                            "ms": int(target_ms),
+                        },
+                        device_id=device_id,
+                    )
                 )
             except (TypeError, ValueError):
                 continue
@@ -154,13 +164,16 @@ def expand_llm_moves(
         for step, sms in zip(steps, scaled):
             try:
                 out.append(
-                    {
-                        "xm": int(step.get("xm", 1)),
-                        "ym": int(step.get("ym", 1)),
-                        "x": int(step.get("x", 0)),
-                        "y": int(step.get("y", 0)),
-                        "ms": int(sms),
-                    }
+                    clamp_servo_step(
+                        {
+                            "xm": int(step.get("xm", 1)),
+                            "ym": int(step.get("ym", 1)),
+                            "x": int(step.get("x", 0)),
+                            "y": int(step.get("y", 0)),
+                            "ms": int(sms),
+                        },
+                        device_id=device_id,
+                    )
                 )
             except (TypeError, ValueError):
                 continue
@@ -289,7 +302,7 @@ def merge_llm_plan_anim_rows(
     phoneme_rows: list[dict[str, Any]],
     parallel_anim: list[dict[str, Any] | None] | None,
 ) -> list[dict[str, Any]]:
-    """合并 LLM 指定 anim 与音素口型：有 PCM 时保留音素 ``mouth``。"""
+    """合并 LLM 指定 anim 与音素口型：有真实音素口播时保留音素 ``mouth``。"""
     out: list[dict[str, Any]] = []
     for i, ph_row in enumerate(phoneme_rows):
         row = copy.deepcopy(ph_row)
@@ -299,13 +312,15 @@ def merge_llm_plan_anim_rows(
         if isinstance(plan_el, dict) and plan_el:
             merged = copy.deepcopy(plan_el)
             ph_el = anim_elements_from_row(ph_row)
-            if has_audio and isinstance(ph_el.get("mouth"), list):
-                merged["mouth"] = copy.deepcopy(ph_el["mouth"])
             chunk_ms = int(ph_row.get("chunk_ms") or seg.get("ms") or 1)
-            ph_name = ""
-            anim_list = ph_row.get("anim")
-            if isinstance(anim_list, list) and anim_list:
-                ph_name = str(anim_list[0].get("phoneme") or "").strip()
+            ph_name = str(seg.get("phoneme") or "").strip()
+            if not ph_name:
+                anim_list = ph_row.get("anim")
+                if isinstance(anim_list, list) and anim_list:
+                    ph_name = str(anim_list[0].get("phoneme") or "").strip()
+            # 纯表情/舵机包的静音 PCM 不应覆盖情绪口型；仅 TTS 音素口播时保留嘴型
+            if has_audio and ph_name and isinstance(ph_el.get("mouth"), list):
+                merged["mouth"] = copy.deepcopy(ph_el["mouth"])
             row["anim"] = [
                 make_anim_item(merged, chunk_ms, phoneme=ph_name or None)
             ]

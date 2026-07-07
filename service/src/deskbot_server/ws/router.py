@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from deskbot_server.constants import CAMERA_VIEW_PATH, DEVICE_PIPELINE_PATH
+from deskbot_server.constants import CAMERA_UPLINK_PATH, CAMERA_VIEW_PATH, DEVICE_PIPELINE_PATH
 from deskbot_server.pipeline.audio import AudioConfig
 from deskbot_server.application.chat_service import ChatService
 from deskbot_server.util import (
@@ -19,6 +19,7 @@ from deskbot_server.ws.asr_chat import handle_asr_chat
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
 from deskbot_server.application.camera_broker import CameraImageBroker
 from deskbot_server.ws.camera import handle_camera_view
+from deskbot_server.ws.camera_uplink import handle_camera_uplink
 from deskbot_server.ws.device_pipeline import DevicePipelineBroker, handle_device_pipeline
 from deskbot_server.ws.registry import DeviceRegistry
 from deskbot_server.ws.ws_send import _safe_send
@@ -75,6 +76,24 @@ async def handle_client(
         await handle_camera_view(websocket, camera_image_broker)
         return
 
+    if path_only == CAMERA_UPLINK_PATH:
+        device_id = _extract_device_id(qargs)
+        api_auth = await ws_require_api_key(websocket, qargs)
+        if api_auth is None:
+            return
+        await handle_camera_uplink(
+            websocket,
+            device_id,
+            registry,
+            device_pipeline_broker,
+            asr_chat_hub,
+            camera_image_broker,
+            camera_face_runtime,
+            send_face_info_to_asr_chat=pipeline.settings.server.send_face_info_to_asr_chat,
+            api_key_id=api_auth.api_key_id,
+        )
+        return
+
     if path_only == DEVICE_PIPELINE_PATH:
         role = (qargs.get("role") or "").lower()
         is_subscriber = role in ("subscriber", "sub", "viewer", "consumer")
@@ -97,10 +116,11 @@ async def handle_client(
     if path_only and path_only != ws_path:
         logger.warning(
             "[WS] 拒绝非法路径 peer=%s path=%s "
-            "(期望 asr_chat=%s, camera_view=%s, device_pipeline=%s)",
+            "(期望 asr_chat=%s, camera_uplink=%s, camera_view=%s, device_pipeline=%s)",
             peer,
             raw_path,
             ws_path,
+            CAMERA_UPLINK_PATH,
             CAMERA_VIEW_PATH,
             DEVICE_PIPELINE_PATH,
         )

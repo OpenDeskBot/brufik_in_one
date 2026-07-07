@@ -45,6 +45,9 @@ def _device_scoped_paths() -> set[str]:
         "/api/device_pb_expr_scene",
         "/api/device_pb_scenes",
         "/api/device_face_play",
+        "/api/servo_config",
+        "/api/scene_playbooks",
+        "/api/scene_playbook/run",
     }
 
 

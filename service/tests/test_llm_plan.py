@@ -81,6 +81,39 @@ def test_map_anim_frames_covers_all_tts_segs_not_index_only():
     assert parallel[2]["extra"][0]["x"] == 9
 
 
+def test_merge_llm_plan_anim_rows_keeps_emotion_mouth_on_silence():
+    """纯表情 pb 包（静音承载时长）应保留情绪口型，不被默认嘴型覆盖。"""
+    segs = [{"phoneme": "", "ms": 2000, "pcm": b"\x00" * 96000}]
+    phoneme_rows = [
+        {
+            "idx": 0,
+            "chunk_ms": 2000,
+            "anim": [
+                {
+                    "elements": {
+                        "mouth": [{"shape": "round_rect", "x": 148, "y": 153, "w": 56, "h": 18}],
+                        "eye_l": [],
+                        "eye_r": [],
+                        "nose": [],
+                        "extra": [],
+                    },
+                    "ms": 2000,
+                }
+            ],
+        }
+    ]
+    plan_el = {
+        "mouth": [{"shape": "round_rect", "x": 163, "y": 147, "w": 28, "h": 32}],
+        "eye_l": [{"shape": "ellipse_fill", "x": 105, "y": 96, "rw": 15, "rh": 15}],
+        "eye_r": [],
+        "nose": [],
+        "extra": [],
+    }
+    merged = merge_llm_plan_anim_rows(segs, phoneme_rows, [plan_el])
+    mouth = merged[0]["anim"][0]["elements"]["mouth"]
+    assert mouth == plan_el["mouth"]
+
+
 def test_merge_llm_plan_anim_rows_keeps_phoneme_mouth():
     segs = [{"phoneme": "a", "ms": 100, "pcm": b"\x00" * 4800}]
     phoneme_rows = [

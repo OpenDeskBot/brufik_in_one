@@ -31,7 +31,7 @@ public:
   /** VAD 已触发、本轮语音上行窗口内（含已发/待发 Opus）。 */
   bool isVadGateOpen() const;
 
-  /** 主循环泵 WS/pb；开听音轮前用 allow_camera=false 避免 JPEG send 阻塞。 */
+  /** 主循环泵 WS/pb（相机上行见 camera_uplink_client）。 */
   void serviceLoop(bool allow_camera);
 
   /** ws_uplink RX 队列 → 原 onWebSocketEvent（须在主上下文调用）。 */
@@ -71,26 +71,22 @@ private:
   bool ws_needs_reconnect_ = false;
   unsigned long ws_reconnect_backoff_ms_ = 2000;
   unsigned long ws_last_reconnect_attempt_ms_ = 0;
+  bool connect_in_progress_ = false;
   static constexpr uint8_t kWsSendFailReconnectThreshold = 3;
   uint32_t round_id_ = 0;
   /* WebSocket 断在本轮内时置位，用于结束等待并区分日志（避免打成「reply completed」）。 */
   bool disconnect_abort_round_ = false;
   /* 本轮已开始向服务端发送 Opus：与 camera_frame 互斥。 */
   bool voice_uplink_active_ = false;
-  /** VAD 触发后的上行窗口：至本轮 flush/skip/abort 结束；期间禁止 camera_frame。 */
+  /** VAD 触发后的上行窗口：至本轮 flush/skip/abort 结束。 */
   bool vad_gate_open_ = false;
-  /** camera_frame JSON+bin 同步发送中（规则 4：发完再发 audio）。 */
-  bool camera_send_in_progress_ = false;
   /** connect() 连续失败次数；达阈值时做 WiFi 软重连以清理 lwIP TCP 状态。 */
   uint8_t connect_fail_streak_ = 0;
-  /** runVoiceRound 录音环内标记（loopLite 可上传相机/VAD 未开时）。 */
+  /** runVoiceRound 录音环内标记。 */
   bool in_voice_record_loop_ = false;
   uint8_t uplink_batch_bin_[kUplinkBatchMaxBin];
   size_t uplink_batch_bin_len_ = 0;
   uint8_t uplink_batch_count_ = 0;
-  unsigned long last_camera_uplink_ms_ = 0;
-  /** 相机 send 失败/过慢后退避，避免半开 TCP 上反复阻塞听音环。 */
-  unsigned long camera_backoff_until_ms_ = 0;
   bool capture_was_allowed_ = false;
 
   /* -----------------------------------------------------------------------
@@ -219,15 +215,10 @@ private:
   static constexpr int kSleepHeadDownDeg = -30;
 
   void onWebSocketEvent(WStype_t type, uint8_t* payload, size_t length);
-  bool tryUploadCameraFrameIfDue();
   void engageVoiceUplink();
   void resetUplinkBatch();
   bool queueAudioOpusFrame(const int16_t* pcm, size_t samples);
   bool flushAudioOpusBatch();
-  /** 规则 3：VAD 未开且 !isSpeaking() 且 WS 可用。 */
-  bool canUploadCamera();
-  /** 尝试发送一帧 JPEG；失败则丢弃该帧。 */
-  bool tryUploadCameraFrame();
   void discardPendingUplinkMedia();
   bool sendJson(const char* msg, bool critical = true);
   bool sendJson(const String& msg, bool critical = true);

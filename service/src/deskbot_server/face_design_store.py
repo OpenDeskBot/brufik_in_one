@@ -159,7 +159,7 @@ def find_phoneme_expression(
 def find_emotion_expression(doc: dict[str, Any] | None, name: str) -> Optional[dict[str, Any]]:
     if not isinstance(doc, dict):
         return None
-    return find_design_expression(doc.get("emotions") or [], name, phoneme=False)
+    return find_design_expression(merged_emotion_expressions(doc), name, phoneme=False)
 
 
 def pick_expression_elements(expr: dict[str, Any] | None, *, at_ms: int = 0) -> dict[str, Any]:
@@ -186,12 +186,31 @@ def pick_expression_elements(expr: dict[str, Any] | None, *, at_ms: int = 0) -> 
     return {}
 
 
+def merged_emotion_expressions(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """文件 ``emotions`` + 未被覆盖的内置情绪（``builtin_emotion_scenes``）。"""
+    from deskbot_server.face_expr_scenes_store import builtin_emotion_scenes
+
+    file_exprs: list[dict[str, Any]] = []
+    if isinstance(doc, dict):
+        for expr in doc.get("emotions") or []:
+            if isinstance(expr, dict) and str(expr.get("name") or "").strip():
+                file_exprs.append(expr)
+    seen = {str(e.get("name") or "").strip().lower() for e in file_exprs}
+    out = list(file_exprs)
+    for raw in builtin_emotion_scenes():
+        name = str(raw.get("name") or "").strip()
+        if name and name.lower() not in seen:
+            out.append(raw)
+            seen.add(name.lower())
+    return out
+
+
 def emotions_as_scenes(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
     """``emotions`` → ``face_expr_scenes`` 兼容列表（保留 alias 供查表）。"""
     if not isinstance(doc, dict):
         return []
     out: list[dict[str, Any]] = []
-    for expr in doc.get("emotions") or []:
+    for expr in merged_emotion_expressions(doc):
         if not isinstance(expr, dict):
             continue
         row = {
@@ -316,9 +335,7 @@ def build_face_expression_catalog(*, device_id: Optional[str] = None) -> dict[st
             continue
         phonemes.append(_summarize_expression(expr, kind="phoneme"))
     emotions: list[dict[str, Any]] = []
-    for expr in doc.get("emotions") or []:
-        if not isinstance(expr, dict) or not str(expr.get("name") or "").strip():
-            continue
+    for expr in merged_emotion_expressions(doc):
         if not isinstance(expr.get("frames"), list) or not expr.get("frames"):
             continue
         emotions.append(_summarize_expression(expr, kind="emotion"))

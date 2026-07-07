@@ -20,6 +20,7 @@ from deskbot_server.application.camera_servo_follower import (
 from deskbot_server.auto_reply import get_asr_voice_auto_reply_enabled
 from deskbot_server.pb.llm_plan import expand_llm_moves
 from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
+from deskbot_server.servo_config_store import clamp_servo_step, servo_limits
 from deskbot_server.pb.shapes import PB_ACTION_DEFAULT, PB_LEVEL_IDLE
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
 
@@ -68,34 +69,33 @@ def get_valid_face_analysis(
     return analysis
 
 
-def _gaze_servo_step(analysis: dict[str, Any]) -> Optional[dict[str, int]]:
+def _gaze_servo_step(analysis: dict[str, Any], *, device_id: Optional[str] = None) -> Optional[dict[str, int]]:
     screen_yaw, screen_pitch = _screen_angles_from_analysis(analysis)
     if screen_yaw is None or screen_pitch is None:
         return None
-    ix = int(round(_clamp(_SERVO_CENTER_X + _MAP_YAW_SIGN * screen_yaw, 0, 180)))
+    lim = servo_limits(device_id=device_id)
+    ix = int(round(_clamp(_SERVO_CENTER_X + _MAP_YAW_SIGN * screen_yaw, lim["xMin"], lim["xMax"])))
     iy = int(
         round(
             _clamp(
                 _SERVO_CENTER_Y + _MAP_PITCH_SIGN * screen_pitch + _GAZE_PITCH_OFFSET,
-                0,
-                180,
+                lim["yMin"],
+                lim["yMax"],
             )
         )
     )
-    return {
-        "xm": 0,
-        "ym": 0,
-        "x": ix,
-        "y": iy,
-        "ms": _GAZE_SERVO_MS,
-    }
+    return clamp_servo_step(
+        {"xm": 0, "ym": 0, "x": ix, "y": iy, "ms": _GAZE_SERVO_MS},
+        device_id=device_id,
+        limits=lim,
+    )
 
 
 def listen_feedback_moves(device_id: str) -> tuple[str, list[dict[str, Any]]]:
     """返回 (kind, moves)；kind 为 ``gaze`` 或 ``patrol``。"""
     analysis = get_valid_face_analysis(device_id)
-    if analysis is not None and _gaze_servo_step(analysis) is not None:
-        step = _gaze_servo_step(analysis)
+    if analysis is not None and _gaze_servo_step(analysis, device_id=device_id) is not None:
+        step = _gaze_servo_step(analysis, device_id=device_id)
         assert step is not None
         return "gaze", [
             {

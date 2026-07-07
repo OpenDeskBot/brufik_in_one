@@ -78,6 +78,8 @@ def llm_pb_moves_prompt_appendix(*, device_id: Optional[str] = None) -> str:
             "  - moves: 数组。每项 ``{\"move\": \"预设动作id\", \"ms\": 执行时长}``。"
             "``move`` 须从下列预设中选取；``ms`` 为该动作整体期望时长（毫秒），"
             "服务端会按预设各 step 默认时长比例缩放，**ms 越大越慢、越小越快**。\n"
+            "    **left/right 类动作默认按观众视角**（机器人对面的人看到的左/右），"
+            "不是机器人自己身体的左右。\n"
             f"    可用预设动作：\n{body}\n"
             "    不需要动作时写 []。\n"
         )

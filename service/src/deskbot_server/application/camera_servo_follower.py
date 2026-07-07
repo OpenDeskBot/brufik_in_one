@@ -16,6 +16,7 @@ from deskbot_server.auto_reply import get_asr_voice_auto_reply_enabled
 from deskbot_server.debug_prefs_store import get_camera_servo_auto_mode
 from deskbot_server.pb.scenes import _pb_scene_entry_by_name, _prepare_pb_scene_chain_frames
 from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
+from deskbot_server.servo_config_store import servo_limits
 from deskbot_server.pb.shapes import PB_ACTION_REPLACE, PB_LEVEL_DEBUG
 from deskbot_server.vision.geometry import FRONTAL_YAW_THRESHOLD_DEG
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
@@ -138,8 +139,17 @@ async def camera_servo_follower_tick(
         return
 
     pitch_off = _pitch_offset_for_mode(mode)
-    ix = int(round(_clamp(_SERVO_CENTER_X + _MAP_YAW_SIGN * screen_yaw, 0, 180)))
-    iy = int(round(_clamp(_SERVO_CENTER_Y + _MAP_PITCH_SIGN * screen_pitch + pitch_off, 0, 180)))
+    lim = servo_limits(device_id=device_id)
+    ix = int(round(_clamp(_SERVO_CENTER_X + _MAP_YAW_SIGN * screen_yaw, lim["xMin"], lim["xMax"])))
+    iy = int(
+        round(
+            _clamp(
+                _SERVO_CENTER_Y + _MAP_PITCH_SIGN * screen_pitch + pitch_off,
+                lim["yMin"],
+                lim["yMax"],
+            )
+        )
+    )
 
     st = _device_state.setdefault(device_id, {})
     now_ms = time.monotonic() * 1000.0

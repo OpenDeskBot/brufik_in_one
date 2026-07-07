@@ -27,7 +27,7 @@
     <div class="dv-main-split">
       <div class="dv-main-header">
         <h1>设备调试</h1>
-        <p class="page-sub muted">在顶部选择当前设备并配置调试选项后，下方 Tab 可调试 TTS、舵机、摄像头、表情、ASR 与流水日志；3D 形象随 pb_ack 舵机与口型预览同步。</p>
+        <p class="page-sub muted">在顶部选择当前设备并配置调试选项后，下方 Tab 可调试 TTS、舵机、摄像头、表情、场景、ASR 与流水日志；3D 形象随 pb_ack 舵机与口型预览同步。</p>
         <p v-if="deviceListError" class="dv-err sm">{{ deviceListError }}</p>
         <p class="muted sm" v-if="selectedDeviceDetail">
           当前设备 {{ selectedDeviceDetail.device_id }} · {{ deviceBriefStatus(selectedDeviceDetail) }}
@@ -179,6 +179,15 @@
                 <option :value="0">0</option>
                 <option :value="1">1</option>
               </select>
+            </div>
+            <div class="servo-cfg-row">
+              <span class="servo-cfg-axis">LR</span>
+              <label class="servo-cfg-lbl">视角</label>
+              <select class="servo-cfg-sel" v-model="servoCfgPerspective" @change="servoPersistCfg">
+                <option value="viewer">观众（默认）</option>
+                <option value="robot">机器人本体</option>
+              </select>
+              <span class="muted sm">left/right 预设语义</span>
             </div>
           </div>
           <div class="servo-cfg-extra">
@@ -640,6 +649,174 @@
       </div>
     </div>
 
+    <div v-show="activeTab === 'scene'" class="dv-tab-panel sp-playbook-card">
+      <h3 style="margin-top:0;">场景</h3>
+      <p class="doc muted sm">按 PB 协议分包：每个 <strong>pb 包</strong> 可独立填口播、表情、舵机，按顺序串行下发（对应设备一轮 pb_single / pb_chunk）。</p>
+      <div class="expr-phoneme-toolbar">
+        <button type="button" class="dv-btn sm" title="新增编排" @click="spAddRow">+</button>
+        <button type="button" class="dv-btn sm"
+                :disabled="spSaveBusy"
+                @click="spSaveToFile">保存到 scene_playbooks.json</button>
+        <button type="button" class="dv-btn sm secondary" @click="spLoadFromFile">重新载入</button>
+        <button type="button" class="dv-btn sm secondary" :disabled="!spPlaybooks.length"
+                @click="spExportSelectedJson">导出选中 JSON</button>
+        <button type="button" class="dv-btn sm secondary" :disabled="!spPlaybooks.length"
+                @click="spExportSelectedDebug">导出排查包</button>
+        <button type="button" class="dv-btn sm secondary" :disabled="!spPlaybooks.length"
+                @click="spExportAllJson">导出全部</button>
+        <span class="muted sm mono">{{ spFileName }}</span>
+      </div>
+      <p v-if="spLoadError" class="dv-err sm">{{ spLoadError }}</p>
+      <p v-if="spSaveStatus" class="sm" :class="{ 'dv-err': spSaveStatusErr }">{{ spSaveStatus }}</p>
+
+      <div class="expr-phoneme-split">
+        <section class="expr-phoneme-col expr-phoneme-col-table">
+          <h4 class="expr-phoneme-col-title">配置</h4>
+          <div class="table-wrap expr-phoneme-tbl-wrap">
+            <table class="expr-phoneme-tbl sm">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>序列</th>
+                  <th colspan="3">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!spPlaybooks.length">
+                  <td colspan="5" class="expr-phoneme-empty">暂无编排，点 + 新增或重新载入</td>
+                </tr>
+                <tr v-for="(row, idx) in spPlaybooks" :key="row.name + '-' + idx"
+                    :class="['expr-phoneme-row', { sel: spSelectedIdx === idx }]"
+                    @click="spSelectedIdx = idx"
+                    @dblclick.stop="spOpenEditDialog(idx)">
+                  <td class="expr-phoneme-cell">{{ row.title || row.name }}</td>
+                  <td class="expr-phoneme-cell mono sm">{{ spTrackSummary(row) }}</td>
+                  <td class="expr-phoneme-act">
+                    <button type="button" class="dv-btn sm danger" title="删除"
+                            @click.stop="spDeleteRow(idx)">删除</button>
+                  </td>
+                  <td class="expr-phoneme-act">
+                    <button type="button" class="dv-btn sm secondary"
+                            @click.stop="spOpenEditDialog(idx)">编辑</button>
+                  </td>
+                  <td class="expr-phoneme-act">
+                    <button type="button" class="dv-btn sm"
+                            :disabled="spExecBusy"
+                            @click.stop="spExecRow(idx)">发送</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="muted sm" style="margin:8px 0 0;">双击行编辑 pb 包列表；例：包1舵机 → 包2惊讶 → 包3口播+开心</p>
+        </section>
+
+        <section class="expr-phoneme-col expr-phoneme-col-preview">
+          <h4 class="expr-phoneme-col-title">预览</h4>
+          <div class="sp-preview-wrap">
+            <div ref="scenePreview3dHost" class="sp-preview-host" aria-label="场景 3D 预览">
+              <p v-if="scenePreview3dError" class="dv-robot-fallback">{{ scenePreview3dError }}</p>
+            </div>
+            <div class="sp-preview-meta">
+              <div class="fp-meta-row"><span class="k">舵机</span><span class="v mono sm">Web 模拟 x={{ spSimServoXLabel }} y={{ spSimServoYLabel }}</span></div>
+              <div class="fp-meta-row"><span class="k">当前</span><span class="v sm">{{ scenePreviewLabel || '—' }}</span></div>
+              <div class="fp-meta-row"><span class="k">TTS</span><span class="v sm">{{ scenePreviewTtsLabel || '—' }}</span></div>
+              <div class="sp-preview-orbit-row">
+                <span class="muted sm">视角</span>
+                <input type="range" class="dv-robot-orbit" min="-180" max="180" step="1"
+                       v-model.number="scenePreviewViewYawDeg" aria-label="旋转场景预览" />
+              </div>
+            </div>
+          </div>
+          <p v-if="spExecStatus" class="sm mono" :class="{ 'dv-err': spExecStatusErr }">{{ spExecStatus }}</p>
+          <p v-if="!selected" class="muted sm">未选设备：仅本地预览；选设备且 asr_chat 在线时会同步下发。</p>
+        </section>
+      </div>
+
+      <div v-if="spEditDialog" class="expr-design-modal-backdrop" @click.self="spCloseEditDialog">
+        <div class="expr-design-modal sp-edit-modal" role="dialog" aria-modal="true">
+          <h4 style="margin:0 0 12px;">编辑场景编排</h4>
+          <div class="sp-edit-grid">
+            <label class="expr-design-field">
+              <span class="expr-design-label">name（唯一键）</span>
+              <input v-model="spEditDialog.name" type="text" class="expr-design-input mono sm" spellcheck="false" />
+            </label>
+            <label class="expr-design-field">
+              <span class="expr-design-label">名称</span>
+              <input v-model="spEditDialog.title" type="text" class="expr-design-input sm" />
+            </label>
+          </div>
+          </div>
+
+          <div class="sp-chunk-toolbar">
+            <span class="sp-track-label">PB 包列表（顺序下发）</span>
+            <button type="button" class="dv-btn sm secondary" @click="spAddChunk">+ 添加 pb 包</button>
+          </div>
+          <div class="sp-chunk-list">
+            <div v-for="(chunk, ci) in spEditDialog.chunks" :key="chunk.id"
+                 class="sp-chunk-card"
+                 draggable="true"
+                 :class="{ dragging: spDragClip && spDragClip.track === 'chunks' && spDragClip.idx === ci }"
+                 @dragstart="spDragStart('chunks', ci, $event)"
+                 @dragover.prevent="spDragOver('chunks', ci, $event)"
+                 @drop.prevent="spDragDrop('chunks', ci, $event)">
+              <div class="sp-chunk-card-head">
+                <span class="mono sm">包 {{ ci + 1 }}</span>
+                <button type="button" class="dv-btn sm danger" @click.stop="spRemoveChunk(ci)">删除</button>
+              </div>
+              <label class="expr-design-field sp-chunk-field">
+                <span class="expr-design-label">口播 TTS（可选）</span>
+                <input v-model="chunk.text" type="text" class="expr-design-input sm" placeholder="留空则本包无语音" @mousedown.stop />
+              </label>
+              <div class="sp-chunk-row">
+                <span class="expr-design-label">表情</span>
+                <select v-model="chunk.expr_scene" class="sp-clip-select sm" @mousedown.stop>
+                  <option value="">无</option>
+                  <option v-for="sc in spExprSceneOptions" :key="'e'+sc" :value="sc">{{ spExprSceneLabel(sc) }}</option>
+                </select>
+                <input v-model.number="chunk.expr_ms" type="number" min="40" max="120000" step="10"
+                       class="sp-clip-ms mono sm" :disabled="!chunk.expr_scene" @mousedown.stop />
+                <span class="muted sm">ms</span>
+              </div>
+              <div class="sp-chunk-row">
+                <span class="expr-design-label">舵机</span>
+                <select v-model="chunk.servo_preset" class="sp-clip-select sm" @mousedown.stop
+                        @change="spOnChunkServoPresetPick(chunk)">
+                  <option value="">无</option>
+                  <option value="__custom__">自定义</option>
+                  <option v-for="p in servoPresets" :key="p.id" :value="p.id">{{ p.label || p.id }}</option>
+                </select>
+                <template v-if="chunk.servo_preset === '__custom__'">
+                  <span class="mono sm">x</span>
+                  <input v-model.number="chunk.servo_x" type="number" class="sp-clip-ms mono sm" @mousedown.stop />
+                  <span class="mono sm">y</span>
+                  <input v-model.number="chunk.servo_y" type="number" class="sp-clip-ms mono sm" @mousedown.stop />
+                </template>
+                <input v-model.number="chunk.servo_ms" type="number" min="40" max="120000" step="10"
+                       class="sp-clip-ms mono sm" :disabled="!chunk.servo_preset" @mousedown.stop />
+                <span class="muted sm">ms</span>
+              </div>
+            </div>
+            <p v-if="!spEditDialog.chunks.length" class="muted sm sp-track-empty">点「添加 pb 包」开始编排</p>
+          </div>
+
+          <p v-if="spEditDialog.error" class="dv-err sm">{{ spEditDialog.error }}</p>
+          <div class="expr-design-modal-actions">
+            <button type="button" class="dv-btn sm secondary" @click="spCloseEditDialog">取消</button>
+            <button type="button" class="dv-btn sm secondary" @click="spCopyEditJson">复制 JSON</button>
+            <button type="button" class="dv-btn sm secondary" @click="spExportEditDebug">导出排查包</button>
+            <button type="button" class="dv-btn sm"
+                    :disabled="spExecBusy"
+                    @click="spExecEditDialog">发送预览</button>
+            <button type="button" class="dv-btn sm"
+                    :disabled="spEditDialog.saving"
+                    @click="spSaveEditDialog">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    
     <div v-show="activeTab === 'pipeline'" class="dv-tab-panel dv-pipeline-card">
       <h3 style="margin-top:0;">流水日志</h3>
       <p class="doc muted">按 <code>request_id</code> 合并 ASR/LLM/TTS 阶段；含无交互时的 idle 自动下发与人脸跟随，最多 {{ dpMaxEvents }} 行。</p>
@@ -1380,6 +1557,145 @@
     .dv-btn.danger { color: #b42318; border-color: #f5c2c0; }
     .dv-btn.danger:hover:not(:disabled) { background: #fef3f2; }
     .dv-btn.secondary { background: #f5f5f7; }
+    .expr-phoneme-split {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px 20px;
+      align-items: flex-start;
+    }
+    .expr-phoneme-col { flex: 1 1 320px; min-width: 280px; }
+    .expr-phoneme-col-table { flex: 2 1 480px; }
+    .expr-phoneme-col-preview { flex: 1 1 260px; max-width: 420px; }
+    .expr-phoneme-col-title { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+    .expr-phoneme-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0 10px;
+    }
+    .expr-phoneme-tbl-wrap { max-height: min(68vh, 720px); overflow: auto; }
+    .expr-phoneme-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .expr-phoneme-tbl th, .expr-phoneme-tbl td {
+      border: 1px solid #e5e5ea;
+      padding: 6px 8px;
+      vertical-align: top;
+      text-align: left;
+    }
+    .expr-phoneme-tbl th { background: #f5f5f7; position: sticky; top: 0; z-index: 1; }
+    .expr-phoneme-row { cursor: pointer; }
+    .expr-phoneme-row:hover { background: #f9f9fb; }
+    .expr-phoneme-row.sel { background: #eef6ff; }
+    .expr-phoneme-cell { min-width: 80px; max-width: 280px; }
+    .expr-phoneme-preview {
+      max-height: 7rem;
+      overflow: auto;
+      word-break: break-all;
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
+    .expr-phoneme-edit {
+      width: 100%;
+      min-width: 120px;
+      box-sizing: border-box;
+      border: 1px solid #0a84ff;
+      border-radius: 4px;
+      padding: 4px 6px;
+      font-size: 11px;
+      resize: vertical;
+    }
+    .expr-phoneme-act { width: 3.2rem; text-align: center; white-space: nowrap; }
+    .expr-phoneme-empty { text-align: center; color: #6e6e73; padding: 16px; }
+    .expr-phoneme-json-wrap { margin-top: 4px; }
+    .expr-phoneme-json-ta {
+      width: 100%;
+      min-height: 360px;
+      box-sizing: border-box;
+      border: 1px solid #c7c7cc;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 11px;
+      line-height: 1.4;
+      resize: vertical;
+    }
+    .expr-canvas {
+      width: 284px;
+      height: 240px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 2px solid #c7c7cc;
+      border-radius: 8px;
+      background: #111;
+      flex-shrink: 0;
+    }
+    .expr-preview-meta { flex: 1; min-width: 160px; }
+    .expr-scene-btns { margin-top: 4px; }
+
+    .sp-preview-wrap { display: flex; flex-direction: column; gap: 10px; }
+    .sp-preview-host {
+      width: 100%;
+      height: 260px;
+      border-radius: 8px;
+      border: 1px solid #d2d2d7;
+      background: #eef2f7;
+      overflow: hidden;
+      position: relative;
+    }
+    .sp-preview-host canvas { display: block; width: 100% !important; height: 100% !important; }
+    .sp-preview-meta { font-size: 12px; }
+    .sp-preview-orbit-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .sp-preview-orbit-row .dv-robot-orbit { flex: 1; }
+    .sp-edit-modal { width: min(920px, 96vw); }
+    .sp-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+    @media (max-width: 640px) { .sp-edit-grid { grid-template-columns: 1fr; } }
+    .sp-track-lane { margin-bottom: 14px; }
+    .sp-track-hint { margin: 0 0 6px; padding: 0 2px; }
+    .sp-track-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .sp-track-label { font-size: 13px; font-weight: 600; }
+    .sp-track-clips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      min-height: 48px;
+      padding: 10px;
+      background: #f5f5f7;
+      border-radius: 8px;
+      border: 1px dashed #c7c7cc;
+    }
+    .sp-track-empty { padding: 4px 2px; }
+    .sp-clip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 8px;
+      background: #fff;
+      border: 1px solid #0a84ff;
+      border-radius: 6px;
+      cursor: grab;
+      font-size: 11px;
+      max-width: 100%;
+    }
+    .sp-clip.dragging { opacity: 0.45; }
+    .sp-clip-input { width: 140px; padding: 4px 6px; border: 1px solid #c7c7cc; border-radius: 4px; }
+    .sp-clip-select { max-width: 160px; padding: 4px 6px; border: 1px solid #c7c7cc; border-radius: 4px; }
+    .sp-clip-ms { width: 64px; padding: 4px 6px; border: 1px solid #c7c7cc; border-radius: 4px; }
+    .sp-speech-start-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .sp-chunk-toolbar { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 8px; }
+    .sp-chunk-list { display: flex; flex-direction: column; gap: 10px; max-height: min(52vh, 520px); overflow-y: auto; }
+    .sp-chunk-card {
+      padding: 10px 12px;
+      background: #f5f5f7;
+      border: 1px solid #c7c7cc;
+      border-radius: 8px;
+      cursor: grab;
+    }
+    .sp-chunk-card.dragging { opacity: 0.45; }
+    .sp-chunk-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .sp-chunk-field { margin-bottom: 8px; }
+    .sp-chunk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .sp-chunk-row .expr-design-label { min-width: 36px; font-size: 12px; font-weight: 600; }
   </style>
   <script>
     const { createApp, markRaw } = Vue;
@@ -1492,6 +1808,7 @@
       { id: "servo", label: "舵机控制" },
       { id: "tts", label: "TTS 下发" },
       { id: "expr", label: "表情调试" },
+      { id: "scene", label: "场景" },
       { id: "asr", label: "ASR识别" },
       { id: "pipeline", label: "流水日志" },
     ];
@@ -1627,6 +1944,14 @@
       return new URL(joined, window.location.origin);
     }
 
+    /** 舵机配置读写须带 device_id，否则写入全局 data/servo.json 而非 data/device/{id}/。 */
+    function servoConfigApiUrl(httpBase, deviceId) {
+      const url = deskbotApiUrl(httpBase, "/api/servo_config");
+      const did = String(deviceId || "").trim();
+      if (did) url.searchParams.set("device_id", did);
+      return url;
+    }
+
     createApp({
       data() {
         return {
@@ -1692,6 +2017,25 @@
           exprPlayingKey: "",
           exprPlayStatus: "",
           exprPlayStatusErr: false,
+          spPlaybooks: [],
+          spSelectedIdx: -1,
+          spEditDialog: null,
+          spDragClip: null,
+          spLoadError: "",
+          spSaveStatus: "",
+          spSaveStatusErr: false,
+          spSaveBusy: false,
+          spExecStatus: "",
+          spExecStatusErr: false,
+          spExecBusy: false,
+          spFileName: "scene_playbooks.json",
+          exprScenesCache: [],
+          sceneSimServo: { x: 90, y: 90 },
+          scenePreviewLabel: "",
+          scenePreviewTtsLabel: "",
+          scenePreviewViewYawDeg: 0,
+          scenePreview3dError: "",
+
           cvVoiceAutoReply: true,
           cvVoiceAutoReplySaving: false,
           cvVoiceAutoReplyErr: "",
@@ -1724,12 +2068,13 @@
           manualServoStatusErr: false,
           _manualServoStatusTimer: null,
 
-          servoCfgXMin: 30,
-          servoCfgXMax: 150,
+          servoCfgXMin: 0,
+          servoCfgXMax: 180,
           servoCfgYMin: 65,
           servoCfgYMax: 135,
           servoCfgXReverse: 0,
           servoCfgYReverse: 0,
+          servoCfgPerspective: "viewer",
           servoCfgSaving: false,
 
           absLogicalX: 90,
@@ -1820,6 +2165,13 @@
         this._robotAnimId = null;
         this._robotResizeObs = null;
         this._threeLoadPromise = null;
+        this._scenePreview3d = null;
+        this._scenePreviewAnimId = null;
+        this._scenePreviewResizeObs = null;
+        this._sceneTimelineTimers = [];
+        this._sceneServoAnimTimer = null;
+        this._sceneExprTimelineTimer = null;
+        this._sceneExprTimelineState = null;
       },
       computed: {
         dpWsUrl() { return buildDpWsUrl(this.dpBase, this.selected, this.debugWsToken); },
@@ -2288,6 +2640,25 @@
         },
         exprCanPlay() {
           return !!this.selected && !this.exprPlaying;
+        },
+        spSimServoXLabel() {
+          const x = Number(this.sceneSimServo && this.sceneSimServo.x);
+          return Number.isFinite(x) ? String(Math.round(x)) : String(ROBOT_SERVO_CENTER);
+        },
+        spSimServoYLabel() {
+          const y = Number(this.sceneSimServo && this.sceneSimServo.y);
+          return Number.isFinite(y) ? String(Math.round(y)) : String(ROBOT_SERVO_CENTER);
+        },
+        /** 表情轨下拉：优先带 frames 的 exprScenesCache，否则回退 exprEmotions */
+        spExprSceneOptions() {
+          const fromCache = (this.exprScenesCache || [])
+            .map((r) => String((r && r.name) || "").trim())
+            .filter(Boolean);
+          if (fromCache.length) return fromCache;
+          return (this.exprEmotions || [])
+            .filter((e) => !EXPR_SCENE_EXCLUDE.has(String(e.name || "").trim().toLowerCase()))
+            .map((e) => String(e.name || "").trim())
+            .filter(Boolean);
         },
       },
       methods: {
@@ -3464,6 +3835,27 @@
             yRev: Number(this.servoCfgYReverse) === 1 ? 1 : 0,
           };
         },
+        _servoResolveMoveId(moveId) {
+          const pid = String(moveId || "").trim();
+          if (!pid || String(this.servoCfgPerspective || "viewer") !== "viewer") return pid;
+          const swap = {
+            look_left: "look_right",
+            look_right: "look_left",
+            look_upper_left: "look_upper_right",
+            look_upper_right: "look_upper_left",
+            look_lower_left: "look_lower_right",
+            look_lower_right: "look_lower_left",
+          };
+          const key = pid.toLowerCase();
+          for (const [src, dst] of Object.entries(swap)) {
+            if (src === key) return dst;
+          }
+          return pid;
+        },
+        _servoPresetById(presetId) {
+          const resolved = this._servoResolveMoveId(presetId);
+          return (this.servoPresets || []).find((p) => p.id === resolved) || null;
+        },
         _servoLogicalAbsToServo(lx, ly) {
           const c = this._servoCfgNorm();
           const clx = this._servoClampAxis(lx, c.xMin, c.xMax);
@@ -3558,13 +3950,14 @@
         _servoCfgPayload() {
           this.servoPersistCfg();
           this.servoPersistPresets();
-          return {
+          const payload = {
             xMin: this.servoCfgXMin,
             xMax: this.servoCfgXMax,
             yMin: this.servoCfgYMin,
             yMax: this.servoCfgYMax,
             xReverse: this.servoCfgXReverse,
             yReverse: this.servoCfgYReverse,
+            perspective: String(this.servoCfgPerspective || "viewer") === "robot" ? "robot" : "viewer",
             presets: this.servoPresets.map((p) => ({
               id: String(p.id),
               label: String(p.label || "未命名"),
@@ -3572,6 +3965,11 @@
               steps: this._manualCloneServoSteps(p.steps),
             })),
           };
+          if (this.selected) payload.device_id = this.selected;
+          return payload;
+        },
+        _servoConfigApiUrl() {
+          return servoConfigApiUrl(this.httpBase, this.selected);
         },
         _servoApplyCfgPayload(d) {
           if (!d || typeof d !== "object") return;
@@ -3581,6 +3979,10 @@
           if (d.yMax != null) this.servoCfgYMax = Number(d.yMax);
           if (d.xReverse != null) this.servoCfgXReverse = Number(d.xReverse) === 1 ? 1 : 0;
           if (d.yReverse != null) this.servoCfgYReverse = Number(d.yReverse) === 1 ? 1 : 0;
+          if (d.perspective != null) {
+            this.servoCfgPerspective = String(d.perspective).trim().toLowerCase() === "robot"
+              ? "robot" : "viewer";
+          }
         },
         _servoApplyPresetsPayload(arr) {
           if (!Array.isArray(arr)) return;
@@ -3611,11 +4013,15 @@
             if (d.yMax != null) this.servoCfgYMax = Number(d.yMax);
             if (d.xReverse != null) this.servoCfgXReverse = Number(d.xReverse) === 1 ? 1 : 0;
             if (d.yReverse != null) this.servoCfgYReverse = Number(d.yReverse) === 1 ? 1 : 0;
+            if (d.perspective != null) {
+              this.servoCfgPerspective = String(d.perspective).trim().toLowerCase() === "robot"
+                ? "robot" : "viewer";
+            }
           } catch (e) { /* ignore */ }
         },
         async servoLoadCfgFromFile() {
           try {
-            const res = await fetch(deskbotApiUrl(this.httpBase, "/api/servo_config").toString(), { cache: "no-store" });
+            const res = await fetch(this._servoConfigApiUrl().toString(), { cache: "no-store" });
             let body = {};
             try { body = await res.json(); } catch (e) {}
             if (!res.ok || !body.ok || !body.exists || !body.config) {
@@ -3630,9 +4036,13 @@
         },
         async servoSaveCfgToFile() {
           if (this.servoCfgSaving) return;
+          if (!this.selected) {
+            this._manualSetServoStatus("保存配置失败：请先在页顶选择设备", true);
+            return;
+          }
           this.servoCfgSaving = true;
           try {
-            const res = await fetch(deskbotApiUrl(this.httpBase, "/api/servo_config").toString(), {
+            const res = await fetch(this._servoConfigApiUrl().toString(), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(this._servoCfgPayload()),
@@ -3645,7 +4055,8 @@
             }
             if (body.config) this._servoApplyFileDocument(body.config);
             this.servoPersistCfg();
-            this._manualSetServoStatus(`已保存到 data/${body.file || "servo.json"}`, false);
+            const devPart = body.device_id ? `device/${body.device_id}/` : "";
+            this._manualSetServoStatus(`已保存到 data/${devPart}${body.file || "servo.json"}`, false);
           } catch (e) {
             this._manualSetServoStatus("保存配置失败：" + (e && e.message ? e.message : e), true);
           } finally {
@@ -3663,6 +4074,7 @@
               yMax: this.servoCfgYMax,
               xReverse: this.servoCfgXReverse,
               yReverse: this.servoCfgYReverse,
+              perspective: String(this.servoCfgPerspective || "viewer") === "robot" ? "robot" : "viewer",
             }));
           } catch (e) { /* ignore */ }
         },
@@ -3799,7 +4211,9 @@
         },
         async servoRunPreset(preset) {
           if (!preset || !this.manualCanSendServo || this.manualServoBusy) return;
-          await this.servoDispatchSteps(preset.steps, { kind: "preset" });
+          const resolved = this._servoPresetById(preset.id);
+          if (!resolved || !resolved.steps || !resolved.steps.length) return;
+          await this.servoDispatchSteps(resolved.steps, { kind: "preset" });
         },
         async servoReplayHistory(row) {
           if (!row || !row.steps || !row.steps.length || !this.manualCanSendServo || this.manualServoBusy) return;
@@ -4374,6 +4788,856 @@
             ctx.stroke();
           }
         },
+        _exprShapeName(shape) {
+          return String(shape || "").trim().toLowerCase();
+        },
+        _exprLerpNum(a, b, t) {
+          const na = Number(a);
+          const nb = Number(b);
+          if (!Number.isFinite(na)) return b;
+          if (!Number.isFinite(nb)) return a;
+          return na + (nb - na) * t;
+        },
+        _exprInterpolatePrimitive(curr, next, t) {
+          if (!curr) return null;
+          const cs = this._exprShapeName(curr.shape);
+          const ns = this._exprShapeName(next && next.shape);
+          if (!cs || !next || cs !== ns) return JSON.parse(JSON.stringify(curr));
+          const out = JSON.parse(JSON.stringify(curr));
+          for (const k of Object.keys(out)) {
+            if (k === "shape") continue;
+            if (next[k] != null && typeof out[k] === "number" && typeof next[k] === "number") {
+              out[k] = this._exprLerpNum(out[k], next[k], t);
+            }
+          }
+          return out;
+        },
+        _exprInterpolatePrimitiveList(currList, nextList, t) {
+          const curr = Array.isArray(currList) ? currList : [];
+          const next = Array.isArray(nextList) ? nextList : [];
+          const out = [];
+          for (let i = 0; i < curr.length; i += 1) {
+            const c = curr[i];
+            if (!c) continue;
+            const nx = next[i];
+            if (!nx || this._exprShapeName(c.shape) !== this._exprShapeName(nx.shape)) {
+              out.push(JSON.parse(JSON.stringify(c)));
+            } else {
+              out.push(this._exprInterpolatePrimitive(c, nx, t));
+            }
+          }
+          return out;
+        },
+        _exprInterpolateElements(currEl, nextEl, t) {
+          const keys = ["nose", "mouth", "eye_l", "eye_r", "extra"];
+          const out = {};
+          for (const key of keys) {
+            out[key] = this._exprInterpolatePrimitiveList(
+              (currEl && currEl[key]) || [],
+              (nextEl && nextEl[key]) || [],
+              t,
+            );
+          }
+          return out;
+        },
+        _designFrameToElements(fr) {
+          if (!fr || typeof fr !== "object") {
+            return JSON.parse(JSON.stringify(EXPR_DEFAULT_ANIM.elements || {}));
+          }
+          const els = fr.elements || (fr.anim && fr.anim.elements);
+          if (els && typeof els === "object") {
+            return JSON.parse(JSON.stringify(els));
+          }
+          return JSON.parse(JSON.stringify(EXPR_DEFAULT_ANIM.elements || {}));
+        },
+        async exprScenesLoadForPreview() {
+          try {
+            const url = new URL("/api/face_expr_scenes", window.location.origin);
+            if (this.selected) url.searchParams.set("device_id", this.selected);
+            const res = await fetch(url.toString(), { cache: "no-store" });
+            const d = await res.json();
+            if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
+            const rows = Array.isArray(d.scenes) ? d.scenes : (Array.isArray(d.config) ? d.config : []);
+            this.exprScenesCache = rows.map((r) => ({
+              name: String((r && r.name) || "").trim(),
+              title: String((r && r.title) || (r && r.name) || "").trim(),
+              frames: Array.isArray(r && r.frames) ? JSON.parse(JSON.stringify(r.frames)) : [],
+            }));
+          } catch (e) {
+            this.exprScenesCache = [];
+          }
+          if (!this.exprScenesCache.length && !(this.exprEmotions || []).length) {
+            await this.refreshExprCatalog();
+          }
+        },
+        spExprSceneLabel(name) {
+          const nm = String(name || "").trim();
+          if (!nm) return "—";
+          const row = (this.exprScenesCache || []).find(
+            (r) => String(r.name || "").trim().toLowerCase() === nm.toLowerCase(),
+          ) || (this.exprEmotions || []).find(
+            (e) => String(e.name || "").trim().toLowerCase() === nm.toLowerCase(),
+          );
+          const title = row && row.title ? String(row.title).trim() : "";
+          return title && title !== nm ? `${nm} · ${title}` : nm;
+        },
+
+        spNewClipId() {
+          return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        },
+        spClampMs(v, fallback = 500) {
+          return Math.max(40, Math.min(120000, Math.round(Number(v) || fallback)));
+        },
+        _spLegacyToChunks(raw) {
+          const chunks = [];
+          for (const clip of (raw && raw.servo_track) || []) {
+            if (!clip || typeof clip !== "object") continue;
+            const preset = String(clip.preset || "").trim();
+            const ms = this.spClampMs(clip.ms);
+            if (preset) {
+              chunks.push({ id: clip.id || this.spNewClipId(), text: "", servo: { preset, ms } });
+            } else if (clip.x != null || clip.y != null) {
+              chunks.push({
+                id: clip.id || this.spNewClipId(),
+                text: "",
+                servo: {
+                  x: Math.round(Number(clip.x) || 90),
+                  y: Math.round(Number(clip.y) || 90),
+                  xm: Number(clip.xm) === 0 ? 0 : 1,
+                  ym: Number(clip.ym) === 0 ? 0 : (Number(clip.ym) === 1 ? 1 : 0),
+                  ms,
+                },
+              });
+            }
+          }
+          for (const clip of (raw && raw.expr_track) || []) {
+            if (!clip || typeof clip !== "object") continue;
+            const scene = String(clip.scene || "").trim();
+            if (scene) {
+              chunks.push({
+                id: clip.id || this.spNewClipId(),
+                text: "",
+                expr: { scene, ms: this.spClampMs(clip.ms) },
+              });
+            }
+          }
+          for (const clip of (raw && raw.text_track) || []) {
+            if (!clip || typeof clip !== "object") continue;
+            const t = String(clip.text || "").trim();
+            if (t) chunks.push({ id: clip.id || this.spNewClipId(), text: t });
+          }
+          const legacy = String((raw && raw.text) || "").trim();
+          if (legacy) chunks.push({ id: this.spNewClipId(), text: legacy });
+          return chunks;
+        },
+        spNormalizePlaybook(raw) {
+          const name = String((raw && raw.name) || "").trim();
+          const title = String((raw && raw.title) || (raw && raw.name) || "").trim();
+          let chunks = [];
+          if (Array.isArray(raw && raw.chunks) && raw.chunks.length) {
+            chunks = JSON.parse(JSON.stringify(raw.chunks));
+          } else {
+            chunks = this._spLegacyToChunks(raw);
+          }
+          return { name, title, chunks };
+        },
+        spDefaultChunk() {
+          return {
+            id: this.spNewClipId(),
+            text: "",
+            expr_scene: "",
+            expr_ms: 800,
+            servo_preset: "",
+            servo_ms: 500,
+            servo_x: 90,
+            servo_y: 90,
+            servo_xm: 0,
+            servo_ym: 0,
+          };
+        },
+        spChunkToDraft(c) {
+          if (!c || typeof c !== "object") return this.spDefaultChunk();
+          const servo = c.servo || {};
+          const preset = String(servo.preset || "").trim();
+          const hasCustom = !preset && (servo.x != null || servo.y != null);
+          return {
+            id: String(c.id || this.spNewClipId()),
+            text: String(c.text || ""),
+            expr_scene: String((c.expr && c.expr.scene) || ""),
+            expr_ms: this.spClampMs(c.expr && c.expr.ms, 800),
+            servo_preset: preset || (hasCustom ? "__custom__" : ""),
+            servo_ms: this.spClampMs(servo.ms, 500),
+            servo_x: Math.round(Number(servo.x) || 90),
+            servo_y: Math.round(Number(servo.y) || 90),
+            servo_xm: Number(servo.xm) === 0 ? 0 : 1,
+            servo_ym: Number(servo.ym) === 0 ? 0 : (Number(servo.ym) === 1 ? 1 : 0),
+          };
+        },
+        spChunkDurationMs(chunk) {
+          if (!chunk) return 40;
+          const parts = [];
+          if (chunk.servo) parts.push(this.spClampMs(chunk.servo.ms));
+          if (chunk.expr) parts.push(this.spClampMs(chunk.expr.ms));
+          if (String(chunk.text || "").trim()) parts.push(800);
+          return Math.max(40, ...parts, 40);
+        },
+        spApplyConfig(payload) {
+          const rows = Array.isArray(payload)
+            ? payload
+            : (payload && Array.isArray(payload.config) ? payload.config : []);
+          this.spPlaybooks = rows.map((r) => this.spNormalizePlaybook(r));
+        },
+        spBuildDocument() {
+          return JSON.parse(JSON.stringify(this.spPlaybooks || []));
+        },
+        spDownloadJson(filename, obj) {
+          const safe = String(filename || "playbook.json").replace(/[^\w.\-]+/g, "_");
+          const blob = new Blob([JSON.stringify(obj, null, 2) + "\n"], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = safe;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        },
+        spPlaybookForExport(idx) {
+          if (this.spEditDialog && this.spEditDialog.idx === idx) {
+            return this.spParseEditDialog();
+          }
+          const row = this.spPlaybooks[idx];
+          if (!row) throw new Error("无选中编排");
+          return this.spNormalizePlaybook(row);
+        },
+        spExportAllJson() {
+          const doc = this.spBuildDocument();
+          this.spDownloadJson(this.spFileName || "scene_playbooks.json", doc);
+          this.spSaveStatus = "已下载 " + (this.spFileName || "scene_playbooks.json");
+          this.spSaveStatusErr = false;
+        },
+        spExportSelectedJson() {
+          const idx = this.spSelectedIdx >= 0 ? this.spSelectedIdx : 0;
+          try {
+            const pb = this.spPlaybookForExport(idx);
+            this.spDownloadJson((pb.name || "playbook") + ".json", pb);
+            this.spSaveStatus = "已下载 " + (pb.name || "playbook") + ".json";
+            this.spSaveStatusErr = false;
+          } catch (e) {
+            this.spSaveStatus = "导出失败：" + (e && e.message ? e.message : e);
+            this.spSaveStatusErr = true;
+          }
+        },
+        spBuildClientDebugSnapshot(pb) {
+          const norm = this.spNormalizePlaybook(pb);
+          return {
+            ok: true,
+            client_side: true,
+            device_id: this.selected || null,
+            playbook: norm,
+            chunks: norm.chunks || [],
+            t: Date.now() / 1000,
+          };
+        },
+        async spExportPlaybookDebug(pb) {
+          if (!pb) throw new Error("无编排数据");
+          if (!this.selected) throw new Error("请先选择设备");
+          const url = new URL("/api/scene_playbook/export_plan", window.location.origin);
+          url.searchParams.set("device_id", this.selected);
+          try {
+            const res = await fetch(url.toString(), {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ device_id: this.selected, playbook: pb }),
+              cache: "no-store",
+            });
+            const ct = (res.headers.get("content-type") || "").toLowerCase();
+            let d = null;
+            if (ct.includes("application/json")) {
+              d = await res.json();
+            } else {
+              const txt = await res.text();
+              throw new Error("服务端返回非 JSON（HTTP " + res.status + "），请重启调试服务后重试");
+            }
+            if (!res.ok || !d.ok) {
+              throw new Error((d && d.error) || ("HTTP " + res.status));
+            }
+            this.spDownloadJson((pb.name || "playbook") + "_debug.json", d);
+            return d;
+          } catch (e) {
+            const snap = this.spBuildClientDebugSnapshot(pb);
+            snap.server_error = e && e.message ? e.message : String(e);
+            this.spDownloadJson((pb.name || "playbook") + "_debug_client.json", snap);
+            throw new Error((e && e.message ? e.message : e) + "（已降级下载 _debug_client.json）");
+          }
+        },
+        async spExportSelectedDebug() {
+          const idx = this.spSelectedIdx >= 0 ? this.spSelectedIdx : 0;
+          try {
+            const pb = this.spPlaybookForExport(idx);
+            await this.spExportPlaybookDebug(pb);
+            this.spSaveStatus = "已下载排查包 " + (pb.name || "playbook") + "_debug.json";
+            this.spSaveStatusErr = false;
+          } catch (e) {
+            this.spSaveStatus = "导出排查包失败：" + (e && e.message ? e.message : e);
+            this.spSaveStatusErr = true;
+          }
+        },
+        async spExportEditDebug() {
+          const dlg = this.spEditDialog;
+          if (!dlg) return;
+          dlg.error = "";
+          try {
+            const pb = this.spParseEditDialog();
+            await this.spExportPlaybookDebug(pb);
+            this.spSaveStatus = "已下载排查包 " + (pb.name || "playbook") + "_debug.json";
+            this.spSaveStatusErr = false;
+          } catch (e) {
+            dlg.error = e && e.message ? e.message : String(e);
+          }
+        },
+        spCopyEditJson() {
+          const dlg = this.spEditDialog;
+          if (!dlg) return;
+          dlg.error = "";
+          try {
+            const pb = this.spParseEditDialog();
+            const txt = JSON.stringify(pb, null, 2);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              void navigator.clipboard.writeText(txt).then(() => {
+                this.spSaveStatus = "已复制 JSON 到剪贴板";
+                this.spSaveStatusErr = false;
+              }).catch((e) => {
+                dlg.error = "复制失败：" + (e && e.message ? e.message : e);
+              });
+            } else {
+              this.spDownloadJson((pb.name || "playbook") + ".json", pb);
+              this.spSaveStatus = "浏览器不支持剪贴板，已改为下载";
+              this.spSaveStatusErr = false;
+            }
+          } catch (e) {
+            dlg.error = e && e.message ? e.message : String(e);
+          }
+        },
+        spTrackSummary(row) {
+          if (!row) return "—";
+          const pb = this.spNormalizePlaybook(row);
+          const chunks = pb.chunks || [];
+          if (!chunks.length) return "—";
+          const parts = chunks.map((c) => {
+            const bits = [];
+            if (String(c.text || "").trim()) bits.push("TTS");
+            if (c.expr && c.expr.scene) bits.push(c.expr.scene);
+            if (c.servo) bits.push(c.servo.preset || "舵机");
+            return bits.length ? bits.join("+") : "?";
+          });
+          return `${chunks.length}包 · ${parts.join(" → ")}`;
+        },
+        async spLoadFromFile() {
+          this.spLoadError = "";
+          try {
+            const url = new URL("/api/scene_playbooks", window.location.origin);
+            if (this.selected) url.searchParams.set("device_id", this.selected);
+            const res = await fetch(url.toString(), { cache: "no-store" });
+            const d = await res.json();
+            if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
+            if (d.file) this.spFileName = d.file;
+            this.spApplyConfig(d);
+          } catch (e) {
+            this.spLoadError = "载入失败：" + (e && e.message ? e.message : e);
+          }
+        },
+        async spSaveToFile() {
+          this.spSaveBusy = true;
+          this.spSaveStatus = "";
+          this.spSaveStatusErr = false;
+          try {
+            const body = this.spBuildDocument();
+            await this._spEnsureServoPresetsOnServer(body);
+            const url = new URL("/api/scene_playbooks", window.location.origin);
+            if (this.selected) url.searchParams.set("device_id", this.selected);
+            const res = await fetch(url.toString(), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const d = await res.json();
+            if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
+            if (d.file) this.spFileName = d.file;
+            this.spApplyConfig(d);
+            if (d.warning) {
+              this.spSaveStatus = "已保存，但 " + d.warning;
+              this.spSaveStatusErr = true;
+              return true;
+            }
+            this.spSaveStatus = "已保存到 " + (d.file || this.spFileName);
+            return true;
+          } catch (e) {
+            this.spSaveStatus = "保存失败：" + (e && e.message ? e.message : e);
+            this.spSaveStatusErr = true;
+            return false;
+          } finally {
+            this.spSaveBusy = false;
+          }
+        },
+        _spPlaybookServoPresetIds(rows) {
+          const ids = new Set();
+          for (const pb of rows || []) {
+            for (const c of (pb && pb.chunks) || []) {
+              const pid = c && c.servo && c.servo.preset;
+              if (pid) ids.add(String(pid));
+            }
+          }
+          return ids;
+        },
+        async _spEnsureServoPresetsOnServer(rows) {
+          const need = this._spPlaybookServoPresetIds(rows);
+          if (!need.size) return;
+          const local = new Set((this.servoPresets || []).map((p) => String(p.id)));
+          let shouldSave = false;
+          for (const id of need) {
+            if (local.has(id)) { shouldSave = true; break; }
+          }
+          if (!shouldSave) return;
+          if (!this.selected) {
+            throw new Error("请先在页顶选择设备，再保存场景。");
+          }
+          try {
+            const res = await fetch(this._servoConfigApiUrl().toString(), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(this._servoCfgPayload()),
+              cache: "no-store",
+            });
+            const d = await res.json();
+            if (!res.ok || !d.ok) {
+              throw new Error((d && d.error) || ("HTTP " + res.status));
+            }
+            if (d.config) this._servoApplyFileDocument(d.config);
+            this.servoPersistCfg();
+          } catch (e) {
+            throw new Error(
+              "场景含自定义舵机预设，同步 servo.json 失败："
+              + (e && e.message ? e.message : e)
+              + "。请先在舵机 Tab 点「保存配置」。",
+            );
+          }
+        },
+        spDefaultPlaybook() {
+          const suffix = Date.now().toString(36);
+          return {
+            name: "playbook_" + suffix,
+            title: "新编排",
+            chunks: [
+              { id: this.spNewClipId(), text: "", servo: { preset: "center", ms: 500 } },
+            ],
+          };
+        },
+        spAddRow() {
+          const row = this.spDefaultPlaybook();
+          this.spPlaybooks.push(row);
+          this.spOpenEditDialog(this.spPlaybooks.length - 1);
+        },
+        spDeleteRow(idx) {
+          if (idx < 0 || idx >= this.spPlaybooks.length) return;
+          this.spPlaybooks.splice(idx, 1);
+          if (this.spSelectedIdx === idx) this.spSelectedIdx = -1;
+          else if (this.spSelectedIdx > idx) this.spSelectedIdx -= 1;
+        },
+        spCloneEditDraft(row) {
+          const r = this.spNormalizePlaybook(row);
+          return {
+            name: r.name,
+            title: r.title,
+            chunks: (r.chunks || []).map((c) => this.spChunkToDraft(c)),
+            error: "",
+            saving: false,
+          };
+        },
+        spOpenEditDialog(idx) {
+          const row = this.spPlaybooks[idx];
+          if (!row) return;
+          this.spSelectedIdx = idx;
+          void this.exprScenesLoadForPreview();
+          this.spEditDialog = { idx, ...this.spCloneEditDraft(row) };
+        },
+        spCloseEditDialog() {
+          this.spEditDialog = null;
+          this.spDragClip = null;
+        },
+        spAddChunk() {
+          const dlg = this.spEditDialog;
+          if (!dlg) return;
+          if (!Array.isArray(dlg.chunks)) dlg.chunks = [];
+          dlg.chunks.push(this.spDefaultChunk());
+        },
+        spRemoveChunk(idx) {
+          const dlg = this.spEditDialog;
+          if (!dlg || !Array.isArray(dlg.chunks)) return;
+          dlg.chunks.splice(idx, 1);
+        },
+        spOnChunkServoPresetPick(chunk) {
+          if (!chunk) return;
+          if (chunk.servo_preset && chunk.servo_preset !== "__custom__") {
+            delete chunk.servo_x;
+            delete chunk.servo_y;
+            delete chunk.servo_xm;
+            delete chunk.servo_ym;
+          } else if (chunk.servo_preset === "__custom__") {
+            chunk.servo_x = chunk.servo_x ?? 90;
+            chunk.servo_y = chunk.servo_y ?? 90;
+            chunk.servo_xm = chunk.servo_xm ?? 0;
+            chunk.servo_ym = chunk.servo_ym ?? 0;
+          }
+        },
+        spDragStart(trackKey, idx, ev) {
+          this.spDragClip = { track: trackKey, idx };
+          if (ev && ev.dataTransfer) {
+            ev.dataTransfer.effectAllowed = "move";
+            ev.dataTransfer.setData("text/plain", String(idx));
+          }
+        },
+        spDragOver(trackKey, idx, ev) {
+          if (!this.spDragClip || this.spDragClip.track !== trackKey) return;
+          if (ev && ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+        },
+        spDragDrop(trackKey, toIdx, ev) {
+          const drag = this.spDragClip;
+          this.spDragClip = null;
+          const dlg = this.spEditDialog;
+          if (!drag || !dlg || drag.track !== trackKey || !Array.isArray(dlg[trackKey])) return;
+          const fromIdx = drag.idx;
+          if (fromIdx === toIdx) return;
+          const arr = dlg[trackKey];
+          const item = arr.splice(fromIdx, 1)[0];
+          if (!item) return;
+          let insertAt = toIdx;
+          if (fromIdx < toIdx) insertAt -= 1;
+          arr.splice(insertAt, 0, item);
+        },
+        spParseEditDialog() {
+          const dlg = this.spEditDialog;
+          if (!dlg) throw new Error("无编辑会话");
+          const name = String(dlg.name || "").trim();
+          if (!name) throw new Error("name 不能为空");
+          if (!/^[a-z][a-z0-9_]*$/i.test(name)) {
+            throw new Error("name 须为字母开头，仅含字母数字下划线");
+          }
+          const title = String(dlg.title || name).trim();
+          const chunks = (dlg.chunks || []).map((draft, i) => {
+            const text = String(draft.text || "").trim();
+            const out = { id: String(draft.id || this.spNewClipId()), text };
+            const scene = String(draft.expr_scene || "").trim();
+            if (scene) {
+              out.expr = { scene, ms: this.spClampMs(draft.expr_ms) };
+            }
+            const sp = String(draft.servo_preset || "").trim();
+            if (sp && sp !== "__custom__") {
+              out.servo = { preset: sp, ms: this.spClampMs(draft.servo_ms) };
+            } else if (sp === "__custom__") {
+              out.servo = {
+                x: Math.round(Number(draft.servo_x) || 90),
+                y: Math.round(Number(draft.servo_y) || 90),
+                xm: Number(draft.servo_xm) === 0 ? 0 : 1,
+                ym: Number(draft.servo_ym) === 0 ? 0 : (Number(draft.servo_ym) === 1 ? 1 : 0),
+                ms: this.spClampMs(draft.servo_ms),
+              };
+            }
+            if (!text && !out.expr && !out.servo) {
+              throw new Error(`第 ${i + 1} 个 pb 包至少填口播、表情或舵机之一`);
+            }
+            return out;
+          });
+          if (!chunks.length) throw new Error("至少添加一个 pb 包");
+          return { name, title, chunks };
+        },
+        async spSaveEditDialog() {
+          const dlg = this.spEditDialog;
+          if (!dlg) return;
+          dlg.error = "";
+          dlg.saving = true;
+          try {
+            const parsed = this.spParseEditDialog();
+            const dup = this.spPlaybooks.findIndex(
+              (r, i) => i !== dlg.idx && String(r.name).toLowerCase() === parsed.name.toLowerCase(),
+            );
+            if (dup >= 0) throw new Error(`name 与第 ${dup + 1} 行重复`);
+            this.spPlaybooks.splice(dlg.idx, 1, parsed);
+            this.spSelectedIdx = dlg.idx;
+            const ok = await this.spSaveToFile();
+            if (!ok) {
+              dlg.error = this.spSaveStatus || "保存失败";
+              return;
+            }
+            this.spCloseEditDialog();
+          } catch (e) {
+            dlg.error = e && e.message ? e.message : String(e);
+          } finally {
+            if (this.spEditDialog) this.spEditDialog.saving = false;
+          }
+        },
+        spExecEditDialog() {
+          const dlg = this.spEditDialog;
+          if (!dlg) return;
+          try {
+            const pb = this.spParseEditDialog();
+            void this.spRunPlaybook(pb, { fromEdit: true });
+          } catch (e) {
+            dlg.error = e && e.message ? e.message : String(e);
+          }
+        },
+        spExecRow(idx) {
+          const row = this.spPlaybooks[idx];
+          if (!row) return;
+          this.spSelectedIdx = idx;
+          void this.spRunPlaybook(this.spNormalizePlaybook(row));
+        },
+        _spStopPlayback() {
+          for (const t of (this._sceneTimelineTimers || [])) clearTimeout(t);
+          this._sceneTimelineTimers = [];
+          this._sceneExprStopTimeline();
+          if (this._sceneServoAnimTimer) {
+            cancelAnimationFrame(this._sceneServoAnimTimer);
+            this._sceneServoAnimTimer = null;
+          }
+          this.spExecBusy = false;
+        },
+        _sceneExprStopTimeline() {
+          if (this._sceneExprTimelineTimer) {
+            clearInterval(this._sceneExprTimelineTimer);
+            this._sceneExprTimelineTimer = null;
+          }
+          this._sceneExprTimelineState = null;
+        },
+        _scenePreviewSyncExprFromAnim(anim) {
+          const st = this._scenePreview3d;
+          if (!st || !st.faceCanvas) return;
+          this._exprDrawAnimOnCanvas(st.faceCanvas, anim);
+          if (st.faceTexture) st.faceTexture.needsUpdate = true;
+        },
+        _scenePreviewSyncServo() {
+          const st = this._scenePreview3d;
+          const THREE = window.__THREE__;
+          if (!st || !st.headPivot || !THREE) return;
+          const sim = this.sceneSimServo || {};
+          const x = Number(sim.x);
+          const y = Number(sim.y);
+          const deg = this._servoDisplayDegFromProtocol(
+            Number.isFinite(x) ? x : ROBOT_SERVO_CENTER,
+            Number.isFinite(y) ? y : ROBOT_SERVO_CENTER,
+          );
+          st.targetHeadYaw = THREE.MathUtils.degToRad(deg.yaw);
+          st.targetHeadPitch = THREE.MathUtils.degToRad(deg.pitch);
+        },
+        _scenePreviewSyncViewYaw() {
+          const st = this._scenePreview3d;
+          const THREE = window.__THREE__;
+          if (!st || !st.turntable || !THREE) return;
+          st.turntable.rotation.y = THREE.MathUtils.degToRad(Number(this.scenePreviewViewYawDeg) || 0);
+        },
+        _sceneExprTimelineTick() {
+          const st = this._sceneExprTimelineState;
+          if (!st) return;
+          const now = performance.now();
+          let idx = st.frameIdx;
+          let localStart = st.frameStartMs;
+          while (idx < st.durations.length - 1) {
+            const dur = st.durations[idx];
+            const elapsed = now - localStart;
+            if (elapsed < dur) break;
+            localStart += dur;
+            idx += 1;
+          }
+          if (idx !== st.frameIdx) {
+            st.frameIdx = idx;
+            st.frameStartMs = localStart;
+          }
+          const dur = st.durations[idx] || 500;
+          const elapsed = Math.max(0, now - st.frameStartMs);
+          const hasNext = idx < st.elementsList.length - 1;
+          const t = hasNext ? Math.min(1, elapsed / dur) : 0;
+          const currEl = st.elementsList[idx] || {};
+          const nextEl = hasNext ? (st.elementsList[idx + 1] || currEl) : currEl;
+          const interpEl = hasNext
+            ? this._exprInterpolateElements(currEl, nextEl, t)
+            : JSON.parse(JSON.stringify(currEl));
+          this._scenePreviewSyncExprFromAnim({ elements: interpEl });
+        },
+        _sceneExprPlayFrames(frames, label, maxMs) {
+          this._sceneExprStopTimeline();
+          const framesArr = Array.isArray(frames) ? frames : [];
+          if (!framesArr.length) {
+            this._scenePreviewSyncExprFromAnim(EXPR_DEFAULT_ANIM);
+            return;
+          }
+          this.scenePreviewLabel = label || "";
+          const elementsList = framesArr.map((fr) => this._designFrameToElements(fr));
+          const durations = framesArr.map((fr) => Math.max(40, Number(fr && fr.ms) || 500));
+          this._sceneExprTimelineState = {
+            elementsList,
+            durations,
+            frameIdx: 0,
+            frameStartMs: performance.now(),
+          };
+          this._sceneExprTimelineTick();
+          this._sceneExprTimelineTimer = setInterval(() => this._sceneExprTimelineTick(), 13);
+          if (maxMs > 0) {
+            this._sceneTimelineTimers.push(setTimeout(() => this._sceneExprStopTimeline(), maxMs));
+          }
+        },
+        _spResolveExprScene(name) {
+          const want = String(name || "").trim().toLowerCase();
+          if (!want) return null;
+          return (this.exprScenesCache || []).find(
+            (s) => String(s.name || "").trim().toLowerCase() === want,
+          ) || null;
+        },
+        _spServoClipSteps(clip) {
+          if (!clip) return [];
+          const presetId = String(clip.preset || "").trim();
+          if (presetId) {
+            const p = this._servoPresetById(presetId);
+            if (p && p.steps && p.steps.length) {
+              return this._manualCloneServoSteps(p.steps).map((s) => ({
+                ...s,
+                ms: Math.max(40, Number(clip.ms) || Number(s.ms) || 500),
+              }));
+            }
+            return [{ x: 90, y: 90, xm: 0, ym: 0, ms: clip.ms || 500 }];
+          }
+          return [{
+            x: Number(clip.x) || 90,
+            y: Number(clip.y) || 90,
+            xm: Number(clip.xm) === 0 ? 0 : 1,
+            ym: Number(clip.ym) === 0 ? 0 : (Number(clip.ym) === 1 ? 1 : (Number(clip.xm) === 0 ? 0 : 1)),
+            ms: Math.max(40, Number(clip.ms) || 500),
+          }];
+        },
+        _spAnimateServoProtoSim(proto) {
+          return new Promise((resolve) => {
+            const startX = Number(this.sceneSimServo.x) || 90;
+            const startY = Number(this.sceneSimServo.y) || 90;
+            let endX = proto.xm === 0 ? proto.x : startX + proto.x;
+            let endY = proto.ym === 0 ? proto.y : startY + proto.y;
+            const c = this._servoCfgNorm();
+            endX = this._servoClampAxis(endX, c.xMin, c.xMax);
+            endY = this._servoClampAxis(endY, c.yMin, c.yMax);
+            const dur = Math.max(40, proto.ms || 400);
+            const t0 = performance.now();
+            const tick = () => {
+              const t = Math.min(1, (performance.now() - t0) / dur);
+              this.sceneSimServo = {
+                x: startX + (endX - startX) * t,
+                y: startY + (endY - startY) * t,
+              };
+              this._scenePreviewSyncServo();
+              if (t < 1) {
+                this._sceneServoAnimTimer = requestAnimationFrame(tick);
+              } else {
+                this._sceneServoAnimTimer = null;
+                resolve();
+              }
+            };
+            tick();
+          });
+        },
+        async _spRunServoClipSim(clip) {
+          const steps = this._spServoClipSteps(clip);
+          for (const step of steps) {
+            const proto = this._servoStepToProtocol(step);
+            await this._spAnimateServoProtoSim(proto);
+          }
+        },
+        _spPlayExprClip(sceneName, ms) {
+          const row = this._spResolveExprScene(sceneName);
+          if (!row || !row.frames || !row.frames.length) {
+            this.scenePreviewLabel = sceneName + " (未找到)";
+            this._scenePreviewSyncExprFromAnim(EXPR_DEFAULT_ANIM);
+            return;
+          }
+          this._sceneExprPlayFrames(row.frames, sceneName, ms);
+        },
+        async spDispatchPlaybookDevice(pb) {
+          if (!this.selected || !this.selectedHasAsrChat) return false;
+          try {
+            const res = await fetch(this.httpBase + "/api/scene_playbook/run", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ device_id: this.selected, playbook: pb }),
+              cache: "no-store",
+            });
+            const d = await res.json();
+            if (!res.ok || !d.ok) {
+              throw new Error((d && (d.error || d.hint)) || ("HTTP " + res.status));
+            }
+            return true;
+          } catch (e) {
+            this.spExecStatus = "设备下发失败：" + (e && e.message ? e.message : e);
+            this.spExecStatusErr = true;
+            return false;
+          }
+        },
+        async spRunPlaybook(rawPb, opts = {}) {
+          if (!rawPb) return;
+          const pb = this.spNormalizePlaybook(rawPb);
+          this._spStopPlayback();
+          this.spExecBusy = true;
+          this.spExecStatus = "预览中…";
+          this.spExecStatusErr = false;
+          this.sceneSimServo = { x: 90, y: 90 };
+          this._scenePreviewSyncServo();
+          this.scenePreviewTtsLabel = "";
+          this.scenePreviewLabel = pb.title || pb.name || "";
+
+          if (this.activeTab === "scene") {
+            await this.$nextTick();
+            if (!this._scenePreview3d) await this.scenePreviewInit3d();
+          }
+
+          const canDevice = !!(this.selected && this.selectedHasAsrChat);
+          if (canDevice) {
+            void this.spDispatchPlaybookDevice(pb);
+          }
+
+          const scheduleAt = (delayMs, fn) => {
+            const wait = Math.max(0, delayMs);
+            this._sceneTimelineTimers.push(setTimeout(fn, wait));
+          };
+
+          let offset = 0;
+          for (const chunk of pb.chunks || []) {
+            const wait = offset;
+            if (chunk.servo) {
+              const servoClip = { ...chunk.servo };
+              scheduleAt(wait, () => { void this._spRunServoClipSim(servoClip); });
+            }
+            if (chunk.expr && chunk.expr.scene) {
+              const scene = chunk.expr.scene;
+              const ms = this.spClampMs(chunk.expr.ms);
+              scheduleAt(wait, () => { this._spPlayExprClip(scene, ms); });
+            }
+            const tts = String(chunk.text || "").trim();
+            if (tts) {
+              scheduleAt(wait, () => { this.scenePreviewTtsLabel = tts; });
+            }
+            offset += this.spChunkDurationMs(chunk);
+          }
+
+          const totalMs = Math.max(offset, 800);
+          scheduleAt(totalMs + 120, () => {
+            this.spExecBusy = false;
+            if (canDevice && !this.spExecStatusErr) {
+              this.spExecStatus = `预览完成（设备 ${this.selected} 已提交交错下发 req 见网络）`;
+            } else if (this.selected && !canDevice) {
+              this.spExecStatus = "预览完成（asr_chat 未连接，仅本地）";
+              this.spExecStatusErr = true;
+            } else if (!this.spExecStatusErr) {
+              this.spExecStatus = "预览完成（仅本地模拟）";
+            }
+          });
+        },
+
         _exprDrawAnimOnCanvas(canvas, anim) {
           if (!canvas) return;
           const ctx = canvas.getContext("2d");
@@ -4458,6 +5722,164 @@
             }
           }
           this._robot3d = null;
+        },
+        scenePreviewDispose3d() {
+          if (this._scenePreviewAnimId) {
+            cancelAnimationFrame(this._scenePreviewAnimId);
+            this._scenePreviewAnimId = null;
+          }
+          if (this._scenePreviewResizeObs) {
+            try { this._scenePreviewResizeObs.disconnect(); } catch (e) { /* ignore */ }
+            this._scenePreviewResizeObs = null;
+          }
+          const st = this._scenePreview3d;
+          if (st && st.renderer) {
+            if (st.faceTexture) {
+              try { st.faceTexture.dispose(); } catch (e) { /* ignore */ }
+            }
+            st.renderer.dispose();
+            if (st.renderer.domElement && st.renderer.domElement.parentNode) {
+              st.renderer.domElement.parentNode.removeChild(st.renderer.domElement);
+            }
+          }
+          this._scenePreview3d = null;
+        },
+        async scenePreviewInit3d() {
+          this.scenePreviewDispose3d();
+          this.scenePreview3dError = "";
+          const host = this.$refs.scenePreview3dHost;
+          if (!host) return;
+
+          let THREE;
+          try {
+            THREE = await this._ensureThreeLoaded();
+          } catch (e) {
+            this.scenePreview3dError = "Three.js 加载失败";
+            return;
+          }
+
+          let renderer;
+          try {
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+          } catch (e) {
+            this.scenePreview3dError = "WebGL 不可用";
+            return;
+          }
+
+          const w = Math.max(120, host.clientWidth || 320);
+          const h = Math.max(120, host.clientHeight || 260);
+
+          const scene = new THREE.Scene();
+          scene.background = new THREE.Color(0xeef2f7);
+
+          const camera = new THREE.PerspectiveCamera(38, w / h, 0.08, 50);
+          camera.position.set(0, 0.92, 2.65);
+          camera.lookAt(0, 0.78, 0);
+
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+          renderer.setSize(w, h, false);
+          host.appendChild(renderer.domElement);
+
+          scene.add(new THREE.AmbientLight(0xffffff, 0.62));
+          const key = new THREE.DirectionalLight(0xffffff, 0.88);
+          key.position.set(1.5, 3.5, 2.5);
+          scene.add(key);
+          const rim = new THREE.DirectionalLight(0xcfe0ff, 0.35);
+          rim.position.set(-2, 1.2, -1.5);
+          scene.add(rim);
+          scene.add(new THREE.GridHelper(2.4, 8, 0xc7c7cc, 0xe5e5ea));
+          scene.add(this._robotMakeForwardArrow(THREE));
+
+          const turntable = new THREE.Group();
+          scene.add(turntable);
+
+          const bodyMat = new THREE.MeshStandardMaterial({ color: 0x8e8e93, roughness: 0.55, metalness: 0.12 });
+          const headMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f7, roughness: 0.42, metalness: 0.06 });
+          const neckMat = new THREE.MeshStandardMaterial({ color: 0x0071e3, roughness: 0.38, metalness: 0.18 });
+
+          const base = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.55, 0.62, 0.07, 24),
+            new THREE.MeshStandardMaterial({ color: 0xd1d1d6, roughness: 0.58 }),
+          );
+          base.position.y = -0.02;
+          turntable.add(base);
+
+          const body = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.62, 0.52), bodyMat);
+          body.position.y = 0.28;
+          turntable.add(body);
+
+          const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.22, 16), neckMat);
+          neck.position.y = 0.66;
+          turntable.add(neck);
+
+          const headPivot = new THREE.Group();
+          headPivot.position.y = 0.8;
+          turntable.add(headPivot);
+
+          const head = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.5, 0.54), headMat);
+          head.position.y = 0.22;
+          headPivot.add(head);
+
+          const faceCanvas = document.createElement("canvas");
+          faceCanvas.width = FACE_LCD_W;
+          faceCanvas.height = FACE_LCD_H;
+          const faceTexture = new THREE.CanvasTexture(faceCanvas);
+          faceTexture.magFilter = THREE.NearestFilter;
+          faceTexture.minFilter = THREE.NearestFilter;
+          const faceScreen = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.42, 0.42 * FACE_LCD_H / FACE_LCD_W),
+            new THREE.MeshBasicMaterial({ map: faceTexture, toneMapped: false }),
+          );
+          faceScreen.position.set(0, 0.22, 0.272);
+          headPivot.add(faceScreen);
+
+          this._exprDrawAnimOnCanvas(faceCanvas, EXPR_DEFAULT_ANIM);
+          faceTexture.needsUpdate = true;
+
+          this._scenePreview3d = markRaw({
+            scene: markRaw(scene),
+            camera: markRaw(camera),
+            renderer: markRaw(renderer),
+            turntable: markRaw(turntable),
+            headPivot: markRaw(headPivot),
+            faceCanvas,
+            faceTexture: markRaw(faceTexture),
+            faceScreen: markRaw(faceScreen),
+            currentHeadYaw: 0,
+            currentHeadPitch: 0,
+            targetHeadYaw: 0,
+            targetHeadPitch: 0,
+          });
+          this._scenePreviewSyncServo();
+          this._scenePreviewSyncViewYaw();
+
+          const resize = () => {
+            const st = this._scenePreview3d;
+            if (!st || !host) return;
+            const rw = Math.max(120, host.clientWidth || 320);
+            const rh = Math.max(120, host.clientHeight || 260);
+            st.camera.aspect = rw / rh;
+            st.camera.updateProjectionMatrix();
+            st.renderer.setSize(rw, rh, false);
+          };
+          if (typeof ResizeObserver !== "undefined") {
+            this._scenePreviewResizeObs = new ResizeObserver(() => resize());
+            this._scenePreviewResizeObs.observe(host);
+          }
+
+          const tick = () => {
+            const st = this._scenePreview3d;
+            if (!st) return;
+            this._scenePreviewSyncServo();
+            st.currentHeadYaw += (st.targetHeadYaw - st.currentHeadYaw) * 0.2;
+            st.currentHeadPitch += (st.targetHeadPitch - st.currentHeadPitch) * 0.2;
+            st.headPivot.rotation.order = "YXZ";
+            st.headPivot.rotation.y = st.currentHeadYaw;
+            st.headPivot.rotation.x = st.currentHeadPitch;
+            st.renderer.render(st.scene, st.camera);
+            this._scenePreviewAnimId = requestAnimationFrame(tick);
+          };
+          tick();
         },
         async robotInit3d() {
           this._robotDispose3d();
@@ -4617,6 +6039,7 @@
           this._cvFollowLastSendMs = 0;
           this._cvFollowLastSmileMs = 0;
           this._syncPbAckFromSelectedDevice();
+          void this.exprScenesLoadForPreview();
           this.reconnect();
         },
         pbAckServo: {
@@ -4626,9 +6049,17 @@
             if (!this.absPadDragging) this._syncAbsFromPbAck();
           },
         },
-        servoCfgXReverse() { this._robotSyncServoAngles(); },
-        servoCfgYReverse() { this._robotSyncServoAngles(); },
+        servoCfgXReverse() { this._robotSyncServoAngles(); this._scenePreviewSyncServo(); },
+        servoCfgYReverse() { this._robotSyncServoAngles(); this._scenePreviewSyncServo(); },
         robotViewYawDeg() { this._robotSyncViewYaw(); },
+
+        scenePreviewViewYawDeg() { this._scenePreviewSyncViewYaw(); },
+        activeTab(tab) {
+          if (tab === "scene") {
+            void this.exprScenesLoadForPreview();
+            this.$nextTick(() => { void this.scenePreviewInit3d(); });
+          }
+        },
       },
       async mounted() {
         this._onGlobalDeviceChange = (e) => {
@@ -4682,6 +6113,8 @@
         void this.cvFetchVoiceAutoReply();
         void this.cvFetchPbIdleAutoDispatch();
         void this.cvFetchServoAutoMode();
+        void this.exprScenesLoadForPreview();
+        await this.spLoadFromFile();
         try {
           await this._ensureThreeLoaded();
           this.$nextTick(() => { void this.robotInit3d(); });
@@ -4701,6 +6134,8 @@
         if (this._cvFollowTickTimer) clearInterval(this._cvFollowTickTimer);
         if (this._cvServoStatusTimer) clearTimeout(this._cvServoStatusTimer);
         if (this._manualServoStatusTimer) clearTimeout(this._manualServoStatusTimer);
+        this._spStopPlayback();
+        this.scenePreviewDispose3d();
         this._robotDispose3d();
         if (this.cvImgUrl) { try { URL.revokeObjectURL(this.cvImgUrl); } catch (e) {} }
       },

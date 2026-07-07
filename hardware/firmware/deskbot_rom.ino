@@ -11,6 +11,7 @@
 #include "audio_player.h"
 #include "audio_capture.h"
 #include "asr_chat_client.h"
+#include "camera_uplink_client.h"
 #include "head.h"
 #include "cmd.h"
 #include "task_trace.h"
@@ -25,10 +26,12 @@ unsigned long loop_start_time = 0;
 
 static void on_wifi_link_down() {
   asrChatClient.onLinkDown("wifi lost");
+  cameraUplinkClient.onLinkDown("wifi lost");
 }
 
 static void on_wifi_link_up() {
   asrChatClient.onLinkUp();
+  cameraUplinkClient.onLinkUp();
 }
 
 static void deskbot_network_poll() {
@@ -86,6 +89,8 @@ static bool setup_camera() {
   }
   if (config.pixel_format == PIXFORMAT_JPEG) {
     s->set_framesize(s, FRAMESIZE_QVGA);
+    /* 略降画质 (~4–5KB JPEG)，减轻 WS TEXT base64 单帧 TCP 压力。 */
+    s->set_quality(s, 18);
   }
   return true;
 }
@@ -180,7 +185,8 @@ void loop() {
         break;
       }
 
-      asrChatClient.serviceLoop(/*allow_camera=*/true);
+      cameraUplinkClient.serviceLoop();
+      asrChatClient.serviceLoop(/*allow_camera=*/false);
 
       if (!asrChatClient.runVoiceRound(RECORD_TIME)) {
         log_error("[CHAT] asr_chat round failed, reconnect retry in 2s");
