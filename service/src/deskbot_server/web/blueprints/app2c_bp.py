@@ -102,6 +102,10 @@ def onboarding():
     return render_template("app2c/onboarding.html")
 
 
+# 引导只让用户填 API Key；文本类功能默认路由到这个火山方舟模型（与图片生成同款），用户可切换。
+DEFAULT_TEXT_MODEL = "doubao-seed-2-1-pro-260628"
+
+
 def _system_llm_payload() -> dict:
     sys = resolve_system_llm_config()
     api_key_set = _llm_api_key_set(sys.api_key)
@@ -113,6 +117,7 @@ def _system_llm_payload() -> dict:
             "base_url": sys.api_base or "",
             "api_key_set": api_key_set,
         },
+        "default_model": DEFAULT_TEXT_MODEL,
         "protocols": list(SUPPORTED_PROTOCOLS),
         "needs_config": not api_key_set,
     }
@@ -128,10 +133,11 @@ def setup_llm_get():
 @login_required
 def setup_llm_post():
     payload = request.get_json(silent=True) or {}
-    model_name = str(payload.get("model_name") or "").strip()
+    api_key = str(payload.get("api_key") or "").strip()
+    model_name = str(payload.get("model_name") or "").strip() or DEFAULT_TEXT_MODEL
     protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
-    if not model_name:
-        return jsonify({"ok": False, "error": "请填写模型名称"}), 400
+    if not api_key or "*" in api_key or "•" in api_key:
+        return jsonify({"ok": False, "error": "请填写火山方舟 API Key"}), 400
     if protocol not in SUPPORTED_PROTOCOLS:
         return jsonify({"ok": False, "error": f"不支持的协议: {protocol}"}), 400
     save_llm_env(
@@ -153,7 +159,7 @@ def setup_llm_post():
 def setup_llm_test():
     payload = request.get_json(silent=True) or {}
     current = resolve_system_llm_config()
-    model_name = str(payload.get("model_name") or "").strip() or current.model
+    model_name = str(payload.get("model_name") or "").strip() or DEFAULT_TEXT_MODEL
     protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
     # base_url 留空时交给协议默认解析（ark→火山方舟地址），不要沿用旧的系统默认地址
     base_url = str(payload.get("base_url") or "").strip()
@@ -196,6 +202,77 @@ def setup_llm_test():
             "meta": {"model": meta.get("model"), "display_name": meta.get("display_name")},
         }
     )
+
+
+def _list_ark_models(api_key: str, base_url: str | None = None) -> list[dict]:
+    """用数据面 API Key 拉取火山方舟模型清单，过滤掉已下线(Shutdown)的。
+
+    返回 [{id, name, status}]，id 为可直接用于 --model 的完整模型 ID。
+    """
+    import json as _json
+    import urllib.request
+
+    from deskbot_server.llm.runtime import ARK_OPENAI_BASE_URL
+
+    url = (str(base_url or "").strip() or ARK_OPENAI_BASE_URL).rstrip("/") + "/models"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - 固定火山方舟地址
+        data = _json.loads(resp.read().decode("utf-8"))
+    # 只保留能做对话/多模态理解的模型，过滤 embedding / 语音 / 图像视频生成等非对话族
+    non_chat = ("embedding", "-tts", "-asr", "seedream", "seedance", "seededit", "-voice", "music", "podcast")
+    out: list[dict] = []
+    for m in data.get("data", []) or []:
+        if m.get("status") == "Shutdown":
+            continue
+        mid = str(m.get("id") or "").strip()
+        if not mid or any(k in mid for k in non_chat):
+            continue
+        out.append({"id": mid, "name": m.get("name") or mid, "status": m.get("status") or "active"})
+    return out
+
+
+@bp.post("/api/setup/llm/models")
+@login_required
+def setup_llm_models():
+    payload = request.get_json(silent=True) or {}
+    api_key = str(payload.get("api_key") or "").strip()
+    if not api_key or "*" in api_key or "•" in api_key:
+        api_key = str(resolve_system_llm_config().api_key or "").strip()
+    if not _llm_api_key_set(api_key):
+        return jsonify({"ok": False, "error": "请先填写火山方舟 API Key"}), 400
+    try:
+        models = _list_ark_models(api_key, payload.get("base_url"))
+    except Exception as exc:  # noqa: BLE001 - surface fetch error to the user
+        return jsonify({"ok": False, "error": f"获取模型清单失败：{exc}"}), 502
+    return jsonify({"ok": True, "models": models, "default_model": DEFAULT_TEXT_MODEL})
+
+
+@bp.post("/api/debug/reset-account")
+@login_required
+def debug_reset_account():
+    """调试用：把当前账号重置回新用户状态（解绑所有设备、吊销 API Key、清除本机大模型配置）。"""
+    from deskbot_server.auth.api_key_service import revoke_api_key
+    from deskbot_server.auth.device_service import unbind_device
+    from deskbot_server.llm.env_store import clear_llm_env
+    from deskbot_server.web.session_device import clear_current_device
+
+    uid = current_user.id
+    cleared = {"devices": 0, "api_keys": 0}
+    for d in list_devices_for_user(uid):
+        try:
+            if unbind_device(uid, d.device_id):
+                cleared["devices"] += 1
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+    for k in list_api_keys_for_user(uid):
+        try:
+            if revoke_api_key(uid, k.id):
+                cleared["api_keys"] += 1
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+    clear_current_device()
+    clear_llm_env()
+    return jsonify({"ok": True, "cleared": cleared})
 
 
 def _totals_payload(row: dict) -> dict:

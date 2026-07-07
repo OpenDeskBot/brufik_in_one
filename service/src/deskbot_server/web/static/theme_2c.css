@@ -450,3 +450,20 @@ input[type=range]{width:100%;accent-color:var(--accent);height:6px}
 .llm-cta .llm-cta-txt small{font-size:12px;opacity:.92}
 .llm-cta .llm-cta-btn{flex:none;background:var(--panel);color:var(--ink);border:var(--bw) solid var(--line);
   border-radius:var(--rs);padding:7px 14px;font-weight:700;font-size:13px;box-shadow:var(--shadow-sm)}
+
+/* 高级页：本机大模型面板 */
+.setup-card{border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel2);
+  box-shadow:var(--shadow-sm);padding:14px 16px;margin-bottom:14px}
+.setup-card .llm-form{margin-top:12px}
+.setup-row{display:flex;align-items:center;gap:12px}
+.setup-row>div:first-child{flex:1}
+.setup-row b{font-size:14px} .setup-row small{display:block;color:var(--dim);font-size:12px;margin-top:2px}
+.setup-hint{display:block;color:var(--faint);font-size:12px;margin-top:10px}
+
+/* 调试：危险操作区 + 危险按钮 */
+.danger-zone{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:18px;
+  padding:14px 16px;border:var(--bw) solid #d92d20;border-radius:var(--r);background:#fff5f4;box-shadow:var(--shadow-sm)}
+.danger-zone>div:first-child{flex:1}
+.danger-zone b{font-size:14px;color:#b42318}
+.danger-zone small{display:block;color:var(--dim);font-size:12px;margin-top:3px;line-height:1.5}
+.btn.danger{background:#d92d20;color:#fff;border-color:var(--line)}

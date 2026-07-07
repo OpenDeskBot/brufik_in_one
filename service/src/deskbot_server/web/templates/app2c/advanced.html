@@ -191,6 +191,29 @@
       <small v-if="llm.active">[[ llm.active.model ]] · [[ llm.active.source==='device' ? '设备自定义' : '系统默认' ]]</small>
       <button type="button" class="btn ghost" @click="useSystemModel" :disabled="!currentDeviceId">切回系统默认</button>
     </div>
+
+    <div class="blocktitle">本机大模型 · 火山方舟</div>
+    <div class="setup-card">
+      <div class="setup-row">
+        <div><b>火山方舟 API Key</b><small>[[ setup.api_key_set ? '已配置（只保存在本机 .env，不上云）· 大模型/表情/图片共用' : '未配置' ]]</small></div>
+        <span class="tagdev" v-if="setup.api_key_set">已配置</span>
+        <a class="btn ghost" href="{{ url_for('app2c.onboarding') }}" v-else>去配置</a>
+      </div>
+      <form class="llm-form" @submit.prevent="saveSetup">
+        <input class="tinput" v-model="setup.api_key" type="password" :placeholder="setup.api_key_set ? '更新 API Key（留空则不修改）' : '粘贴火山方舟 API Key'">
+        <input class="tinput" v-model="setup.model_name" list="setupModels" :placeholder="setup.default_model || 'doubao-seed-2-1-pro-260628'">
+        <datalist id="setupModels"><option v-for="m in setup.models" :key="m.id" :value="m.id"></option></datalist>
+        <div class="btngroup">
+          <button type="submit" class="btn primary">[[ setup.saving ? '保存中…' : '保存' ]]</button>
+          <button type="button" class="btn ghost" @click="detectSetupModels" :disabled="setup.detecting">[[ setup.detecting ? '检测中…' : (setup.models.length ? '🔄 已检测 '+setup.models.length+' 个' : '🔄 检测可用模型') ]]</button>
+          <button type="button" class="btn ghost" @click="testSetup" :disabled="setup.testing">[[ setup.testing ? '测试中…' : '测试连接' ]]</button>
+        </div>
+      </form>
+      <div class="debug-output" v-if="setup.result">
+        <b>[[ setup.result.ok ? (setup.result.reply || '连接/保存成功') : (setup.result.error || '失败') ]]</b>
+      </div>
+      <small class="setup-hint">对话与 AI 表情用这里的模型；图片生成用同一个 Key。下面的「按设备覆盖」仅高级用户需要。</small>
+    </div>
     <div class="design-warnings" v-if="llm.needs_config">
       <b>需要配置大模型</b>
       <ul>
@@ -305,6 +328,11 @@
         <span>调试令牌</span>
         <code>[[ debug.token ]]</code>
       </div>
+
+      <div class="danger-zone">
+        <div><b>重置为新用户（调试）</b><small>解绑全部设备、吊销 API Key、清除本机大模型配置，回到刚注册的状态。仅用于调试，操作不可撤销。</small></div>
+        <button type="button" class="btn danger" @click="resetAccount" :disabled="resetting">[[ resetting ? '重置中…' : '重置账号' ]]</button>
+      </div>
       </section>
 
       <section v-if="debugMode==='llm'">
@@ -388,7 +416,7 @@ const { createApp } = Vue;
 createApp({
   delimiters:['[[',']]'],
   data(){ return {
-    active:'usage', debugMode:'devices', msg:'', loading:false,
+    active:'usage', debugMode:'devices', msg:'', loading:false, resetting:false,
     user:{email:'',display_name:''}, profileName:'',
     password:{old_password:'',new_password:'',confirm_password:''},
     devices:[], currentDeviceId:'',
@@ -397,6 +425,7 @@ createApp({
     apiKeys:[], newKeyName:'', rawKey:'',
     llm:{protocols:['ark','openai'], models:[], active_model_id:null, active:null, system_default:null, error:''},
     editingModelId:'', llmTesting:false, llmTestResult:null,
+    setup:{ api_key_set:false, model_name:'', default_model:'', api_key:'', models:[], saving:false, detecting:false, testing:false, result:null },
     llmForm:{name:'', model_name:'', protocol:'ark', base_url:'', api_key:'', test_prompt:'你好，请用一句话介绍你自己。'},
     debug:{
       health:null, token:'', tokenExpires:0,
@@ -497,8 +526,48 @@ createApp({
       this.llm=Object.assign({protocols:['ark','openai'],models:[]}, d.llm||{});
       if(!this.llmForm.protocol) this.llmForm.protocol=(this.llm.protocols&&this.llm.protocols[0])||'ark';
     },
+    async loadSetup(){
+      try{
+        const d = await this.api('/api/setup/llm');
+        this.setup.api_key_set = !!(d.config && d.config.api_key_set);
+        this.setup.default_model = d.default_model || '';
+        if(this.setup.api_key_set && !this.setup.model_name) this.setup.model_name = (d.config && d.config.model_name) || '';
+      }catch(e){ /* 忽略：未配置时保持默认 */ }
+    },
+    async detectSetupModels(){
+      this.setup.detecting=true; this.setup.result=null;
+      try{
+        const d = await this.api('/api/setup/llm/models', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:this.setup.api_key})});
+        this.setup.models = d.models || [];
+      }catch(e){ this.setup.result={ok:false,error:e.message||'检测失败'}; }
+      finally{ this.setup.detecting=false; }
+    },
+    async testSetup(){
+      this.setup.testing=true; this.setup.result=null;
+      try{ this.setup.result = await this.api('/api/setup/llm/test', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:this.setup.api_key, model_name:this.setup.model_name})}); }
+      catch(e){ this.setup.result={ok:false,error:e.message||'测试失败'}; }
+      finally{ this.setup.testing=false; }
+    },
+    async saveSetup(){
+      this.setup.saving=true; this.setup.result=null;
+      try{
+        const d = await this.api('/api/setup/llm', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:this.setup.api_key, model_name:this.setup.model_name})});
+        this.setup.result = {ok:true, reply:'已保存'}; this.setup.api_key=''; await this.loadSetup(); await this.load();
+      }catch(e){ this.setup.result={ok:false,error:e.message||'保存失败'}; }
+      finally{ this.setup.saving=false; }
+    },
+    async resetAccount(){
+      if(!confirm('确定要把当前账号重置为新用户状态吗？\n将解绑全部设备、吊销 API Key、清除本机大模型配置，且不可撤销。')) return;
+      this.resetting=true;
+      try{
+        const d = await this.api('/api/debug/reset-account', {method:'POST'});
+        alert('已重置：解绑设备 '+(d.cleared?d.cleared.devices:0)+' 台，吊销 Key '+(d.cleared?d.cleared.api_keys:0)+' 个，已清除大模型配置。即将进入新用户引导。');
+        window.location.href='{{ url_for("app2c.onboarding") }}';
+      }catch(e){ this.msg=e.message||'重置失败'; this.resetting=false; }
+    },
     async load(){
       this.loading=true; this.msg='';
+      this.loadSetup();
       try{ this.applyPayload(await this.api('/api/advanced')); }
       catch(e){ this.msg=e.message||'加载失败'; }
       finally{ this.loading=false; }

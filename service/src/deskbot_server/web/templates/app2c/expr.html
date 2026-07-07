@@ -226,7 +226,7 @@ const DEFAULT_CUSTOM_FACE = Object.freeze({
 createApp({
   delimiters:['[[',']]'],
   data(){ return {
-    scenes:[], selected:0, mode:'custom', exprTab:'face', deviceId:'', sending:false, savingProfessional:false,
+    scenes:[], selected:0, mode:'custom', editingFace:false, exprTab:'face', deviceId:'', sending:false, savingProfessional:false,
     emotions:[['happy','😄','开心'],['surprised','😲','惊讶'],['thinking','🤔','思考'],['sleepy','😴','困'],['idle','😐','待机']],
     map:{}, msg:'', customFace:{...DEFAULT_CUSTOM_FACE}, professionalDesign:null, professionalFileName:'',
     imageExpressionFile:null, imageExpressionFileName:'', imageExpressionResult:null,
@@ -240,7 +240,15 @@ createApp({
   }; },
   computed:{
     previewScene(){
-      if(this.mode === 'custom') return this.buildCustomScene();
+      if(this.mode === 'custom'){
+        // 未开始编辑时，直接显示已保存的 idle/自定义脸场景本身（与首页 sceneToSvg 完全一致）；
+        // 一旦拖动滑块进入编辑，才切到 buildCustomScene（滑块合成脸）。
+        if(!this.editingFace){
+          const saved = (this.scenes || []).find(s => s && s.name === 'custom_face');
+          if(saved) return saved;
+        }
+        return this.buildCustomScene();
+      }
       const preview = window.DeskbotFacePreview;
       return this.scenes[this.selected] || (preview && preview.fallbackScene) || this.buildCustomScene();
     },
@@ -395,9 +403,10 @@ createApp({
       this.generatedPreviewPlaying = !this.generatedPreviewPlaying;
       this.scheduleGeneratedPlayback();
     },
-    activateCustom(){ this.mode = 'custom'; this.resetPreviewPlayback(); },
+    activateCustom(){ this.editingFace = true; this.mode = 'custom'; this.resetPreviewPlayback(); },
     resetCustomFace(){
       this.customFace = {...DEFAULT_CUSTOM_FACE};
+      this.editingFace = true;
       this.mode = 'custom';
       this.resetPreviewPlayback();
       this.msg = '已重置为默认表情';
@@ -803,6 +812,7 @@ createApp({
         this.syncHomePreviewScene();
         const selectedScene = this.scenes[this.selected] || null;
         this.mode = selectedScene && selectedScene.name === 'custom_face' ? 'custom' : 'preset';
+        this.editingFace = false;  // 初始显示保存的场景本身，与首页一致
         this.resetPreviewPlayback();
       }catch(e){
         this.scenes = [this.buildCustomScene()];
