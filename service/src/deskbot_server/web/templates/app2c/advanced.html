@@ -195,7 +195,7 @@
     <div class="blocktitle">本机大模型 · 火山方舟</div>
     <div class="setup-card">
       <div class="setup-row">
-        <div><b>API Key</b><small>[[ setup.api_key_set ? '已配置（只保存在本机 .env，不上云）' : '未配置' ]]</small></div>
+        <div><b>火山方舟 API Key</b><small>[[ setup.api_key_set ? '已配置（只保存在本机 .env，不上云）· 大模型/表情/图片共用' : '未配置' ]]</small></div>
         <span class="tagdev" v-if="setup.api_key_set">已配置</span>
         <a class="btn ghost" href="{{ url_for('app2c.onboarding') }}" v-else>去配置</a>
       </div>
