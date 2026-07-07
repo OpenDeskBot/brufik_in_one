@@ -655,3 +655,57 @@ input[type=range]{width:100%;accent-color:var(--accent);height:6px}
 /* 通用「低调展开」按钮：无边框、下划线，用于次要/高级选项的折叠触发 */
 .ob-adv-toggle{background:none;border:none;color:var(--dim);font-family:var(--mono);font-size:11px;
   cursor:pointer;padding:0 0 12px;text-decoration:underline}
+
+/* ===== final calm overrides ===== */
+.toast{
+  background:#242821;
+  color:#fffdfa;
+  border-color:rgba(36,40,33,.35);
+  box-shadow:0 10px 24px rgba(36,40,33,.18);
+}
+.setup-cta{
+  background:var(--panel);
+  color:var(--ink);
+  border-color:rgba(58,51,40,.18);
+  border-left:4px solid var(--accent);
+  box-shadow:var(--shadow-sm);
+  transition:background .12s,border-color .12s;
+}
+.setup-cta:hover{
+  transform:none;
+  background:#fffaf3;
+  border-color:rgba(220,107,54,.34);
+  box-shadow:var(--shadow-sm);
+}
+.setup-cta .setup-cta-txt small{
+  color:var(--dim);
+  opacity:1;
+}
+.setup-cta .setup-cta-btn,
+.empty-banner .eb-ic,
+.setup-card,
+.empty-banner{
+  border-color:rgba(58,51,40,.18);
+  box-shadow:var(--shadow-sm);
+}
+.setup-cta .setup-cta-btn{
+  background:var(--accent-soft);
+  color:var(--accent);
+}
+.empty-banner,
+.setup-card{
+  background:rgba(231,239,234,.76);
+}
+.device-id-hint code{
+  border-color:rgba(58,51,40,.18);
+}
+.btn.danger{
+  border-color:#d92d20;
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation:none!important;
+    transition:none!important;
+    scroll-behavior:auto!important;
+  }
+}
