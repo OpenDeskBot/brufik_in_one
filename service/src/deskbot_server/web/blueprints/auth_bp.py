@@ -19,19 +19,19 @@ bp = Blueprint("auth", __name__)
 
 def _safe_next_url(raw: str | None) -> str:
     if not raw:
-        return url_for("app.dashboard")
+        return url_for("app2c.home")
     parsed = urlparse(raw)
     if parsed.netloc or parsed.scheme:
-        return url_for("app.dashboard")
+        return url_for("app2c.home")
     if not raw.startswith("/"):
-        return url_for("app.dashboard")
+        return url_for("app2c.home")
     return raw
 
 
 @bp.get("/login")
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for("app.dashboard"))
+        return redirect(url_for("app2c.home"))
     return render_template("auth/login.html", next_url=_safe_next_url(request.args.get("next")))
 
 
@@ -54,7 +54,7 @@ def login_post():
 @bp.get("/register")
 def register():
     if current_user.is_authenticated:
-        return redirect(url_for("app.dashboard"))
+        return redirect(url_for("app2c.home"))
     return render_template("auth/register.html")
 
 
@@ -75,7 +75,7 @@ def register_post():
     login_user(FlaskUser(user), remember=True)
     remove_session()
     flash("注册成功，欢迎加入！", "success")
-    return redirect(url_for("app.dashboard"))
+    return redirect(url_for("app2c.home"))
 
 
 @bp.post("/logout")

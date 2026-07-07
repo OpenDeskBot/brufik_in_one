@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, jsonify, redirect, request, session, url_for
 from flask_login import current_user, login_required
 
 from deskbot_server.auth.api_key_service import (
     create_api_key,
-    get_api_key_usage_today,
-    get_user_device_usage_summary,
-    get_user_usage_summary,
-    get_user_usage_today,
-    list_api_keys_for_user,
     revoke_api_key,
 )
 from deskbot_server.web.helpers import fetch_live_device_details
@@ -19,7 +14,7 @@ from deskbot_server.auth.device_service import (
     unbind_device,
     user_owns_device,
 )
-from deskbot_server.auth.service import change_password, get_user_by_id, update_display_name
+from deskbot_server.auth.service import change_password, update_display_name
 from deskbot_server.face_profiles_store import (
     delete_face_profile,
     list_face_profiles_summary,
@@ -111,271 +106,6 @@ def _flatten_usage_daily_rows(
     return rows
 
 
-@bp.get("/")
-@login_required
-def dashboard():
-    devices = list_devices_for_user(current_user.id)
-    usage = get_user_usage_summary(current_user.id, days=7)
-    today = usage["totals"]
-    return render_template(
-        "app/dashboard.html",
-        devices=devices,
-        current_device_id=get_current_device_id(),
-        usage_totals=today,
-        active_nav="app",
-    )
-
-
-@bp.get("/devices")
-@login_required
-def devices_page():
-    return redirect(url_for("app.dashboard"))
-
-
-@bp.get("/scheduled-tasks")
-@login_required
-def scheduled_tasks_page():
-    devices = list_devices_for_user(current_user.id)
-    current_device_id = get_current_device_id()
-    page = max(1, int(request.args.get("page") or 1))
-    per_page = int(request.args.get("per_page") or 10)
-    if per_page not in (10, 50, 100, 200):
-        per_page = 10
-    total = 0
-    tasks: list[dict] = []
-    if current_device_id and user_owns_device(current_user.id, current_device_id):
-        total = count_scheduled_tasks_for_device(current_device_id)
-        offset = (page - 1) * per_page
-        tasks = list_scheduled_tasks_for_device(
-            current_device_id,
-            limit=per_page,
-            offset=offset,
-        )
-    total_pages = max(1, (total + per_page - 1) // per_page) if total else 1
-    if page > total_pages:
-        page = total_pages
-    return render_template(
-        "app/scheduled_tasks.html",
-        devices=devices,
-        current_device_id=current_device_id,
-        tasks=tasks,
-        page=page,
-        per_page=per_page,
-        total=total,
-        total_pages=total_pages,
-        active_nav="scheduled_tasks",
-    )
-
-
-@bp.get("/face-profiles")
-@login_required
-def face_profiles_page():
-    devices = list_devices_for_user(current_user.id)
-    current_device_id = get_current_device_id()
-    profiles: list[dict] = []
-    if current_device_id and user_owns_device(current_user.id, current_device_id):
-        profiles = list_face_profiles_summary(device_id=current_device_id)
-    return render_template(
-        "app/face_profiles.html",
-        devices=devices,
-        current_device_id=current_device_id,
-        profiles=profiles,
-        active_nav="face_profiles",
-    )
-
-
-def _memory_rows_for_template(device_id: str) -> list[dict]:
-    from datetime import datetime, timedelta, timezone
-
-    try:
-        from zoneinfo import ZoneInfo
-
-        tz = ZoneInfo("Asia/Shanghai")
-    except ImportError:
-        tz = timezone(timedelta(hours=8))
-    rows: list[dict] = []
-    for item in list_memory_entries_for_device(device_id):
-        ts = float(item.get("created_at") or 0)
-        if ts > 0:
-            created_fmt = datetime.fromtimestamp(ts, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            created_fmt = "—"
-        rows.append({**item, "created_at_fmt": created_fmt})
-    return rows
-
-
-@bp.get("/memories")
-@login_required
-def memories_page():
-    devices = list_devices_for_user(current_user.id)
-    current_device_id = get_current_device_id()
-    memories: list[dict] = []
-    if current_device_id and user_owns_device(current_user.id, current_device_id):
-        memories = _memory_rows_for_template(current_device_id)
-    return render_template(
-        "app/memories.html",
-        devices=devices,
-        current_device_id=current_device_id,
-        memories=memories,
-        active_nav="memories",
-    )
-
-
-@bp.get("/llm-models")
-@login_required
-def llm_models_page():
-    devices = list_devices_for_user(current_user.id)
-    current_device_id = get_current_device_id()
-    models: list[dict] = []
-    active_model_id: str | None = None
-    active_config: dict | None = None
-    system_default = resolve_system_llm_config()
-    if current_device_id and user_owns_device(current_user.id, current_device_id):
-        models = list_llm_models(current_device_id, mask_key=True)
-        active_model_id = get_active_model_id(current_device_id)
-        try:
-            resolved = resolve_llm_config(current_device_id)
-            active_config = {
-                "display_name": resolved.display_name,
-                "model": resolved.model,
-                "source": resolved.source,
-                "api_base": resolved.api_base or "",
-            }
-        except ValueError:
-            active_config = None
-    return render_template(
-        "app/llm_models.html",
-        devices=devices,
-        current_device_id=current_device_id,
-        models=models,
-        active_model_id=active_model_id,
-        active_config=active_config,
-        system_default={
-            "display_name": system_default.display_name,
-            "model": system_default.model,
-            "api_base": system_default.api_base or "",
-        },
-        protocols=SUPPORTED_PROTOCOLS,
-        active_nav="llm_models",
-    )
-
-
-@bp.get("/usage")
-@login_required
-def usage_page():
-    summary = get_user_usage_summary(current_user.id, days=14)
-    device_summary = get_user_device_usage_summary(current_user.id, days=14)
-    keys = list_api_keys_for_user(current_user.id)
-    key_usage = []
-    for k in keys:
-        u = get_api_key_usage_today(k.id)
-        key_usage.append(
-            {
-                "id": k.id,
-                "name": k.name,
-                "prefix": k.key_prefix,
-                "today": u,
-            }
-        )
-    user_today = get_user_usage_today(current_user.id)
-    device_daily_rows = _flatten_usage_daily_rows(
-        device_summary.get("device_stats") or [],
-        label_key="display_name",
-        sub_id_key="device_id",
-    )
-    key_daily_rows = _flatten_usage_daily_rows(
-        summary.get("key_stats") or [],
-        label_key="name",
-        sub_id_key="api_key_id",
-        sub_label_key="key_prefix",
-    )
-    return render_template(
-        "app/usage.html",
-        summary=summary,
-        user_today=user_today,
-        device_summary=device_summary,
-        key_usage=key_usage,
-        device_daily_rows=device_daily_rows,
-        key_daily_rows=key_daily_rows,
-        active_nav="usage",
-    )
-
-
-@bp.get("/configure")
-@login_required
-def configure_page():
-    devices = list_devices_for_user(current_user.id)
-    current_device_id = get_current_device_id()
-    system_default = resolve_system_llm_config()
-    active_model_id: str | None = None
-    llm_form = {
-        "name": system_default.display_name,
-        "model_name": system_default.model.split("/", 1)[-1] if "/" in system_default.model else system_default.model,
-        "protocol": system_default.protocol,
-        "base_url": system_default.api_base or "",
-        "api_key_set": bool(system_default.api_key),
-        "source": "system",
-    }
-    if current_device_id and user_owns_device(current_user.id, current_device_id):
-        active_model_id = get_active_model_id(current_device_id)
-        if active_model_id:
-            entry = get_llm_model(current_device_id, active_model_id)
-            if entry is not None:
-                llm_form = {
-                    "name": entry.name,
-                    "model_name": entry.model_name,
-                    "protocol": entry.protocol,
-                    "base_url": entry.base_url,
-                    "api_key_set": bool(entry.api_key),
-                    "source": "device",
-                }
-        else:
-            try:
-                resolved = resolve_llm_config(current_device_id)
-                llm_form["name"] = resolved.display_name
-                llm_form["model_name"] = resolved.model.split("/", 1)[-1] if "/" in resolved.model else resolved.model
-                llm_form["protocol"] = resolved.protocol
-                llm_form["base_url"] = resolved.api_base or ""
-                llm_form["api_key_set"] = bool(resolved.api_key)
-            except ValueError:
-                pass
-
-    from deskbot_server.tts.doubao import load_doubao_tts_config
-
-    tts_cfg = load_doubao_tts_config()
-    return render_template(
-        "app/configure.html",
-        devices=devices,
-        current_device_id=current_device_id,
-        active_model_id=active_model_id,
-        llm_form=llm_form,
-        protocols=SUPPORTED_PROTOCOLS,
-        tts_config=tts_cfg.masked(),
-        tts_preview_texts=[
-            "你好，我是你的桌面机器人助手。",
-            "今天天气真不错，适合写代码。",
-            "欢迎使用 OpenDesk，很高兴见到你。",
-            "这是一段语音合成试听示例。",
-        ],
-        active_nav="configure",
-    )
-
-
-@bp.get("/settings")
-@login_required
-def settings_page():
-    user = get_user_by_id(current_user.id)
-    keys = list_api_keys_for_user(current_user.id)
-    new_key = session.pop("new_api_key_raw", None)
-    return render_template(
-        "app/account_settings.html",
-        user=user,
-        api_keys=keys,
-        new_api_key=new_key,
-        active_nav="account",
-    )
-
-
 @bp.post("/settings/profile")
 @login_required
 def update_profile_post():
@@ -383,9 +113,9 @@ def update_profile_post():
         update_display_name(current_user.id, request.form.get("display_name") or "")
     except ValueError as exc:
         flash(str(exc), "error")
-        return redirect(url_for("app.settings_page"))
+        return redirect(url_for("app2c.advanced"))
     flash("用户名称已更新", "success")
-    return redirect(url_for("app.settings_page"))
+    return redirect(url_for("app2c.advanced"))
 
 
 @bp.post("/settings/password")
@@ -396,14 +126,14 @@ def change_password_post():
     confirm = request.form.get("confirm_password") or ""
     if new_password != confirm:
         flash("两次新密码不一致", "error")
-        return redirect(url_for("app.settings_page"))
+        return redirect(url_for("app2c.advanced"))
     try:
         change_password(current_user.id, old_password, new_password)
     except ValueError as exc:
         flash(str(exc), "error")
-        return redirect(url_for("app.settings_page"))
+        return redirect(url_for("app2c.advanced"))
     flash("密码已更新", "success")
-    return redirect(url_for("app.settings_page"))
+    return redirect(url_for("app2c.advanced"))
 
 
 @bp.post("/settings/api-keys")
@@ -414,10 +144,10 @@ def create_api_key_post():
         raw, _row = create_api_key(current_user.id, name=name)
     except ValueError as exc:
         flash(str(exc), "error")
-        return redirect(url_for("app.settings_page"))
+        return redirect(url_for("app2c.advanced"))
     session["new_api_key_raw"] = raw
     flash("API Key 已创建，请立即复制保存（仅显示一次）", "success")
-    return redirect(url_for("app.settings_page"))
+    return redirect(url_for("app2c.advanced"))
 
 
 @bp.post("/settings/api-keys/<key_id>/revoke")
@@ -427,7 +157,7 @@ def revoke_api_key_post(key_id: str):
         flash("API Key 不存在", "error")
     else:
         flash("API Key 已吊销", "success")
-    return redirect(url_for("app.settings_page"))
+    return redirect(url_for("app2c.advanced"))
 
 
 @bp.get("/api/devices")
