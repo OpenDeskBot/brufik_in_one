@@ -131,7 +131,7 @@ def setup_llm_post():
     model_name = str(payload.get("model_name") or "").strip()
     protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
     if not model_name:
-        return jsonify({"ok": False, "error": "请填写模型 ID / 推理接入点"}), 400
+        return jsonify({"ok": False, "error": "请填写模型名称"}), 400
     if protocol not in SUPPORTED_PROTOCOLS:
         return jsonify({"ok": False, "error": f"不支持的协议: {protocol}"}), 400
     save_llm_env(
@@ -154,15 +154,16 @@ def setup_llm_test():
     payload = request.get_json(silent=True) or {}
     current = resolve_system_llm_config()
     model_name = str(payload.get("model_name") or "").strip() or current.model
-    protocol = str(payload.get("protocol") or current.protocol or "ark").strip().lower() or "ark"
-    base_url = str(payload.get("base_url") or "").strip() or (current.api_base or "")
+    protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
+    # base_url 留空时交给协议默认解析（ark→火山方舟地址），不要沿用旧的系统默认地址
+    base_url = str(payload.get("base_url") or "").strip()
     api_key = str(payload.get("api_key") or "").strip()
     if not api_key or "*" in api_key or "•" in api_key:
         api_key = str(current.api_key or "").strip()
     prompt = str(payload.get("prompt") or "你好，请用一句话介绍你自己。").strip()
 
     if not model_name:
-        return jsonify({"ok": False, "error": "请填写模型 ID / 推理接入点"}), 400
+        return jsonify({"ok": False, "error": "请填写模型名称"}), 400
     if protocol not in SUPPORTED_PROTOCOLS:
         return jsonify({"ok": False, "error": f"不支持的协议: {protocol}"}), 400
     if not _llm_api_key_set(api_key):

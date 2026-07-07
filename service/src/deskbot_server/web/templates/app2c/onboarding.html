@@ -71,15 +71,15 @@
     <!-- Step 2: get Ark key -->
     <div v-if="step===2">
       <h1>获取火山方舟密钥</h1>
-      <p class="lead">在火山方舟控制台完成两件事，拿到下一步要填的两个值：</p>
+      <p class="lead">只需在火山方舟控制台拿到一个 <b>API Key</b>，再选一个<b>模型名称</b>即可 —— 无需创建推理接入点。</p>
       <div class="ob-note">
         <ol>
           <li>开通并创建 <b>API Key</b>（即 <code>ARK_API_KEY</code>）。</li>
-          <li>创建一个<b>推理接入点 Endpoint</b>，复制它的 ID（形如 <code>ep-xxxxxxxx</code>）作为「模型 ID」。</li>
+          <li>选一个模型名称直接使用，例如 <code>doubao-seed-1-6</code>、<code>doubao-1.5-pro-32k</code>。</li>
           <li>控制台入口：<a href="https://console.volcengine.com/ark" target="_blank" rel="noopener">console.volcengine.com/ark ↗</a></li>
         </ol>
       </div>
-      <p class="lead" style="font-size:13px">已经有 API Key 和 Endpoint ID？直接进入下一步填写即可。</p>
+      <p class="lead" style="font-size:13px">已经有 API Key？直接进入下一步填写即可。</p>
       <div class="ob-actions">
         <button class="btn ghost" type="button" @click="step=1">上一步</button>
         <button class="btn primary" type="button" @click="step=3">我已获取，去填写</button>
@@ -89,11 +89,11 @@
     <!-- Step 3: fill + test -->
     <div v-if="step===3">
       <h1>填写并测试</h1>
-      <p class="lead">填入上一步拿到的 Endpoint ID 和 API Key，点「测试连接」确认可用后保存。</p>
+      <p class="lead">填入 API Key 和模型名称，点「测试连接」确认可用后保存。</p>
       <div class="ob-field">
-        <label>模型 ID / 推理接入点</label>
-        <input class="tinput" v-model="form.model_name" placeholder="例如 ep-20240101xxxx">
-        <span class="hint">火山方舟里创建的 Endpoint ID</span>
+        <label>模型名称</label>
+        <input class="tinput" v-model="form.model_name" placeholder="例如 doubao-seed-1-6">
+        <span class="hint">直接填火山方舟支持的模型名，无需创建推理接入点</span>
       </div>
       <div class="ob-field">
         <label>ARK_API_KEY</label>
