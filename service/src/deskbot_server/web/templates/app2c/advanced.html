@@ -328,6 +328,11 @@
         <span>调试令牌</span>
         <code>[[ debug.token ]]</code>
       </div>
+
+      <div class="danger-zone">
+        <div><b>重置为新用户（调试）</b><small>解绑全部设备、吊销 API Key、清除本机大模型配置，回到刚注册的状态。仅用于调试，操作不可撤销。</small></div>
+        <button type="button" class="btn danger" @click="resetAccount" :disabled="resetting">[[ resetting ? '重置中…' : '重置账号' ]]</button>
+      </div>
       </section>
 
       <section v-if="debugMode==='llm'">
@@ -411,7 +416,7 @@ const { createApp } = Vue;
 createApp({
   delimiters:['[[',']]'],
   data(){ return {
-    active:'usage', debugMode:'devices', msg:'', loading:false,
+    active:'usage', debugMode:'devices', msg:'', loading:false, resetting:false,
     user:{email:'',display_name:''}, profileName:'',
     password:{old_password:'',new_password:'',confirm_password:''},
     devices:[], currentDeviceId:'',
@@ -550,6 +555,15 @@ createApp({
         this.setup.result = {ok:true, reply:'已保存'}; this.setup.api_key=''; await this.loadSetup(); await this.load();
       }catch(e){ this.setup.result={ok:false,error:e.message||'保存失败'}; }
       finally{ this.setup.saving=false; }
+    },
+    async resetAccount(){
+      if(!confirm('确定要把当前账号重置为新用户状态吗？\n将解绑全部设备、吊销 API Key、清除本机大模型配置，且不可撤销。')) return;
+      this.resetting=true;
+      try{
+        const d = await this.api('/api/debug/reset-account', {method:'POST'});
+        alert('已重置：解绑设备 '+(d.cleared?d.cleared.devices:0)+' 台，吊销 Key '+(d.cleared?d.cleared.api_keys:0)+' 个，已清除大模型配置。即将进入新用户引导。');
+        window.location.href='{{ url_for("app2c.onboarding") }}';
+      }catch(e){ this.msg=e.message||'重置失败'; this.resetting=false; }
     },
     async load(){
       this.loading=true; this.msg='';

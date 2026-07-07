@@ -247,6 +247,34 @@ def setup_llm_models():
     return jsonify({"ok": True, "models": models, "default_model": DEFAULT_TEXT_MODEL})
 
 
+@bp.post("/api/debug/reset-account")
+@login_required
+def debug_reset_account():
+    """调试用：把当前账号重置回新用户状态（解绑所有设备、吊销 API Key、清除本机大模型配置）。"""
+    from deskbot_server.auth.api_key_service import revoke_api_key
+    from deskbot_server.auth.device_service import unbind_device
+    from deskbot_server.llm.env_store import clear_llm_env
+    from deskbot_server.web.session_device import clear_current_device
+
+    uid = current_user.id
+    cleared = {"devices": 0, "api_keys": 0}
+    for d in list_devices_for_user(uid):
+        try:
+            if unbind_device(uid, d.device_id):
+                cleared["devices"] += 1
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+    for k in list_api_keys_for_user(uid):
+        try:
+            if revoke_api_key(uid, k.id):
+                cleared["api_keys"] += 1
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+    clear_current_device()
+    clear_llm_env()
+    return jsonify({"ok": True, "cleared": cleared})
+
+
 def _totals_payload(row: dict) -> dict:
     return {
         "asr_bytes": int(row.get("asr_bytes") or 0),

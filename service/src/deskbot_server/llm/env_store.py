@@ -53,3 +53,23 @@ def read_llm_env() -> dict[str, str]:
     """读取 .env 中当前的 LLM 配置（原始值，供内部使用）。"""
     env = read_env_file()
     return {k: env.get(k, "") for k in LLM_ENV_KEYS}
+
+
+def clear_llm_env() -> None:
+    """从 .env 与进程环境变量中移除本机大模型配置（调试用：回到未配置状态）。"""
+    import os
+
+    from deskbot_server.paths import ENV_FILE
+
+    if ENV_FILE.is_file():
+        kept = []
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            body = line.strip()
+            body = body[7:].strip() if body.startswith("export ") else body
+            key = body.split("=", 1)[0].strip() if "=" in body else ""
+            if key in LLM_ENV_KEYS:
+                continue
+            kept.append(line)
+        ENV_FILE.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
+    for key in LLM_ENV_KEYS:
+        os.environ.pop(key, None)
