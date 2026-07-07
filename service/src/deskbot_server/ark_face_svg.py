@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import os
 import re
@@ -14,8 +15,22 @@ from deskbot_server.face_expr_scenes_store import normalize_face_expr_scenes
 
 ARK_RESPONSES_URL = "https://ark.cn-beijing.volces.com/api/v3/responses"
 DEFAULT_IMAGE_MODEL = "doubao-seed-2-1-pro-260628"
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
+MIN_ANIMATION_FRAMES = 4
 MAX_IMAGE_BYTES = 6 * 1024 * 1024
 ALLOWED_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+SCENE_LAYERS = ("eye_l", "eye_r", "nose", "mouth", "extra")
+PB_SAFE_SCENE_SHAPES = {
+    "ellipse",
+    "ellipse_fill",
+    "circle",
+    "circle_outline",
+    "rect",
+    "rect_outline",
+    "line",
+    "round_rect",
+    "round_rect_outline",
+}
 
 ArkTransport = Callable[[str, dict[str, Any], str, int], dict[str, Any]]
 
@@ -82,6 +97,26 @@ def _resolve_model(model: str | None = None) -> str:
     )
 
 
+def _resolve_max_output_tokens(value: int | None = None) -> int:
+    raw = value if value is not None else os.environ.get("ARK_IMAGE_TO_SVG_MAX_OUTPUT_TOKENS")
+    if raw is None or raw == "":
+        return DEFAULT_MAX_OUTPUT_TOKENS
+    try:
+        tokens = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_OUTPUT_TOKENS
+    return max(512, min(tokens, 16000))
+
+
+def _resolve_thinking() -> dict[str, str] | None:
+    value = str(os.environ.get("ARK_IMAGE_TO_SVG_THINKING") or "disabled").strip().lower()
+    if value in {"", "default", "auto"}:
+        return None
+    if value not in {"disabled", "enabled"}:
+        value = "disabled"
+    return {"type": value}
+
+
 def _image_data_url(image_bytes: bytes, mime_type: str) -> str:
     if not image_bytes:
         raise ValueError("请上传图片文件")
@@ -104,9 +139,12 @@ def _build_prompt(user_prompt: str) -> str:
         "svg 必须是单个 <svg viewBox=\"0 0 284 240\">，只使用 path/circle/ellipse/rect/line/polyline/polygon，"
         "不要 script、style、foreignObject、image 或外链资源。"
         "scene 必须是 Deskbot emotion scene：{name,title,frames:[{ms,elements}]}，"
-        "elements 可包含 eye_l/eye_r/nose/mouth/extra 数组；shape 只使用 ellipse_fill, circle_fill, "
-        "line, round_rect_outline, round_rect_fill。"
-        "scene.name 用英文小写 snake_case，至少 1 帧，坐标范围基于 284x240。"
+        "frames 必须是 4 到 6 帧动画，每帧 80 到 900ms，且每帧 elements 必须是 object。"
+        "elements 只能包含 eye_l/eye_r/nose/mouth/extra 数组；scene 图元 shape 只使用 "
+        "ellipse_fill, ellipse, circle, line, rect, round_rect, round_rect_outline。"
+        "scene 图元必须使用 PB 坐标字段：圆/椭圆用 x/y/r 或 x/y/rw/rh，矩形用 x/y/w/h/radius，"
+        "线用 x1/y1/x2/y2；不要在 scene 里使用 cx/cy/rx/ry/path/svg。"
+        "scene.name 用英文小写 snake_case，坐标范围基于 284x240。"
     )
     if extra:
         prompt += f"\n用户补充要求：{extra}"
@@ -256,13 +294,285 @@ def _slug_name(value: str, fallback: str = "image_expression") -> str:
     return raw
 
 
+def _num(value: Any, fallback: float = 0) -> float:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return n if n == n else fallback
+
+
+def _is_background_like(params: dict[str, Any]) -> bool:
+    fill = str(params.get("fill") or params.get("color") or "").strip().lower()
+    rw = _num(params.get("rx", params.get("rw", params.get("r"))), 0)
+    rh = _num(params.get("ry", params.get("rh", params.get("r"))), 0)
+    w = _num(params.get("width", params.get("w")), 0)
+    h = _num(params.get("height", params.get("h")), 0)
+    large = (rw >= 90 and rh >= 70) or (w >= 180 and h >= 140)
+    if fill in {"#fff", "#ffffff", "white", "rgb(255,255,255)", "rgb(255, 255, 255)"}:
+        return large
+    return False
+
+
+def _model_element_to_primitive(item: object) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    params = item.get("params") if isinstance(item.get("params"), dict) else item
+    shape = str(item.get("shape") or item.get("type") or params.get("shape") or "").strip().lower()
+    if not shape:
+        return None
+    if _is_background_like(params):
+        return None
+    if shape in {"ellipse", "ellipse_fill", "ellipse_outline"}:
+        return {
+            "shape": "ellipse" if "outline" in shape else "ellipse_fill",
+            "x": round(_num(params.get("x", params.get("cx")), 0)),
+            "y": round(_num(params.get("y", params.get("cy")), 0)),
+            "rw": round(_num(params.get("rw", params.get("rx", params.get("r"))), 1)),
+            "rh": round(_num(params.get("rh", params.get("ry", params.get("r"))), 1)),
+        }
+    if shape in {"circle", "circle_fill", "circle_outline"}:
+        return {
+            "shape": "circle_outline" if "outline" in shape else "circle",
+            "x": round(_num(params.get("x", params.get("cx")), 0)),
+            "y": round(_num(params.get("y", params.get("cy")), 0)),
+            "r": round(_num(params.get("r"), 1)),
+        }
+    if shape == "line":
+        return {
+            "shape": "line",
+            "x1": round(_num(params.get("x1"), 0)),
+            "y1": round(_num(params.get("y1"), 0)),
+            "x2": round(_num(params.get("x2"), 0)),
+            "y2": round(_num(params.get("y2"), 0)),
+            "sw": round(_num(params.get("stroke_width", params.get("sw")), 2), 2),
+        }
+    if shape in {"rect", "rect_fill", "round_rect_fill", "round_rect", "round_rect_outline", "rect_outline"}:
+        w = _num(params.get("w", params.get("width")), 1)
+        h = _num(params.get("h", params.get("height")), 1)
+        x = _num(params.get("x"), _num(params.get("cx"), 0) - w / 2)
+        y = _num(params.get("y"), _num(params.get("cy"), 0) - h / 2)
+        outline = "outline" in shape
+        round_rect = "round" in shape or params.get("rx") is not None or params.get("radius") is not None
+        return {
+            "shape": ("round_rect_outline" if outline else "round_rect") if round_rect else ("rect_outline" if outline else "rect"),
+            "x": round(x),
+            "y": round(y),
+            "w": round(w),
+            "h": round(h),
+            "radius": round(_num(params.get("radius", params.get("rx", params.get("r"))), min(w, h) / 2)),
+        }
+    return None
+
+
+def _primitive_center(item: dict[str, Any]) -> tuple[float, float]:
+    if item.get("shape") == "line":
+        return (
+            (_num(item.get("x1"), 0) + _num(item.get("x2"), 0)) / 2,
+            (_num(item.get("y1"), 0) + _num(item.get("y2"), 0)) / 2,
+        )
+    if "w" in item and "h" in item:
+        return (_num(item.get("x"), 0) + _num(item.get("w"), 0) / 2, _num(item.get("y"), 0) + _num(item.get("h"), 0) / 2)
+    return (_num(item.get("x"), 0), _num(item.get("y"), 0))
+
+
+def _group_flat_model_elements(items: list[object]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {layer: [] for layer in SCENE_LAYERS}
+    for raw in items:
+        primitive = _model_element_to_primitive(raw)
+        if not primitive:
+            continue
+        cx, cy = _primitive_center(primitive)
+        if cy < 122:
+            layer = "eye_l" if cx < 142 else "eye_r"
+        elif cy < 140 and abs(cx - 142) < 28:
+            layer = "nose"
+        elif cy >= 130:
+            layer = "mouth"
+        else:
+            layer = "extra"
+        grouped[layer].append(primitive)
+    return grouped
+
+
+def _coerce_grouped_model_elements(elements: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {layer: [] for layer in SCENE_LAYERS}
+    for layer in grouped:
+        rows = elements.get(layer)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            primitive = _model_element_to_primitive(row)
+            if primitive:
+                grouped[layer].append(primitive)
+    return grouped
+
+
+def _shift_primitive(item: dict[str, Any], *, dx: int = 0, dy: int = 0) -> dict[str, Any]:
+    out = copy.deepcopy(item)
+    shape = str(out.get("shape") or "").strip().lower()
+    if shape == "line":
+        for key, delta in (("x1", dx), ("x2", dx), ("y1", dy), ("y2", dy)):
+            if key in out:
+                out[key] = round(_num(out.get(key), 0) + delta)
+    else:
+        if "x" in out:
+            out["x"] = round(_num(out.get("x"), 0) + dx)
+        if "y" in out:
+            out["y"] = round(_num(out.get("y"), 0) + dy)
+    return out
+
+
+def _animate_primitive(item: dict[str, Any], *, layer: str, variant: int) -> dict[str, Any]:
+    out = copy.deepcopy(item)
+    shape = str(out.get("shape") or "").strip().lower()
+    if layer in {"eye_l", "eye_r"} and shape in {"ellipse", "ellipse_fill"}:
+        rh = max(1, round(_num(out.get("rh", out.get("r")), 4)))
+        rw = max(1, round(_num(out.get("rw", out.get("r")), 4)))
+        if variant == 1:
+            out["rh"] = max(1, round(rh * 0.55))
+            out["rw"] = max(1, round(rw * 1.04))
+            out["y"] = round(_num(out.get("y"), 0) + 1)
+        elif variant == 2:
+            out["rh"] = max(1, rh + 2)
+        else:
+            out["y"] = round(_num(out.get("y"), 0) - 1)
+        return out
+    if layer == "mouth":
+        if shape in {"ellipse", "ellipse_fill"}:
+            rh = max(1, round(_num(out.get("rh", out.get("r")), 4)))
+            out["rh"] = max(1, rh + (3 if variant == 2 else -2 if variant == 1 else 1))
+            out["y"] = round(_num(out.get("y"), 0) + (1 if variant == 2 else 0))
+        elif shape in {"round_rect", "round_rect_outline", "rect", "rect_outline"}:
+            h = max(1, round(_num(out.get("h"), 4)))
+            out["h"] = max(1, h + (4 if variant == 2 else -2 if variant == 1 else 1))
+            out["radius"] = min(round(_num(out.get("radius", out.get("r")), out["h"] / 2)), max(1, out["h"] // 2))
+        elif shape == "line":
+            out = _shift_primitive(out, dy=(1 if variant == 2 else -1 if variant == 1 else 0))
+        return out
+    if layer == "extra":
+        return _shift_primitive(out, dy=(-1 if variant == 1 else 1 if variant == 2 else 0))
+    return out
+
+
+def _animated_frame_from(frame: dict[str, Any], *, variant: int, ms: int) -> dict[str, Any]:
+    elements = frame.get("elements") if isinstance(frame.get("elements"), dict) else {}
+    next_elements: dict[str, list[dict[str, Any]]] = {layer: [] for layer in SCENE_LAYERS}
+    for layer in SCENE_LAYERS:
+        rows = elements.get(layer)
+        if not isinstance(rows, list):
+            continue
+        next_elements[layer] = [
+            _animate_primitive(row, layer=layer, variant=variant)
+            for row in rows
+            if isinstance(row, dict)
+        ]
+    return {"ms": ms, "elements": next_elements}
+
+
+def _ensure_animation_frames(scene: dict[str, Any]) -> dict[str, Any]:
+    out = copy.deepcopy(scene)
+    frames = [f for f in out.get("frames", []) if isinstance(f, dict)]
+    if not frames:
+        frames = _fallback_scene(fallback_name=out.get("name") or "image_expression", fallback_title=out.get("title") or "表情")["frames"]
+    normalized_frames = []
+    for frame in frames:
+        next_frame = copy.deepcopy(frame)
+        elements = next_frame.get("elements")
+        if isinstance(elements, dict):
+            next_frame["elements"] = _coerce_grouped_model_elements(elements)
+        else:
+            next_frame["elements"] = {layer: [] for layer in SCENE_LAYERS}
+        normalized_frames.append(next_frame)
+    while len(normalized_frames) < MIN_ANIMATION_FRAMES:
+        base = normalized_frames[(len(normalized_frames) - 1) % len(normalized_frames)]
+        variant = len(normalized_frames) % 3
+        ms = 140 if variant == 1 else 220 if variant == 2 else 360
+        normalized_frames.append(_animated_frame_from(base, variant=variant, ms=ms))
+    out["frames"] = normalized_frames
+    return out
+
+
+def _coerce_model_scene(raw: dict[str, Any]) -> dict[str, Any]:
+    scene = dict(raw)
+    frames = scene.get("frames")
+    if not isinstance(frames, list):
+        return scene
+    next_frames = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            next_frames.append(frame)
+            continue
+        next_frame = dict(frame)
+        elements = next_frame.get("elements")
+        if isinstance(elements, list):
+            next_frame["elements"] = _group_flat_model_elements(elements)
+        elif isinstance(elements, dict):
+            next_frame["elements"] = _coerce_grouped_model_elements(elements)
+        next_frames.append(next_frame)
+    scene["frames"] = next_frames
+    return scene
+
+
+def _fallback_scene(*, fallback_name: str, fallback_title: str) -> dict[str, Any]:
+    return {
+        "name": fallback_name,
+        "title": fallback_title,
+        "frames": [
+            {
+                "ms": 360,
+                "elements": {
+                    "eye_l": [
+                        {"shape": "ellipse_fill", "x": 90, "y": 88, "rw": 18, "rh": 20},
+                        {"shape": "line", "x1": 66, "y1": 62, "x2": 110, "y2": 74, "sw": 4},
+                    ],
+                    "eye_r": [
+                        {"shape": "ellipse_fill", "x": 196, "y": 88, "rw": 18, "rh": 20},
+                        {"shape": "line", "x1": 174, "y1": 74, "x2": 218, "y2": 62, "sw": 4},
+                    ],
+                    "nose": [{"shape": "circle", "x": 142, "y": 122, "r": 4}],
+                    "mouth": [{"shape": "round_rect_outline", "x": 112, "y": 146, "w": 60, "h": 36, "radius": 18}],
+                    "extra": [],
+                },
+            }
+        ],
+    }
+
+
 def _normalize_scene(raw: object, *, fallback_name: str, fallback_title: str) -> dict[str, Any]:
     if not isinstance(raw, dict):
-        raise ValueError("模型输出缺少 scene")
-    scene = dict(raw)
+        scene = _fallback_scene(fallback_name=fallback_name, fallback_title=fallback_title)
+    else:
+        scene = _coerce_model_scene(raw)
     scene["name"] = _slug_name(str(scene.get("name") or fallback_name), fallback_name)
     scene["title"] = str(scene.get("title") or fallback_title or scene["name"]).strip()[:80]
-    return normalize_face_expr_scenes([scene])[0]
+    try:
+        normalized = normalize_face_expr_scenes([scene])[0]
+    except ValueError:
+        fallback = _fallback_scene(fallback_name=scene["name"], fallback_title=scene["title"])
+        normalized = normalize_face_expr_scenes([fallback])[0]
+    animated = _ensure_animation_frames(normalized)
+    return normalize_face_expr_scenes([animated])[0]
+
+
+def _response_payload(model: str, image_url: str, prompt: str, *, max_output_tokens: int | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "max_output_tokens": _resolve_max_output_tokens(max_output_tokens),
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_image", "image_url": image_url},
+                    {"type": "input_text", "text": _build_prompt(prompt)},
+                ],
+            }
+        ],
+    }
+    thinking = _resolve_thinking()
+    if thinking:
+        payload["thinking"] = thinking
+    return payload
 
 
 def generate_face_svg_from_image(
@@ -274,23 +584,13 @@ def generate_face_svg_from_image(
     model: str | None = None,
     responses_url: str | None = None,
     timeout: int = 90,
+    max_output_tokens: int | None = None,
     transport: ArkTransport | None = None,
 ) -> dict[str, Any]:
     resolved_key = _resolve_api_key(api_key)
     resolved_model = _resolve_model(model)
     image_url = _image_data_url(image_bytes, mime_type)
-    payload = {
-        "model": resolved_model,
-        "input": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_image", "image_url": image_url},
-                    {"type": "input_text", "text": _build_prompt(prompt)},
-                ],
-            }
-        ],
-    }
+    payload = _response_payload(resolved_model, image_url, prompt, max_output_tokens=max_output_tokens)
     call = transport or _post_ark_responses
     response = call(str(responses_url or ARK_RESPONSES_URL), payload, resolved_key, timeout)
     raw_text = _extract_response_text(response)

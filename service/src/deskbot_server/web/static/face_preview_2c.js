@@ -85,21 +85,35 @@
     return "";
   }
 
-  function frameElements(scene) {
+  function frameElements(scene, frameIndex) {
     const s = scene && typeof scene === "object" ? scene : FALLBACK_SCENE;
-    const frame = Array.isArray(s.frames) && s.frames.length ? s.frames[0] : null;
+    const frames = Array.isArray(s.frames) && s.frames.length ? s.frames : FALLBACK_SCENE.frames;
+    const idx = Math.max(0, Math.min(Math.floor(num(frameIndex, 0)), frames.length - 1));
+    const frame = frames[idx] || null;
     const elements = frame && (frame.elements || (frame.anim && frame.anim.elements));
     return elements && typeof elements === "object" ? elements : FALLBACK_SCENE.frames[0].elements;
   }
 
-  function sceneToSvg(scene) {
-    const elements = frameElements(scene);
+  function sceneToSvg(scene, frameIndex) {
+    const elements = frameElements(scene, frameIndex);
     let out = "";
     for (const layer of LAYERS) {
       const rows = Array.isArray(elements[layer]) ? elements[layer] : [];
       for (const p of rows) out += shapeToSvg(p, layer);
     }
     return out;
+  }
+
+  function frameCount(scene) {
+    const frames = scene && Array.isArray(scene.frames) ? scene.frames : [];
+    return Math.max(1, frames.length || FALLBACK_SCENE.frames.length);
+  }
+
+  function frameMs(scene, frameIndex) {
+    const s = scene && typeof scene === "object" ? scene : FALLBACK_SCENE;
+    const frames = Array.isArray(s.frames) && s.frames.length ? s.frames : FALLBACK_SCENE.frames;
+    const idx = Math.max(0, Math.min(Math.floor(num(frameIndex, 0)), frames.length - 1));
+    return Math.max(40, num((frames[idx] || {}).ms, 500));
   }
 
   function findScene(scenes, name) {
@@ -123,6 +137,8 @@
   global.DeskbotFacePreview = {
     sceneToSvg,
     frameElements,
+    frameCount,
+    frameMs,
     findScene,
     pickScene,
     fallbackScene: FALLBACK_SCENE,
