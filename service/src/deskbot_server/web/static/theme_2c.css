@@ -156,7 +156,9 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .face svg{position:relative;z-index:2}
 .readouts{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;position:relative;z-index:2}
 .readout{display:flex;flex-direction:column;gap:5px;padding:9px 10px;border-radius:var(--rs);
-  background:rgba(255,255,255,.05);border:1.5px solid rgba(255,255,255,.18)}
+  background:rgba(255,255,255,.05);border:1.5px solid rgba(255,255,255,.18);
+  text-decoration:none;transition:background .12s,border-color .12s}
+a.readout:hover{background:rgba(255,255,255,.1);border-color:var(--accent);cursor:pointer}
 .readout .k{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:#9a9a90;font-weight:700}
 .readout .v{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:#f4f4ef}
 .readout .v .led{width:7px;height:7px;border-radius:50%;background:var(--accent)}
@@ -467,3 +469,13 @@ input[type=range]{width:100%;accent-color:var(--accent);height:6px}
 .danger-zone b{font-size:14px;color:#b42318}
 .danger-zone small{display:block;color:var(--dim);font-size:12px;margin-top:3px;line-height:1.5}
 .btn.danger{background:#d92d20;color:#fff;border-color:var(--line)}
+
+/* 统一「未绑定设备」空状态：内容区顶部，图标+提示+去绑定按钮 */
+.empty-banner{display:flex;align-items:center;gap:14px;margin-bottom:20px;padding:16px 18px;
+  border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel2);box-shadow:var(--shadow-sm)}
+.empty-banner .eb-ic{flex:none;width:38px;height:38px;border-radius:var(--rs);background:var(--panel);
+  border:var(--bw) solid var(--line);display:flex;align-items:center;justify-content:center}
+.empty-banner .eb-ic svg{width:20px;height:20px;stroke:var(--ink);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.empty-banner .eb-txt{flex:1}
+.empty-banner .eb-txt b{font-size:14px;display:block}
+.empty-banner .eb-txt small{color:var(--dim);font-size:12px;display:block;margin-top:2px}

@@ -4,7 +4,12 @@
 {% block content %}
 <div id="app">
   <div class="pagehd"><div><div class="eyebrow">FACES · [[ profiles.length ]] KNOWN</div><h1>认识的人</h1><p>机器人通过摄像头认识的人，可改名或删除。</p></div></div>
-  <div class="people">
+  <div class="empty-banner" v-if="noDevice">
+    <div class="eb-ic"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg></div>
+    <div class="eb-txt"><b>还没绑定设备</b><small>认脸功能需要关联到一台桌搭子，先去绑定一台吧</small></div>
+    <a class="btn primary" href="{{ url_for('app2c.devices') }}">去绑定设备</a>
+  </div>
+  <div class="people" v-if="!noDevice">
     <div class="person" v-for="(p,i) in profiles" :key="p.person_id">
       <div class="pa" :class="{owner: i===0}">[[ (p.name||'?').slice(0,1) ]]</div>
       <input v-if="editing===p.person_id" class="tinput nameinput" v-model="editName" @keyup.enter="saveName(p)">
@@ -21,15 +26,17 @@
       </div>
     </div>
   </div>
-  <p class="lead" v-if="!profiles.length">还没有认识的人。</p>
+  <p class="lead" v-if="!noDevice && !profiles.length">还没有认识的人。</p>
   <p class="lead" v-if="msg">[[ msg ]]</p>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 const { createApp } = Vue;
-createApp({ delimiters:['[[',']]'], data(){return{profiles:[], editing:null, editName:'', msg:''};},
-  methods:{ async load(){ const r=await (await fetch('/app/api/face-profiles')).json(); if(r.ok) this.profiles=r.profiles||[]; else this.msg=r.error||'加载失败'; },
+createApp({ delimiters:['[[',']]'], data(){return{profiles:[], editing:null, editName:'', msg:'', noDevice:false};},
+  methods:{ async load(){ const r=await (await fetch('/app/api/face-profiles')).json();
+      this.noDevice = (r.error === '请先选择设备');
+      if(r.ok) this.profiles=r.profiles||[]; else if(!this.noDevice) this.msg=r.error||'加载失败'; },
     startEdit(p){ this.editing=p.person_id; this.editName=p.name||''; },
     cancelEdit(){ this.editing=null; this.editName=''; },
     async saveName(p){ const name=this.editName.trim(); if(!name){ this.msg='名字不能为空'; return; }

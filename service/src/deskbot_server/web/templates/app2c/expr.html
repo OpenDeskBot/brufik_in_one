@@ -12,6 +12,11 @@
       <button class="btn primary" type="button" @click="save" id="saveBtn">保存表情</button>
     </div>
   </div>
+  <div class="empty-banner" v-if="noDevice">
+    <div class="eb-ic"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg></div>
+    <div class="eb-txt"><b>还没绑定设备</b><small>表情需要保存到一台桌搭子上，先去绑定一台吧（下面可以先试玩捏脸）</small></div>
+    <a class="btn primary" href="{{ url_for('app2c.devices') }}">去绑定设备</a>
+  </div>
   <div class="exprgrid">
     <div class="stage expr-stage">
       <div class="brackets"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
@@ -226,7 +231,7 @@ const DEFAULT_CUSTOM_FACE = Object.freeze({
 createApp({
   delimiters:['[[',']]'],
   data(){ return {
-    scenes:[], selected:0, mode:'custom', editingFace:false, exprTab:'face', deviceId:'', sending:false, savingProfessional:false,
+    scenes:[], selected:0, mode:'custom', editingFace:false, exprTab:'face', deviceId:'', noDevice:false, sending:false, savingProfessional:false,
     emotions:[['happy','😄','开心'],['surprised','😲','惊讶'],['thinking','🤔','思考'],['sleepy','😴','困'],['idle','😐','待机']],
     map:{}, msg:'', customFace:{...DEFAULT_CUSTOM_FACE}, professionalDesign:null, professionalFileName:'',
     imageExpressionFile:null, imageExpressionFileName:'', imageExpressionResult:null,
@@ -801,7 +806,8 @@ createApp({
         await this.loadLlmConfigStatus();
         const d = await (await fetch('/app/api/devices')).json();
         this.deviceId = d.current_device_id || '';
-        if(!this.deviceId){ this.scenes = [this.buildCustomScene()]; this.msg='请先在「我的设备」选择一台设备'; return; }
+        this.noDevice = !this.deviceId;
+        if(!this.deviceId){ this.scenes = [this.buildCustomScene()]; return; }
         const q = '?device_id='+encodeURIComponent(this.deviceId);
         const r = await (await fetch('/api/face_expr_scenes'+q)).json();
         this.scenes = (r.config && r.config.length) ? r.config : [this.buildCustomScene()];

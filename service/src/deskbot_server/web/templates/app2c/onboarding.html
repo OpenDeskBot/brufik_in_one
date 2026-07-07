@@ -138,12 +138,12 @@
     <div v-if="step===4">
       <div class="ob-done">
         <div class="big">✅</div>
-        <h1>配置完成</h1>
-        <p class="lead">大模型已就绪，现在可以去捏表情、让小歪聊天了。</p>
+        <h1>大模型配置完成</h1>
+        <p class="lead">还差最后一步：绑定你的第一台桌搭子设备，就能开始用了。</p>
       </div>
       <div class="ob-actions">
-        <div class="grow"></div>
-        <a class="btn primary" href="{{ url_for('app2c.home') }}">进入控制台</a>
+        <a class="ob-skip" href="{{ url_for('app2c.home') }}">先看看控制台</a>
+        <a class="btn primary" href="{{ url_for('app2c.devices') }}">下一步：绑定设备 →</a>
       </div>
     </div>
   </div>

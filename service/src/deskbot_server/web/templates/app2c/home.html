@@ -19,6 +19,10 @@
     <span class="llm-cta-txt"><b>还没配置大模型</b><small>AI 表情和对话需要先配置火山方舟 Ark，点这里 1 分钟搞定 →</small></span>
     <span class="llm-cta-btn">去配置</span>
   </a>
+  <a v-else-if="!bound" class="llm-cta" href="{{ url_for('app2c.devices') }}">
+    <span class="llm-cta-txt"><b>还差最后一步：绑定设备</b><small>大模型已配置好，绑定你的第一台桌搭子就能用了 →</small></span>
+    <span class="llm-cta-btn">去绑定</span>
+  </a>
 
   <div class="homegrid">
     <!-- STAGE -->
@@ -35,10 +39,10 @@
         </div>
       </div>
       <div class="readouts">
-        <div class="readout"><span class="k">STATUS</span><span class="v"><span class="led" :style="bound ? null : 'background:#9a9a90'"></span>[[ bound ? '在线' : '未连接' ]]</span></div>
-        <div class="readout"><span class="k">VOICE</span><span class="v">[[ voiceLabel ]]</span></div>
-        <div class="readout"><span class="k">MOOD</span><span class="v">[[ faceLabel ]]</span></div>
-        <div class="readout"><span class="k">MEMORY</span><span class="v">[[ memoryCount ]] 件</span></div>
+        <a class="readout" href="{{ url_for('app2c.devices') }}"><span class="k">STATUS</span><span class="v"><span class="led" :style="bound ? null : 'background:#9a9a90'"></span>[[ bound ? '在线' : '未连接' ]]</span></a>
+        <a class="readout" href="{{ url_for('app2c.voice') }}"><span class="k">VOICE</span><span class="v">[[ voiceLabel ]]</span></a>
+        <a class="readout" href="{{ url_for('app2c.expr') }}"><span class="k">MOOD</span><span class="v">[[ faceLabel ]]</span></a>
+        <a class="readout" href="{{ url_for('app2c.memories') }}"><span class="k">MEMORY</span><span class="v">[[ memoryCount ]] 件</span></a>
       </div>
     </div>
 

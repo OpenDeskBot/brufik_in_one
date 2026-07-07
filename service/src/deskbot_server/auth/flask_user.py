@@ -19,7 +19,11 @@ class FlaskUser(UserMixin):
 
     @property
     def display_name(self) -> str:
-        return (self._user.display_name or "").strip() or self.email
+        name = (self._user.display_name or "").strip()
+        if name:
+            return name
+        # 未设置显示名称时，用邮箱 @ 前缀代替完整邮箱，问候语/导航栏更友好
+        return self.email.split("@", 1)[0] or self.email
 
     @property
     def is_developer(self) -> bool:
