@@ -7,6 +7,25 @@ from pathlib import Path
 
 import pytest
 
+PB_SAFE_SCENE_SHAPES = {
+    "ellipse",
+    "ellipse_fill",
+    "circle",
+    "circle_outline",
+    "rect",
+    "rect_outline",
+    "line",
+    "round_rect",
+    "round_rect_outline",
+}
+
+
+def _all_primitives(scene):
+    for frame in scene["frames"]:
+        for rows in frame["elements"].values():
+            for primitive in rows:
+                yield primitive
+
 
 @pytest.fixture()
 def temp_db(monkeypatch):
@@ -81,12 +100,172 @@ def test_generate_face_svg_from_image_calls_ark_responses_and_sanitizes_svg(monk
     assert captured["url"] == "https://ark.cn-beijing.volces.com/api/v3/responses"
     assert captured["api_key"] == "test-key"
     assert captured["payload"]["model"] == "doubao-seed-2-1-pro-260628"
+    assert captured["payload"]["thinking"] == {"type": "disabled"}
+    assert captured["payload"]["max_output_tokens"] == 4096
     content = captured["payload"]["input"][0]["content"]
     assert content[0]["type"] == "input_image"
     assert content[0]["image_url"].startswith("data:image/png;base64,")
     assert content[1]["type"] == "input_text"
     assert "284x240" in content[1]["text"]
     assert "只输出 JSON" in content[1]["text"]
+    assert "4 到 6 帧动画" in content[1]["text"]
+    assert len(result["scene"]["frames"]) >= 4
+
+
+def test_generate_face_svg_from_image_coerces_flat_model_scene(monkeypatch):
+    from deskbot_server.ark_face_svg import generate_face_svg_from_image
+
+    def fake_transport(_url, _payload, _api_key, _timeout):
+        return {
+            "output_text": json.dumps(
+                {
+                    "name": "panda_shock",
+                    "title": "震惊熊猫头",
+                    "svg": (
+                        '<svg viewBox="0 0 284 240">'
+                        '<ellipse cx="90" cy="80" rx="18" ry="22" fill="#000"/>'
+                        '<ellipse cx="196" cy="80" rx="18" ry="22" fill="#000"/>'
+                        '<ellipse cx="142" cy="160" rx="34" ry="24" fill="#000"/>'
+                        "</svg>"
+                    ),
+                    "scene": {
+                        "name": "panda_shock",
+                        "title": "震惊熊猫头",
+                        "frames": [
+                            {
+                                "ms": 500,
+                                "elements": [
+                                    {"type": "ellipse_fill", "params": {"cx": 142, "cy": 120, "rx": 138, "ry": 118, "fill": "#fff"}},
+                                    {"type": "ellipse_fill", "params": {"cx": 90, "cy": 80, "rx": 18, "ry": 22, "fill": "#000"}},
+                                    {"type": "ellipse_fill", "params": {"cx": 196, "cy": 80, "rx": 18, "ry": 22, "fill": "#000"}},
+                                    {"type": "ellipse_fill", "params": {"cx": 142, "cy": 160, "rx": 34, "ry": 24, "fill": "#000"}},
+                                ],
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            )
+        }
+
+    monkeypatch.setenv("ARK_API_KEY", "test-key")
+
+    result = generate_face_svg_from_image(
+        b"\x89PNG\r\n\x1a\nfake",
+        "image/png",
+        transport=fake_transport,
+    )
+
+    elements = result["scene"]["frames"][0]["elements"]
+    assert result["scene"]["name"] == "panda_shock"
+    assert elements["eye_l"][0]["x"] == 90
+    assert elements["eye_r"][0]["x"] == 196
+    assert elements["mouth"][0]["x"] == 142
+    assert not elements["extra"]
+    assert len(result["scene"]["frames"]) >= 4
+
+
+def test_generate_face_svg_from_image_coerces_grouped_svg_coordinates(monkeypatch):
+    from deskbot_server.ark_face_svg import generate_face_svg_from_image
+
+    def fake_transport(_url, _payload, _api_key, _timeout):
+        return {
+            "output_text": json.dumps(
+                {
+                    "name": "panda_shock",
+                    "title": "震惊熊猫头",
+                    "svg": '<svg viewBox="0 0 284 240"><ellipse cx="98" cy="78" rx="26" ry="22" fill="#000"/></svg>',
+                    "scene": {
+                        "name": "panda_shock",
+                        "title": "震惊熊猫头",
+                        "frames": [
+                            {
+                                "ms": 500,
+                                "elements": {
+                                    "eye_l": [{"shape": "ellipse_fill", "cx": 98, "cy": 78, "rx": 26, "ry": 22}],
+                                    "eye_r": [{"shape": "ellipse_fill", "cx": 186, "cy": 78, "rx": 26, "ry": 22}],
+                                    "mouth": [{"shape": "round_rect_fill", "x": 108, "y": 122, "w": 68, "h": 72, "r": 30}],
+                                    "nose": [],
+                                    "extra": [],
+                                },
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            )
+        }
+
+    monkeypatch.setenv("ARK_API_KEY", "test-key")
+
+    result = generate_face_svg_from_image(
+        b"\x89PNG\r\n\x1a\nfake",
+        "image/png",
+        transport=fake_transport,
+    )
+
+    elements = result["scene"]["frames"][0]["elements"]
+    assert elements["eye_l"][0] == {"shape": "ellipse_fill", "x": 98, "y": 78, "rw": 26, "rh": 22}
+    assert elements["eye_r"][0] == {"shape": "ellipse_fill", "x": 186, "y": 78, "rw": 26, "rh": 22}
+    assert elements["mouth"][0]["shape"] == "round_rect"
+    assert elements["mouth"][0]["radius"] == 30
+
+
+def test_generate_face_svg_from_image_outputs_multiframe_main_compatible_scene(monkeypatch):
+    from deskbot_server.ark_face_svg import generate_face_svg_from_image
+    from deskbot_server.face_expr_scenes_store import (
+        design_frames_to_pb_chain,
+        normalize_face_expr_scenes,
+    )
+
+    def fake_transport(_url, _payload, _api_key, _timeout):
+        return {
+            "output_text": json.dumps(
+                {
+                    "name": "panda_shock",
+                    "title": "震惊熊猫头",
+                    "svg": '<svg viewBox="0 0 284 240"><ellipse cx="98" cy="78" rx="26" ry="22" fill="#000"/></svg>',
+                    "scene": {
+                        "name": "panda_shock",
+                        "title": "震惊熊猫头",
+                        "frames": [
+                            {
+                                "ms": 500,
+                                "elements": {
+                                    "eye_l": [{"shape": "circle_fill", "cx": 98, "cy": 78, "r": 10}],
+                                    "eye_r": [{"shape": "circle_fill", "cx": 186, "cy": 78, "r": 10}],
+                                    "mouth": [{"shape": "round_rect_fill", "x": 108, "y": 122, "w": 68, "h": 72, "r": 30}],
+                                    "nose": [{"shape": "circle_fill", "cx": 142, "cy": 118, "r": 5}],
+                                    "extra": [],
+                                },
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            )
+        }
+
+    monkeypatch.setenv("ARK_API_KEY", "test-key")
+
+    result = generate_face_svg_from_image(
+        b"\x89PNG\r\n\x1a\nfake",
+        "image/png",
+        transport=fake_transport,
+    )
+
+    scene = result["scene"]
+    normalize_face_expr_scenes([scene])
+    chain = design_frames_to_pb_chain(scene["frames"], runtime_req="ark-test")
+    assert chain
+    assert len(scene["frames"]) >= 4
+    assert len({json.dumps(frame["elements"], sort_keys=True) for frame in scene["frames"]}) > 1
+    for primitive in _all_primitives(scene):
+        assert primitive["shape"] in PB_SAFE_SCENE_SHAPES
+        assert "cx" not in primitive
+        assert "cy" not in primitive
+        assert "rx" not in primitive
+        assert "ry" not in primitive
 
 
 def test_face_design_generate_from_image_endpoint_requires_owned_device(temp_db, monkeypatch):

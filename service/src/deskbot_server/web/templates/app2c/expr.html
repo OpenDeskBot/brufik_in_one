@@ -2,7 +2,7 @@
 {% block page_title %}表情 · 小歪{% endblock %}
 {% block extra_head %}
 <script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
-<script src="{{ url_for('static', filename='face_preview_2c.js') }}?v=20260701-expr-editor"></script>
+<script src="{{ url_for('static', filename='face_preview_2c.js') }}?v=20260707-frame-browser"></script>
 {% endblock %}
 {% block content %}
 <div id="app">
@@ -22,6 +22,12 @@
       <div class="face">
         <div class="scanline"></div>
         <svg width="240" height="200" viewBox="0 0 284 240" v-html="customPreviewSvg" aria-hidden="true"></svg>
+      </div>
+      <div class="framebar" v-if="previewFrameCount > 1">
+        <button type="button" class="btn ghost" @click="prevPreviewFrame">上一帧</button>
+        <button type="button" class="btn" @click="togglePreviewPlayback">[[ previewPlaying ? '暂停' : '播放' ]]</button>
+        <button type="button" class="btn ghost" @click="nextPreviewFrame">下一帧</button>
+        <span>[[ previewFrameLabel ]]</span>
       </div>
       <div class="expr-stage-actions">
         <button type="button" class="btn ghost" @click="resetCustomFace">重置</button>
@@ -104,10 +110,16 @@
           <div class="image-file-name" v-if="imageExpressionFileName">[[ imageExpressionFileName ]]</div>
           <textarea class="tinput debug-textarea image-prompt" v-model="imageExpressionPrompt" placeholder="可选：补充你想保留的情绪、嘴型或风格，例如：保留坏笑和眼神，做成小歪 OLED 表情"></textarea>
           <div class="generated-svg-card" v-if="imageExpressionResult">
-            <div class="generated-svg-preview" v-html="imageExpressionResult.svg"></div>
+            <div class="generated-svg-preview" v-html="generatedPreviewSvg"></div>
             <div class="generated-svg-meta">
               <b>[[ imageExpressionResult.title || imageExpressionResult.name ]]</b>
               <small>[[ imageExpressionResult.model || 'doubao-seed-2-1-pro-260628' ]]</small>
+              <div class="framebar compact" v-if="generatedFrameCount > 1">
+                <button type="button" class="btn ghost" @click="prevGeneratedFrame">上一帧</button>
+                <button type="button" class="btn" @click="toggleGeneratedPlayback">[[ generatedPreviewPlaying ? '暂停' : '播放' ]]</button>
+                <button type="button" class="btn ghost" @click="nextGeneratedFrame">下一帧</button>
+                <span>[[ generatedFrameLabel ]]</span>
+              </div>
               <div class="debug-actionbar">
                 <button type="button" class="btn primary" @click="applyImageExpressionScene">加入当前表情</button>
                 <button type="button" class="btn ghost" @click="downloadImageExpressionSvg">下载 SVG</button>
@@ -218,6 +230,8 @@ createApp({
     emotions:[['happy','😄','开心'],['surprised','😲','惊讶'],['thinking','🤔','思考'],['sleepy','😴','困'],['idle','😐','待机']],
     map:{}, msg:'', customFace:{...DEFAULT_CUSTOM_FACE}, professionalDesign:null, professionalFileName:'',
     imageExpressionFile:null, imageExpressionFileName:'', imageExpressionResult:null,
+    previewFrameIndex:0, previewPlaying:true, previewTimer:null,
+    generatedFrameIndex:0, generatedPreviewPlaying:true, generatedPreviewTimer:null,
     generatingImageExpression:false,
     imageExpressionPrompt:'保留原图最鲜明的情绪和嘴型，做成小歪 OLED 表情。',
     llmNeedsConfig:false, llmConfigMessage:'',
@@ -235,8 +249,26 @@ createApp({
       return s.title || s.name || '我的表情';
     },
     customPreviewSvg(){
-      const preview = window.DeskbotFacePreview;
-      return preview ? preview.sceneToSvg(this.previewScene) : '';
+      return this.renderSceneSvg(this.previewScene, this.previewFrameIndex);
+    },
+    previewFrameCount(){
+      return this.sceneFrameCount(this.previewScene);
+    },
+    previewFrameLabel(){
+      return this.frameLabel(this.previewScene, this.previewFrameIndex);
+    },
+    generatedPreviewScene(){
+      return this.imageExpressionResult && this.imageExpressionResult.scene ? this.imageExpressionResult.scene : null;
+    },
+    generatedFrameCount(){
+      return this.sceneFrameCount(this.generatedPreviewScene);
+    },
+    generatedPreviewSvg(){
+      if(this.generatedPreviewScene) return this.renderSceneSvg(this.generatedPreviewScene, this.generatedFrameIndex);
+      return this.imageExpressionResult && this.imageExpressionResult.svg ? this.imageExpressionResult.svg : '';
+    },
+    generatedFrameLabel(){
+      return this.frameLabel(this.generatedPreviewScene, this.generatedFrameIndex);
     },
     professionalStats(){
       const design = this.professionalDesign || {};
@@ -284,10 +316,90 @@ createApp({
       const n = Number(v);
       return Math.max(min, Math.min(Number.isFinite(n) ? n : min, max));
     },
-    activateCustom(){ this.mode = 'custom'; },
+    sceneFrameCount(scene){
+      const preview = window.DeskbotFacePreview;
+      return preview && preview.frameCount ? preview.frameCount(scene) : 1;
+    },
+    sceneFrameMs(scene, index){
+      const preview = window.DeskbotFacePreview;
+      return preview && preview.frameMs ? preview.frameMs(scene, index) : 500;
+    },
+    activeFrameIndex(scene, index){
+      const count = this.sceneFrameCount(scene);
+      return Math.max(0, Math.min(Number(index) || 0, count - 1));
+    },
+    frameLabel(scene, index){
+      const count = this.sceneFrameCount(scene);
+      const current = this.activeFrameIndex(scene, index);
+      return '帧 ' + (current + 1) + '/' + count + ' · ' + this.sceneFrameMs(scene, current) + 'ms';
+    },
+    renderSceneSvg(scene, index){
+      const preview = window.DeskbotFacePreview;
+      return preview ? preview.sceneToSvg(scene, this.activeFrameIndex(scene, index)) : '';
+    },
+    clearPreviewTimer(){
+      if(this.previewTimer){ clearTimeout(this.previewTimer); this.previewTimer = null; }
+    },
+    clearGeneratedPreviewTimer(){
+      if(this.generatedPreviewTimer){ clearTimeout(this.generatedPreviewTimer); this.generatedPreviewTimer = null; }
+    },
+    schedulePreviewPlayback(){
+      this.clearPreviewTimer();
+      if(!this.previewPlaying || this.previewFrameCount <= 1) return;
+      const delay = this.sceneFrameMs(this.previewScene, this.previewFrameIndex);
+      this.previewTimer = setTimeout(() => {
+        this.previewFrameIndex = (this.previewFrameIndex + 1) % this.previewFrameCount;
+        this.schedulePreviewPlayback();
+      }, delay);
+    },
+    scheduleGeneratedPlayback(){
+      this.clearGeneratedPreviewTimer();
+      if(!this.generatedPreviewPlaying || this.generatedFrameCount <= 1) return;
+      const delay = this.sceneFrameMs(this.generatedPreviewScene, this.generatedFrameIndex);
+      this.generatedPreviewTimer = setTimeout(() => {
+        this.generatedFrameIndex = (this.generatedFrameIndex + 1) % this.generatedFrameCount;
+        this.scheduleGeneratedPlayback();
+      }, delay);
+    },
+    resetPreviewPlayback(){
+      this.previewFrameIndex = 0;
+      this.schedulePreviewPlayback();
+    },
+    resetGeneratedPlayback(){
+      this.generatedFrameIndex = 0;
+      this.scheduleGeneratedPlayback();
+    },
+    prevPreviewFrame(){
+      const count = this.previewFrameCount;
+      this.previewFrameIndex = (this.previewFrameIndex + count - 1) % count;
+      this.schedulePreviewPlayback();
+    },
+    nextPreviewFrame(){
+      this.previewFrameIndex = (this.previewFrameIndex + 1) % this.previewFrameCount;
+      this.schedulePreviewPlayback();
+    },
+    togglePreviewPlayback(){
+      this.previewPlaying = !this.previewPlaying;
+      this.schedulePreviewPlayback();
+    },
+    prevGeneratedFrame(){
+      const count = this.generatedFrameCount;
+      this.generatedFrameIndex = (this.generatedFrameIndex + count - 1) % count;
+      this.scheduleGeneratedPlayback();
+    },
+    nextGeneratedFrame(){
+      this.generatedFrameIndex = (this.generatedFrameIndex + 1) % this.generatedFrameCount;
+      this.scheduleGeneratedPlayback();
+    },
+    toggleGeneratedPlayback(){
+      this.generatedPreviewPlaying = !this.generatedPreviewPlaying;
+      this.scheduleGeneratedPlayback();
+    },
+    activateCustom(){ this.mode = 'custom'; this.resetPreviewPlayback(); },
     resetCustomFace(){
       this.customFace = {...DEFAULT_CUSTOM_FACE};
       this.mode = 'custom';
+      this.resetPreviewPlayback();
       this.msg = '已重置为默认表情';
     },
     applyPreset(name){
@@ -298,6 +410,7 @@ createApp({
       };
       this.customFace = {...DEFAULT_CUSTOM_FACE, ...(presets[name] || {})};
       this.mode = 'custom';
+      this.resetPreviewPlayback();
     },
     buildCustomScene(){
       const f = this.customFace || DEFAULT_CUSTOM_FACE;
@@ -442,6 +555,8 @@ createApp({
       this.imageExpressionFile = file;
       this.imageExpressionFileName = file.name || 'image';
       this.imageExpressionResult = null;
+      this.generatedFrameIndex = 0;
+      this.clearGeneratedPreviewTimer();
       this.msg = '已选择图片：' + this.imageExpressionFileName;
     },
     async generateImageExpression(){
@@ -456,8 +571,10 @@ createApp({
         const res = await (await fetch('/api/face_design/generate-from-image', {method:'POST', body:form})).json();
         if(!res.ok) throw new Error(res.error || '图片表情包生成失败');
         this.imageExpressionResult = res;
+        this.generatedPreviewPlaying = true;
+        this.resetGeneratedPlayback();
         this.applyImageExpressionScene({silent:true});
-        this.msg = '已生成 SVG 和表情 scene，检查后点击保存表情生效';
+        this.msg = '已生成多帧动画表情，检查后点击保存表情生效';
       }catch(e){
         this.msg = '图片表情包生成失败：' + (e && e.message ? e.message : e);
       }finally{
@@ -470,6 +587,7 @@ createApp({
       if(!scene){ if(!silent) this.msg = '没有可加入的表情 scene'; return; }
       this.upsertScene(scene);
       this.mode = 'preset';
+      this.resetPreviewPlayback();
       if(!silent) this.msg = '已加入当前表情，点击保存表情后同步到设备配置';
     },
     downloadImageExpressionSvg(){
@@ -575,6 +693,7 @@ createApp({
       this.map = Object.assign({}, this.map, this.emotionMapFromDesign(design));
       this.selectSceneByName(imported[0].name);
       this.mode = 'preset';
+      this.resetPreviewPlayback();
       return imported;
     },
     exportProfessionalDesign(){
@@ -636,12 +755,14 @@ createApp({
       else rows.unshift(scene);
       this.scenes = rows;
       this.selectSceneByName(scene.name);
+      this.resetPreviewPlayback();
       return scene;
     },
     selectScene(i){
       if(!this.scenes.length){ this.selected = 0; return; }
       this.selected = Math.max(0, Math.min(Number(i) || 0, this.scenes.length - 1));
       this.mode = 'preset';
+      this.resetPreviewPlayback();
     },
     selectSceneByName(name){
       const hit = (this.scenes || []).findIndex(s => s && s.name === name);
@@ -682,8 +803,10 @@ createApp({
         this.syncHomePreviewScene();
         const selectedScene = this.scenes[this.selected] || null;
         this.mode = selectedScene && selectedScene.name === 'custom_face' ? 'custom' : 'preset';
+        this.resetPreviewPlayback();
       }catch(e){
         this.scenes = [this.buildCustomScene()];
+        this.resetPreviewPlayback();
         this.msg = '表情数据加载失败：' + (e && e.message ? e.message : e);
       }
     },
@@ -720,7 +843,14 @@ createApp({
       }
     },
   },
-  mounted(){ this.load(); },
+  mounted(){
+    this.load();
+    this.schedulePreviewPlayback();
+  },
+  beforeUnmount(){
+    this.clearPreviewTimer();
+    this.clearGeneratedPreviewTimer();
+  },
 }).mount('#app');
 </script>
 {% endblock %}
