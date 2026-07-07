@@ -56,6 +56,7 @@ a{color:inherit}
 .topbar .tb-link{display:flex;align-items:center;gap:7px}
 .topbar .tb-link .led{width:8px;height:8px;border-radius:50%;background:var(--accent);
   border:1.5px solid var(--line);animation:ledpulse 2.4s ease-in-out infinite}
+.topbar .tb-link .led.off{background:var(--faint);animation:none}
 .topbar .tb-link span{font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:var(--dim);font-weight:700}
 .topbar .tb-clock{font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--dim);font-weight:700}
 .topbar form{margin:0}

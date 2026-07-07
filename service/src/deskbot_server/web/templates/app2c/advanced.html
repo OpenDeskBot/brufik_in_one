@@ -213,8 +213,8 @@
 
     <div v-show="advancedOpen.llm">
       <div class="panel-head" style="margin-top:14px">
-        <div><small>选择要覆盖的设备</small></div>
-        <select v-model="currentDeviceId" @change="switchDevice">
+        <div><small>选择要覆盖的设备（和「我的设备」页的当前设备是同一个，切换后两边同步）</small></div>
+        <select v-model="currentDeviceId" @change="switchDevice" title="和「我的设备」页的当前设备联动">
           <option value="">选择设备</option>
           <option v-for="d in devices" :key="d.device_id" :value="d.device_id">[[ d.display_name ]] · [[ d.device_id ]]</option>
         </select>
@@ -300,7 +300,7 @@
       <div><b>开发者调试</b><small>设备、LLM、TTS 和模拟器都在本页执行</small></div>
       <div class="btngroup">
         <button type="button" class="btn ghost" @click="toggleAdvanced('debug')">[[ advancedOpen.debug ? '收起配置' : '展开配置' ]]</button>
-        <select v-model="currentDeviceId" @change="switchDevice">
+        <select v-model="currentDeviceId" @change="switchDevice" title="和「我的设备」页的当前设备联动">
           <option value="">选择设备</option>
           <option v-for="d in devices" :key="d.device_id" :value="d.device_id">[[ d.display_name ]] · [[ d.device_id ]]</option>
         </select>

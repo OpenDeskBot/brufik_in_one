@@ -32,7 +32,7 @@
         <span class="tb-sub">CONSOLE</span>
       </a>
       <span class="tb-div"></span>
-      <span class="tb-link"><span class="led"></span><span>LINK·OK</span></span>
+      <span class="tb-link" id="tbLink"><span class="led off"></span><span id="tbLinkText">检查中…</span></span>
     </div>
     <div class="tb-r">
       <span class="tb-clock" id="tbClock">--:--:--</span>
@@ -69,6 +69,22 @@
     var p=function(n){return String(n).padStart(2,'0');};
     var tick=function(){var d=new Date();el.textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());};
     tick(); setInterval(tick,1000);
+  })();
+  (function(){
+    // 顶栏 LINK 状态反映当前设备真实在线情况，而不是恒亮的假状态
+    var link=document.getElementById('tbLink'), text=document.getElementById('tbLinkText');
+    if(!link || !text) return;
+    var setState=function(cls, label){
+      link.querySelector('.led').className='led'+(cls?' '+cls:'');
+      text.textContent=label;
+    };
+    fetch('/app/api/devices').then(function(r){return r.json();}).then(function(d){
+      var devices=d.devices||[];
+      if(!devices.length){ setState('off','未绑定设备'); return; }
+      var current=devices.find(function(x){return x.is_current;});
+      if(!current){ setState('off','未选择设备'); return; }
+      setState(current.online ? '' : 'off', current.online ? 'LINK·OK' : 'LINK·离线');
+    }).catch(function(){ setState('off','状态未知'); });
   })();
 </script>
 {% block scripts %}{% endblock %}
