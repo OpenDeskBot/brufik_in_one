@@ -121,7 +121,7 @@ def test_2c_advanced_debug_is_inline_not_old_debug_links(temp_db):
     assert "runDebugSimulation" in html
 
 
-def test_2c_voice_page_exposes_tts_config_and_player(temp_db):
+def test_2c_voice_page_links_to_model_config_and_keeps_player(temp_db):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
@@ -134,10 +134,17 @@ def test_2c_voice_page_exposes_tts_config_and_player(temp_db):
 
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert "TTS 服务配置" in html
+    assert "高级 · 模型配置" in html
+    assert "saveTtsConfig" not in html
     assert 'ref="previewAudio"' in html
-    assert "saveTtsConfig" in html
     assert "playPreviewAudio" in html
+
+    advanced = client.get("/advanced")
+    assert advanced.status_code == 200
+    advanced_html = advanced.get_data(as_text=True)
+    assert "声音能力 · 火山引擎语音技术" in advanced_html
+    assert "DOUBAO_TTS_API_KEY" in advanced_html
+    assert "saveTtsConfig" in advanced_html
 
 
 def test_2c_voice_page_exposes_full_doubao_voice_library_controls(temp_db):
@@ -160,6 +167,211 @@ def test_2c_voice_page_exposes_full_doubao_voice_library_controls(temp_db):
     assert "voiceSearch" in html
     assert "sceneOptions" in html
     assert "filteredSpeakers" in html
+
+
+def test_2c_voice_preview_controls_are_compact_and_aligned(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("voice-compact-preview2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "voice-compact-preview2c@example.com", "password": "password1234"})
+
+    resp = client.get("/voice")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'class="voice-preview-row compact-preview"' in html
+    assert 'class="slider-card voice-volume-card"' in html
+
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "deskbot_server"
+        / "web"
+        / "static"
+        / "theme_2c.css"
+    ).read_text(encoding="utf-8")
+    assert "--voice-control-h:68px" in css
+    assert ".voice-preview-row.compact-preview" in css
+    assert "grid-template-columns:minmax(280px,468px) minmax(220px,320px)" in css
+    assert ".voice-preview-row.compact-preview .preview-audio" in css
+    assert ".voice-preview-row.compact-preview .voice-volume-card" in css
+    assert "height:var(--voice-control-h)" in css
+
+
+def test_2c_theme_uses_calm_retro_tokens():
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "deskbot_server"
+        / "web"
+        / "static"
+        / "theme_2c.css"
+    ).read_text(encoding="utf-8")
+
+    assert "设计语言：Soft retro console" in css
+    assert "--bg:#f6f1e8" in css
+    assert "--panel:#fffdfa" in css
+    assert "--line:#3a3328" in css
+    assert "--accent:#dc6b36" in css
+    assert "--shadow:0 10px 24px rgba(42,39,34,.08)" in css
+    assert "background-size:56px 56px" in css
+    assert ".stage .brackets span{position:absolute" in css
+    assert ".face .scanline{position:absolute" in css
+
+
+def test_2c_voice_page_exposes_voice_clone_workflow(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("voice-clone-page2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "voice-clone-page2c@example.com", "password": "password1234"})
+
+    resp = client.get("/voice")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "声音复刻" in html
+    assert "音色名称" in html
+    assert "voice_name" in html
+    assert "/api/doubao_tts/voice-clone" in html
+    assert "/api/doubao_tts/voice-clone/status" in html
+    assert "cloneVoice" in html
+    assert "checkCloneStatus" in html
+    assert "applyClonedVoice" in html
+
+
+def test_2c_voice_page_separates_library_and_clone_tabs_with_progress(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("voice-tabs2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "voice-tabs2c@example.com", "password": "password1234"})
+
+    resp = client.get("/voice")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "voice-tabbar" in html
+    assert "voiceTab==='library'" in html
+    assert "voiceTab==='clone'" in html
+    assert "直接使用" in html
+    assert "clone-progress" in html
+    assert "cloneProgress" in html
+    assert "cloneProgressLabel" in html
+
+
+def test_2c_voice_clone_upload_endpoint_uses_configured_volcengine_credentials(
+    temp_db, monkeypatch
+):
+    from io import BytesIO
+
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.tts.voice_clone import DoubaoVoiceCloneResult
+    from deskbot_server.web.app import create_app
+
+    monkeypatch.setenv("DOUBAO_TTS_APP_ID", "app-id")
+    monkeypatch.setenv("DOUBAO_TTS_ACCESS_TOKEN", "access-token")
+    captured = {}
+
+    def fake_clone(
+        cfg,
+        *,
+        audio_bytes,
+        audio_format,
+        language=0,
+        display_name="",
+        custom_speaker_id="",
+        prompt_text="",
+    ):
+        captured["cfg"] = cfg
+        captured["audio_bytes"] = audio_bytes
+        captured["audio_format"] = audio_format
+        captured["language"] = language
+        captured["display_name"] = display_name
+        captured["custom_speaker_id"] = custom_speaker_id
+        captured["prompt_text"] = prompt_text
+        return DoubaoVoiceCloneResult(
+            speaker_id=custom_speaker_id,
+            status=1,
+            raw={"status": 1, "speaker_id": custom_speaker_id},
+        )
+
+    monkeypatch.setattr("deskbot_server.tts.voice_clone.clone_doubao_voice", fake_clone)
+    create_user("voice-clone-api2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "voice-clone-api2c@example.com", "password": "password1234"})
+
+    resp = client.post(
+        "/api/doubao_tts/voice-clone",
+        data={
+            "voice_name": "小歪音色",
+            "language": "0",
+            "prompt_text": "你好，我是小歪。",
+            "audio": (BytesIO(b"RIFF....WAVE"), "sample.wav"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["ok"] is True
+    assert payload["speaker_id"] == "brufik_xiao_wai_yin_se"
+    assert payload["status"] == 1
+    assert payload["ready"] is False
+    assert captured["cfg"].app_key == "app-id"
+    assert captured["cfg"].access_key == "access-token"
+    assert captured["cfg"].resource_id == "seed-icl-2.0"
+    assert captured["audio_bytes"] == b"RIFF....WAVE"
+    assert captured["audio_format"] == "wav"
+    assert captured["language"] == 0
+    assert captured["display_name"] == "小歪音色"
+    assert captured["custom_speaker_id"] == "brufik_xiao_wai_yin_se"
+    assert captured["prompt_text"] == "你好，我是小歪。"
+
+
+def test_2c_voice_clone_status_endpoint_reports_ready(temp_db, monkeypatch):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.tts.voice_clone import DoubaoVoiceCloneResult
+    from deskbot_server.web.app import create_app
+
+    monkeypatch.setenv("DOUBAO_TTS_APP_ID", "app-id")
+    monkeypatch.setenv("DOUBAO_TTS_ACCESS_TOKEN", "access-token")
+    captured = {}
+
+    def fake_status(cfg, speaker_id):
+        captured["cfg"] = cfg
+        captured["speaker_id"] = speaker_id
+        return DoubaoVoiceCloneResult(
+            speaker_id=speaker_id,
+            status=4,
+            raw={"status": 4, "speaker_id": speaker_id, "model_type": 5},
+            model_type=5,
+        )
+
+    monkeypatch.setattr("deskbot_server.tts.voice_clone.get_doubao_voice_clone_status", fake_status)
+    create_user("voice-clone-status2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "voice-clone-status2c@example.com", "password": "password1234"})
+
+    resp = client.post("/api/doubao_tts/voice-clone/status", json={"speaker_id": "S_ready"})
+
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["ok"] is True
+    assert payload["speaker_id"] == "S_ready"
+    assert payload["ready"] is True
+    assert payload["status_label"] == "可用"
+    assert captured["cfg"].app_key == "app-id"
+    assert captured["speaker_id"] == "S_ready"
 
 
 def test_doubao_tts_speakers_api_can_return_consumer_ready_presets(temp_db):
@@ -220,7 +432,7 @@ def test_doubao_tts_speakers_api_returns_full_local_preset_file(temp_db):
     assert expected_count >= 300
 
 
-def test_2c_voice_tts_config_panel_is_collapsible(temp_db):
+def test_2c_voice_no_longer_owns_tts_config_panel(temp_db):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
@@ -233,10 +445,10 @@ def test_2c_voice_tts_config_panel_is_collapsible(temp_db):
 
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert ':aria-expanded="String(configOpen)"' in html
-    assert 'v-show="configOpen"' in html
-    assert "展开配置" in html
-    assert "收起配置" in html
+    assert ':aria-expanded="String(configOpen)"' not in html
+    assert 'v-show="configOpen"' not in html
+    assert "TTS 服务配置" not in html
+    assert "高级 · 模型配置" in html
 
 
 def test_2c_voice_tts_synthesize_endpoint_returns_wav(temp_db, monkeypatch):
@@ -297,6 +509,26 @@ def test_2c_expr_page_exposes_real_face_editor_controls(temp_db):
     assert "/api/device_pb_expr_scene" in html
 
 
+def test_2c_expr_preview_uses_home_fallback_until_user_edits(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("expr-fallback2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "expr-fallback2c@example.com", "password": "password1234"})
+
+    resp = client.get("/expr")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "preview.pickScene(this.scenes, this.map, 'idle')" in html
+    assert "if(!this.deviceId){ this.scenes = [];" in html
+    assert "this.scenes = (r.config && r.config.length) ? r.config : [];" in html
+    assert "applyPreset(name)" in html
+    assert "this.editingFace = true;" in html
+
+
 def test_2c_expr_page_exposes_professional_design_tab(temp_db):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
@@ -324,6 +556,9 @@ def test_2c_expr_page_exposes_professional_design_tab(temp_db):
     assert "图片表情包生成" in html
     assert "generateImageExpression" in html
     assert "/api/face_design/generate-from-image" in html
+    assert "image-generation-progress" in html
+    assert "imageExpressionProgress" in html
+    assert "imageExpressionProgressLabel" in html
     assert "previewFrameIndex" in html
     assert "generatedPreviewSvg" in html
     assert "togglePreviewPlayback" in html
@@ -425,9 +660,8 @@ def test_2c_advanced_keeps_heavy_features_collapsed(temp_db):
     assert "收起配置" in html
     assert "/api/tts/phoneme_tts" in html
     assert "/api/paddlespeech/phoneme_tts" not in html
-    assert "需要配置大模型" in html
-    assert "llm.needs_config" in html
-    assert "advancedOpen.llm=true" in html
+    assert "还没完成 AI 能力配置" in html
+    assert "需要配置大模型" not in html
 
 
 def test_2c_consumer_apis_are_not_developer_locked(temp_db, monkeypatch):
@@ -470,9 +704,8 @@ def test_2c_debug_phoneme_endpoint_returns_json_when_tts_adapter_fails(
     temp_db, monkeypatch
 ):
     from deskbot_server.auth.service import create_user
-    from deskbot_server.web.app import create_app
-
     from deskbot_server.infrastructure.tts import factory
+    from deskbot_server.web.app import create_app
 
     def fail_adapter(_settings):
         raise RuntimeError("no tts adapter")
@@ -564,7 +797,8 @@ def test_2c_expr_ai_generation_reminds_llm_config_required(temp_db):
 
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert "需要配置大模型" in html
+    assert "还没完成 AI 能力配置" in html
+    assert "需要配置大模型" not in html
     assert "loadLlmConfigStatus" in html
     assert "llmNeedsConfig" in html
     assert "/advanced" in html

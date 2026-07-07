@@ -4,17 +4,18 @@ import asyncio
 import base64
 import json
 import logging
+import mimetypes
 import os
 import time
 
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user
 
+from deskbot_server.application.face_registration import register_face_for_device
 from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
 from deskbot_server.auth.device_service import user_owns_device
 from deskbot_server.auth.permissions import current_user_is_developer, require_developer
 from deskbot_server.auth.service import list_users, set_user_developer
-from deskbot_server.llm.utils import llm_pb_scenes_prompt_appendix, parse_llm_reply
 from deskbot_server.camera_face_config_store import (
     load_camera_face_cfg_file,
     normalize_camera_face_document,
@@ -32,21 +33,20 @@ from deskbot_server.device_data import (
     resolve_json_path,
     save_llm_system_prompt,
 )
-from deskbot_server.application.face_registration import register_face_for_device
 from deskbot_server.face_profiles_store import load_face_profiles
+from deskbot_server.llm.utils import llm_pb_scenes_prompt_appendix, parse_llm_reply
 from deskbot_server.memory_store import add_memory, delete_memory, list_memory_for_device
-from deskbot_server.util import pcm_to_wav_bytes
 from deskbot_server.servo_config_store import (
     load_servo_cfg_file,
     normalize_servo_document,
     save_servo_cfg_file,
 )
+from deskbot_server.util import pcm_to_wav_bytes
 from deskbot_server.web.helpers import (
     ALLOWED_LLM_ROLES,
     beijing_time_str,
     camera_view_ws_base,
     deskbot_http_base,
-    deskbot_ws_default,
     device_pipeline_ws_base,
     load_config,
     tcp_alive,
@@ -272,14 +272,12 @@ def api_doubao_tts_config_get():
 
 @bp.post("/api/doubao_tts/config")
 def api_doubao_tts_config_post():
-    from deskbot_server.tts.doubao import load_doubao_tts_config
+    from deskbot_server.tts.doubao import load_doubao_tts_config, resolve_optional_secret
     from deskbot_server.tts.env_store import save_doubao_tts_env
 
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
-
-    from deskbot_server.tts.doubao import load_doubao_tts_config, resolve_optional_secret
 
     base = load_doubao_tts_config()
     api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
@@ -294,7 +292,11 @@ def api_doubao_tts_config_post():
 
 
 def _doubao_cfg_from_payload(payload: dict):
-    from deskbot_server.tts.doubao import DoubaoTtsConfig, load_doubao_tts_config, resolve_optional_secret
+    from deskbot_server.tts.doubao import (
+        DoubaoTtsConfig,
+        load_doubao_tts_config,
+        resolve_optional_secret,
+    )
 
     base = load_doubao_tts_config()
     api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
@@ -312,6 +314,58 @@ def _doubao_cfg_from_payload(payload: dict):
         sample_rate=sample_rate,
         audio_format=str(payload.get("audio_format") or base.audio_format).strip(),
     )
+
+
+def _doubao_voice_clone_cfg_from_payload(payload: dict):
+    from deskbot_server.tts.doubao import load_doubao_tts_config, resolve_optional_secret
+    from deskbot_server.tts.voice_clone import (
+        DEFAULT_VOICE_CLONE_RESOURCE_ID,
+        DoubaoVoiceCloneConfig,
+    )
+
+    base = load_doubao_tts_config()
+    app_key = resolve_optional_secret(payload.get("app_id"), base.app_id)
+    access_key = resolve_optional_secret(payload.get("access_token"), base.access_token)
+    resource_id = str(
+        payload.get("resource_id")
+        or payload.get("voice_clone_resource_id")
+        or base.voice_clone_resource_id
+        or DEFAULT_VOICE_CLONE_RESOURCE_ID
+    ).strip()
+    clone_url = str(payload.get("voice_clone_url") or base.voice_clone_url).strip()
+    status_url = str(payload.get("voice_status_url") or base.voice_status_url).strip()
+    return DoubaoVoiceCloneConfig(
+        app_key=app_key,
+        access_key=access_key,
+        resource_id=resource_id,
+        clone_url=clone_url,
+        status_url=status_url,
+    )
+
+
+def _audio_format_from_upload(filename: str, content_type: str) -> str:
+    guessed = (mimetypes.guess_type(filename or "")[0] or content_type or "").lower()
+    ext = (filename.rsplit(".", 1)[-1] if "." in filename else "").strip().lower()
+    if ext in {"wav", "mp3", "ogg", "m4a", "aac", "pcm", "flac", "opus"}:
+        return "ogg" if ext == "opus" else ext
+    if "wav" in guessed:
+        return "wav"
+    if "mpeg" in guessed or "mp3" in guessed:
+        return "mp3"
+    if "ogg" in guessed or "opus" in guessed:
+        return "ogg"
+    if "mp4" in guessed or "m4a" in guessed:
+        return "m4a"
+    if "aac" in guessed:
+        return "aac"
+    if "flac" in guessed:
+        return "flac"
+    return ext
+
+
+def _voice_clone_payload(result) -> dict:
+    payload = result.as_payload()
+    return {"ok": True, **payload, "t": time.time()}
 
 
 @bp.post("/api/doubao_tts/synthesize")
@@ -352,6 +406,76 @@ def api_doubao_tts_synthesize():
             "wav_base64": base64.b64encode(wav).decode("ascii"),
         }
     )
+
+
+@bp.post("/api/doubao_tts/voice-clone")
+def api_doubao_tts_voice_clone():
+    from deskbot_server.tts.voice_clone import clone_doubao_voice, custom_speaker_id_from_name
+
+    upload = request.files.get("audio") or request.files.get("file")
+    if upload is None or not upload.filename:
+        return jsonify({"ok": False, "error": "请先上传训练音频"}), 400
+    audio_bytes = upload.read()
+    if not audio_bytes:
+        return jsonify({"ok": False, "error": "训练音频为空"}), 400
+    if len(audio_bytes) > 10 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "训练音频不能超过 10MB"}), 400
+
+    form = request.form
+    voice_name = str(form.get("voice_name") or form.get("display_name") or "").strip()
+    if not voice_name:
+        return jsonify({"ok": False, "error": "请填写音色名称"}), 400
+    custom_speaker_id = str(form.get("custom_speaker_id") or "").strip() or custom_speaker_id_from_name(
+        voice_name
+    )
+    audio_format = str(form.get("audio_format") or "").strip().lower() or _audio_format_from_upload(
+        upload.filename or "",
+        upload.content_type or "",
+    )
+    if not audio_format:
+        return jsonify({"ok": False, "error": "无法识别音频格式，请上传 wav/mp3/ogg/m4a/aac/pcm"}), 400
+    try:
+        language = int(form.get("language") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "language 必须是数字枚举"}), 400
+    cfg = _doubao_voice_clone_cfg_from_payload(dict(form))
+    try:
+        result = clone_doubao_voice(
+            cfg,
+            audio_bytes=audio_bytes,
+            audio_format=audio_format,
+            language=language,
+            display_name=voice_name,
+            custom_speaker_id=custom_speaker_id,
+            prompt_text=str(form.get("prompt_text") or "").strip(),
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001 - surface provider error to the user
+        logger.exception("火山声音复刻训练提交失败 custom_speaker_id=%r", custom_speaker_id)
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    return jsonify(_voice_clone_payload(result))
+
+
+@bp.post("/api/doubao_tts/voice-clone/status")
+def api_doubao_tts_voice_clone_status():
+    from deskbot_server.tts.voice_clone import get_doubao_voice_clone_status
+
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+    speaker_id = str(payload.get("speaker_id") or "").strip()
+    if not speaker_id:
+        return jsonify({"ok": False, "error": "请填写 S_ 开头的音色 ID"}), 400
+    cfg = _doubao_voice_clone_cfg_from_payload(payload)
+    try:
+        result = get_doubao_voice_clone_status(cfg, speaker_id)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001 - surface provider error to the user
+        logger.exception("火山声音复刻状态查询失败 speaker=%r", speaker_id)
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    return jsonify(_voice_clone_payload(result))
 
 
 @bp.get("/debug/llm")
@@ -535,11 +659,11 @@ def llm_chat():
     sys_content = (
         f"{system_prompt}\n当前时间是: {beijing_time_str()}（北京时间，东八区）"
     )
+    from deskbot_server.llm.user_message import build_llm_user_message
     from deskbot_server.llm.utils import (
         llm_device_screen_appendix,
         llm_static_context_prompt_appendix,
     )
-    from deskbot_server.llm.user_message import build_llm_user_message
 
     sys_content += "\n" + llm_device_screen_appendix(debug_device_id or None)
     px = llm_pb_scenes_prompt_appendix(device_id=debug_device_id or None)

@@ -11,14 +11,21 @@
       <button class="btn ghost" style="margin-top:10px" @click="del(t)">删除</button>
     </div>
   </div>
-  <p class="lead" v-if="!tasks.length">还没有提醒。</p>
+  <p class="lead" v-if="!noDevice && !tasks.length">还没有提醒。</p>
+  <p class="lead" v-if="msg">[[ msg ]]</p>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 const { createApp } = Vue;
-createApp({ delimiters:['[[',']]'], data(){return{tasks:[]};},
-  methods:{ async load(){ const r=await (await fetch('/app/api/scheduled-tasks')).json(); if(r.ok) this.tasks=r.tasks||[]; },
+createApp({ delimiters:['[[',']]'], data(){return{tasks:[], noDevice:false, msg:''};},
+  methods:{ async load(){
+      const d=await (await fetch('/app/api/devices')).json();
+      this.noDevice = !d.current_device_id;
+      if(this.noDevice){ this.tasks=[]; return; }
+      const r=await (await fetch('/app/api/scheduled-tasks')).json();
+      if(r.ok) this.tasks=r.tasks||[]; else this.msg=r.error||'加载失败';
+    },
     async del(t){ if(!confirm('确定删除这个提醒？')) return; const r=await (await fetch('/app/api/scheduled-tasks/'+t.id,{method:'DELETE'})).json(); if(r.ok) this.load(); } },
   mounted(){ this.load(); } }).mount('#app');
 </script>

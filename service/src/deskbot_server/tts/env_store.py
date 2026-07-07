@@ -18,6 +18,11 @@ DOUBAO_TTS_ENV_KEYS = (
     "DOUBAO_TTS_WS_URL",
     "DOUBAO_TTS_SAMPLE_RATE",
     "DOUBAO_TTS_FORMAT",
+    "DOUBAO_TTS_APP_ID",
+    "DOUBAO_TTS_ACCESS_TOKEN",
+    "DOUBAO_TTS_VOICE_CLONE_RESOURCE_ID",
+    "DOUBAO_TTS_VOICE_CLONE_URL",
+    "DOUBAO_TTS_VOICE_STATUS_URL",
 )
 
 _PAYLOAD_FIELD_BY_ENV_KEY = {
@@ -28,6 +33,11 @@ _PAYLOAD_FIELD_BY_ENV_KEY = {
     "DOUBAO_TTS_WS_URL": "ws_url",
     "DOUBAO_TTS_SAMPLE_RATE": "sample_rate",
     "DOUBAO_TTS_FORMAT": "audio_format",
+    "DOUBAO_TTS_APP_ID": "app_id",
+    "DOUBAO_TTS_ACCESS_TOKEN": "access_token",
+    "DOUBAO_TTS_VOICE_CLONE_RESOURCE_ID": "voice_clone_resource_id",
+    "DOUBAO_TTS_VOICE_CLONE_URL": "voice_clone_url",
+    "DOUBAO_TTS_VOICE_STATUS_URL": "voice_status_url",
 }
 
 
@@ -122,7 +132,7 @@ def save_doubao_tts_env(payload: dict[str, str]) -> None:
     for env_key in DOUBAO_TTS_ENV_KEYS:
         payload_key = _PAYLOAD_FIELD_BY_ENV_KEY[env_key]
         raw = str(payload.get(payload_key) or "").strip()
-        if env_key == "DOUBAO_TTS_API_KEY" and _is_masked_secret(raw):
+        if env_key in ("DOUBAO_TTS_API_KEY", "DOUBAO_TTS_ACCESS_TOKEN") and _is_masked_secret(raw):
             raw = ""
         if not raw:
             raw = (existing.get(env_key) or "").strip()

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>配置大模型 · BRUFIK CONSOLE</title>
+  <title>配置 AI 能力 · BRUFIK CONSOLE</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -59,8 +59,8 @@
 
     <!-- Step 1: why -->
     <div v-if="step===1">
-      <h1>先配置大模型</h1>
-      <p class="lead">小歪的 <b>AI 表情设计</b> 和 <b>对话</b> 都由大模型驱动。你只需填一个火山方舟 API Key，用到哪个模型我们会自动帮你路由好。<br><b>🔒 密钥只保存在你本机，不会上传云端。</b></p>
+      <h1>先配置 AI 能力</h1>
+      <p class="lead">小歪的 <b>AI 表情设计</b>、<b>图片生成</b> 和 <b>对话</b> 都由火山方舟驱动。你只需填一个 API Key，用到哪个模型我们会自动帮你路由好。<br><b>🔒 密钥只保存在你本机，不会上传云端。</b></p>
       <div class="ob-actions">
         <button class="ob-skip" type="button" @click="skip">稍后再说</button>
         <button class="btn primary" type="button" @click="step=2">开始配置</button>
@@ -117,7 +117,7 @@
         </div>
       </div>
 
-      <div class="ob-testing" v-if="testing"><span class="ob-spin"></span><span>正在连接大模型，请稍候…</span></div>
+      <div class="ob-testing" v-if="testing"><span class="ob-spin"></span><span>正在连接 AI 能力，请稍候…</span></div>
       <div class="ob-result" :class="testResult.ok ? 'ok' : 'err'" v-if="testResult && !testing">
         <b v-if="testResult.ok">连接成功 · [[ testResult.meta && (testResult.meta.display_name || testResult.meta.model) ]]</b>
         <b v-else>连接失败：[[ testResult.error ]]</b>
@@ -137,8 +137,8 @@
     <div v-if="step===4">
       <div class="ob-done">
         <div class="big">✅</div>
-        <h1>大模型配置完成</h1>
-        <p class="lead">还差最后一步：绑定你的第一台桌搭子设备，就能开始用了。</p>
+        <h1>AI 能力配置完成</h1>
+        <p class="lead">还差最后一步：绑定专属于你的桌面机器人小歪，就能开始用了。</p>
       </div>
       <div class="ob-actions">
         <a class="ob-skip" href="{{ url_for('app2c.home') }}">先看看控制台</a>

@@ -33,6 +33,9 @@ logger = logging.getLogger("deskbot-server")
 DEFAULT_WS_URL = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
 DEFAULT_RESOURCE_ID = "seed-tts-2.0"
 DEFAULT_MODEL = "seed-tts-2.0-expressive"
+DEFAULT_VOICE_CLONE_RESOURCE_ID = "seed-icl-2.0"
+DEFAULT_VOICE_CLONE_URL = "https://openspeech.bytedance.com/api/v3/tts/voice_clone"
+DEFAULT_VOICE_STATUS_URL = "https://openspeech.bytedance.com/api/v3/tts/get_voice"
 
 
 @dataclass(frozen=True)
@@ -45,6 +48,11 @@ class DoubaoTtsConfig:
     sample_rate: int = 24000
     audio_format: str = "pcm"
     enable_timestamp: bool = True
+    app_id: str = ""
+    access_token: str = ""
+    voice_clone_resource_id: str = DEFAULT_VOICE_CLONE_RESOURCE_ID
+    voice_clone_url: str = DEFAULT_VOICE_CLONE_URL
+    voice_status_url: str = DEFAULT_VOICE_STATUS_URL
 
     def ws_headers(self) -> dict[str, str]:
         return {
@@ -64,6 +72,13 @@ class DoubaoTtsConfig:
             "sample_rate": self.sample_rate,
             "audio_format": self.audio_format,
             "enable_timestamp": self.enable_timestamp,
+            "app_id": "",
+            "app_id_set": bool(self.app_id),
+            "access_token": "",
+            "access_token_set": bool(self.access_token),
+            "voice_clone_resource_id": self.voice_clone_resource_id,
+            "voice_clone_url": self.voice_clone_url,
+            "voice_status_url": self.voice_status_url,
         }
 
 
@@ -106,6 +121,13 @@ def load_doubao_tts_config() -> DoubaoTtsConfig:
         audio_format=(os.environ.get("DOUBAO_TTS_FORMAT") or "pcm").strip(),
         enable_timestamp=(os.environ.get("DOUBAO_TTS_ENABLE_TIMESTAMP") or "1").strip().lower()
         not in ("0", "false", "no", "off"),
+        app_id=(os.environ.get("DOUBAO_TTS_APP_ID") or "").strip(),
+        access_token=(os.environ.get("DOUBAO_TTS_ACCESS_TOKEN") or "").strip(),
+        voice_clone_resource_id=(
+            os.environ.get("DOUBAO_TTS_VOICE_CLONE_RESOURCE_ID") or DEFAULT_VOICE_CLONE_RESOURCE_ID
+        ).strip(),
+        voice_clone_url=(os.environ.get("DOUBAO_TTS_VOICE_CLONE_URL") or DEFAULT_VOICE_CLONE_URL).strip(),
+        voice_status_url=(os.environ.get("DOUBAO_TTS_VOICE_STATUS_URL") or DEFAULT_VOICE_STATUS_URL).strip(),
     )
 
 

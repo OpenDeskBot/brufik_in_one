@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import mimetypes
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
 from deskbot_server.auth.api_key_service import (
@@ -99,7 +99,7 @@ def advanced():
 @bp.get("/onboarding")
 @login_required
 def onboarding():
-    return render_template("app2c/onboarding.html")
+    return redirect(url_for("app2c.advanced", tab="llm"))
 
 
 # 引导只让用户填 API Key；文本类功能默认路由到这个火山方舟模型（与图片生成同款），用户可切换。
@@ -305,7 +305,9 @@ def _llm_api_key_set(api_key: str | None) -> bool:
 
 def _llm_config_message(*, device_selected: bool, api_key_set: bool, source: str = "") -> str:
     if not device_selected:
-        return "请先选择设备，然后在「LLM 模型」里完成大模型配置。"
+        if api_key_set:
+            return "本机大模型已配置；绑定并选择小歪后，可继续做按设备覆盖。"
+        return "请先在「模型配置」里完成大模型配置；绑定小歪后，可继续做按设备覆盖。"
     if api_key_set:
         return ""
     if source == "system":
@@ -386,8 +388,13 @@ def advanced_summary_get():
         llm["config_message"] = "设备不属于当前账号，无法配置大模型。"
     else:
         llm["error"] = "请先选择设备"
-        llm["needs_config"] = True
-        llm["config_message"] = _llm_config_message(device_selected=False, api_key_set=False)
+        system_api_key_set = bool(llm["system_default"] and llm["system_default"].get("api_key_set"))
+        llm["needs_config"] = not system_api_key_set
+        llm["config_message"] = _llm_config_message(
+            device_selected=False,
+            api_key_set=system_api_key_set,
+            source=system_default.source,
+        )
 
     return jsonify(
         {

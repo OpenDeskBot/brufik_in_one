@@ -12,21 +12,21 @@
   .usage-legend .uc-dot{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--line);flex:none}
   .usage-chart-empty{margin-top:12px;padding:20px;text-align:center;color:var(--faint);font-family:var(--mono);font-size:11px;
     border:var(--bw) dashed var(--line);border-radius:var(--r)}
-</style>{% endblock %}
+	</style>{% endblock %}
 {% block content %}
 <div id="advancedApp">
   <div class="pagehd">
     <div>
       <div class="eyebrow">ADVANCED · API</div>
       <h1>高级</h1>
-      <p>用量、API Key、账号和 LLM 模型都在这里直接处理。</p>
+      <p>用量、API Key、账号和模型配置都在这里直接处理。</p>
     </div>
   </div>
 
   <div class="adv-tabs">
     <button type="button" :class="{on: active==='usage'}" @click="setActive('usage')">用量</button>
     <button type="button" :class="{on: active==='keys'}" @click="setActive('keys')">API Key</button>
-    <button type="button" :class="{on: active==='llm'}" @click="setActive('llm')">LLM 模型</button>
+    <button type="button" :class="{on: active==='llm'}" @click="setActive('llm')">模型配置</button>
     <button type="button" :class="{on: active==='account'}" @click="setActive('account')">账号</button>
     <button type="button" :class="{on: active==='debug'}" @click="setActive('debug')">调试</button>
   </div>
@@ -176,7 +176,7 @@
 
   <div class="adv-panel" v-if="active==='llm'">
     <div class="panel-head">
-      <div><b>LLM 模型</b><small>对话、AI 表情设计和图片生成用的大模型</small></div>
+      <div><b>模型配置</b><small>对话、AI 表情设计、图片生成和语音合成都在这里统一配置</small></div>
     </div>
 
     <div class="blocktitle top">本机大模型 · 火山方舟</div>
@@ -184,7 +184,7 @@
       <div class="setup-row">
         <div><b>火山方舟 API Key</b><small>[[ setup.api_key_set ? '已配置（只保存在本机 .env，不上云）· 大模型/表情/图片共用' : '未配置' ]]</small></div>
         <span class="tagdev" v-if="setup.api_key_set">已配置</span>
-        <a class="btn ghost" href="{{ url_for('app2c.onboarding') }}" v-else>去配置</a>
+        <span class="tagdev" v-else>待配置</span>
       </div>
       <form class="llm-form" @submit.prevent="saveSetup">
         <input class="tinput" v-model="setup.api_key" type="password" :placeholder="setup.api_key_set ? '更新 API Key（留空则不修改）' : '粘贴火山方舟 API Key'">
@@ -202,11 +202,40 @@
       <small class="setup-hint">对话与 AI 表情用这里的模型；图片生成用同一个 Key。下面的「按设备覆盖」仅高级用户需要。</small>
     </div>
 
-    <div class="design-warnings" v-if="llm.needs_config && !setup.api_key_set">
-      <b>需要配置大模型</b>
-      <ul>
-        <li>上面先配置火山方舟 API Key；如果要给某台设备单独用不同模型，可以在下面「按设备覆盖」里配置。</li>
-      </ul>
+    <div class="blocktitle">声音能力 · 火山引擎语音技术</div>
+    <div class="setup-card">
+      <div class="setup-row">
+        <div>
+          <b>TTS Key</b>
+          <small>[[ tts.api_key_set ? '已配置（只保存在本机 .env，不上云）· 用于声音页试听、语音合成和声音复刻' : '未配置 · 可先填同一把火山 Key，不可用时再获取语音技术 Key' ]]</small>
+        </div>
+        <span class="tagdev" v-if="tts.api_key_set">已配置</span>
+        <a class="btn ghost" href="https://console.volcengine.com/speech" target="_blank" rel="noopener">获取 Key</a>
+      </div>
+      <form class="tts-form" @submit.prevent="saveTtsConfig" style="margin-top:12px">
+        <input class="tinput" v-model.trim="tts.api_key" type="password" autocomplete="off" :placeholder="tts.api_key_set ? '更新 TTS Key（留空则不修改）' : 'DOUBAO_TTS_API_KEY'">
+        <input class="tinput" v-model.trim="tts.app_id" autocomplete="off" :placeholder="tts.app_id_set ? '更新 App ID（留空则不修改）' : 'DOUBAO_TTS_APP_ID · 声音复刻必填'">
+        <input class="tinput" v-model.trim="tts.access_token" type="password" autocomplete="off" :placeholder="tts.access_token_set ? '更新 Access Token（留空则不修改）' : 'DOUBAO_TTS_ACCESS_TOKEN · 声音复刻必填'">
+        <input class="tinput" v-model.trim="tts.resource_id" placeholder="Resource ID">
+        <input class="tinput" v-model.trim="tts.voice_clone_resource_id" placeholder="声音复刻 Resource ID">
+        <input class="tinput" v-model.trim="tts.model" placeholder="模型">
+        <input class="tinput" v-model.number="tts.sample_rate" type="number" min="8000" step="1000" placeholder="采样率">
+        <input class="tinput wide" v-model.trim="tts.ws_url" placeholder="WebSocket URL">
+        <select v-model="tts.audio_format">
+          <option value="pcm">pcm</option>
+          <option value="wav">wav</option>
+        </select>
+        <button type="submit" class="btn primary" :disabled="tts.saving">[[ tts.saving ? '保存中…' : '保存声音配置' ]]</button>
+      </form>
+      <div class="config-state">
+        <span :class="['led', tts.api_key_set ? '' : 'off']"></span>
+        <b>[[ tts.api_key_set ? '声音能力已配置' : '声音能力未配置' ]]</b>
+        <small>[[ tts.speaker ? ('当前音色 ' + tts.speaker) : '未设置当前音色' ]] · 复刻 [[ (tts.app_id_set && tts.access_token_set) ? '可用' : '未配置 App ID/Token' ]]</small>
+      </div>
+      <div class="debug-output" v-if="tts.result">
+        <b>[[ tts.result.ok ? '声音配置已保存' : (tts.result.error || '保存失败') ]]</b>
+      </div>
+      <small class="setup-hint">声音页只负责选音色和试听；TTS Key、Resource ID、模型和 WebSocket 地址统一在这里维护。</small>
     </div>
 
     <button type="button" class="ob-adv-toggle" style="margin-top:16px" @click="toggleAdvanced('llm')">[[ advancedOpen.llm ? '收起「按设备覆盖」' : '高级：按设备覆盖某台设备的模型 ▾' ]]</button>
@@ -338,15 +367,6 @@
       </section>
 
       <section v-if="debugMode==='llm'">
-      <div class="design-warnings" v-if="llm.needs_config">
-        <b>需要配置大模型</b>
-        <ul>
-          <li>[[ llm.config_message || '请先在「LLM 模型」里配置大模型，再运行 LLM 调试。' ]]</li>
-        </ul>
-        <div class="debug-actionbar">
-          <button type="button" class="btn primary" @click="active='llm'; advancedOpen.llm=true">去配置大模型</button>
-        </div>
-      </div>
       <div class="debug-actionbar">
         <button type="button" class="btn ghost" @click="loadDebugSystemPrompt">读取 Prompt</button>
         <button type="button" class="btn ghost" @click="saveDebugSystemPrompt" :disabled="!currentDeviceId">保存 Prompt</button>
@@ -366,18 +386,19 @@
 
       <section v-if="debugMode==='tts'">
       <div class="debug-actionbar">
-        <button type="button" class="btn ghost" @click="loadDebugTts">读取配置</button>
-        <button type="button" class="btn ghost" @click="saveDebugTtsConfig">保存配置</button>
+        <button type="button" class="btn ghost" @click="loadDebugTts">刷新语音配置</button>
         <button type="button" class="btn primary" @click="runDebugTts">试听 TTS</button>
       </div>
+      <div class="config-state">
+        <span :class="['led', debug.tts.api_key_set ? '' : 'off']"></span>
+        <b>[[ debug.tts.api_key_set ? '声音能力已配置' : '声音能力未配置' ]]</b>
+        <small>[[ debug.tts.model ]] · [[ debug.tts.resource_id ]]</small>
+      </div>
       <div class="llm-form">
-        <input class="tinput" v-model="debug.tts.api_key" type="password" :placeholder="debug.tts.api_key_set ? 'API Key 已配置，留空不修改' : 'DOUBAO_TTS_API_KEY'">
         <select v-model="debug.tts.speaker" @change="syncDebugTtsSpeaker">
           <option value="">选择音色</option>
           <option v-for="s in debug.ttsSpeakers" :key="s.id" :value="s.id">[[ s.label ]] · [[ s.scene ]]</option>
         </select>
-        <input class="tinput" v-model="debug.tts.resource_id" placeholder="Resource ID">
-        <input class="tinput" v-model="debug.tts.model" placeholder="模型">
       </div>
       <div class="inline-form debug-inline">
         <input class="tinput" v-model="debug.ttsText" placeholder="试听文本">
@@ -428,12 +449,21 @@ createApp({
     llm:{protocols:['ark','openai'], models:[], active_model_id:null, active:null, system_default:null, error:''},
     editingModelId:'', llmTesting:false, llmTestResult:null,
     setup:{ api_key_set:false, model_name:'', default_model:'', api_key:'', models:[], saving:false, detecting:false, testing:false, result:null },
+    tts:{
+      api_key:'', api_key_set:false, speaker:'', resource_id:'seed-tts-2.0',
+      model:'seed-tts-2.0-expressive', ws_url:'wss://openspeech.bytedance.com/api/v3/tts/bidirection',
+      sample_rate:24000, audio_format:'pcm', app_id:'', app_id_set:false, access_token:'', access_token_set:false,
+      voice_clone_resource_id:'seed-icl-2.0',
+      voice_clone_url:'https://openspeech.bytedance.com/api/v3/tts/voice_clone',
+      voice_status_url:'https://openspeech.bytedance.com/api/v3/tts/get_voice',
+      saving:false, result:null
+    },
     llmForm:{name:'', model_name:'', protocol:'ark', base_url:'', api_key:'', test_prompt:'你好，请用一句话介绍你自己。'},
     debug:{
       health:null, token:'', tokenExpires:0,
       systemPrompt:'', llmText:'你好，做一个简短自检。', llmResult:null,
       ttsSpeakers:[], ttsText:'你好，我是小歪调试台。', ttsResult:null, ttsAudioUrl:'',
-      tts:{api_key:'', api_key_set:false, speaker:'', resource_id:'seed-tts-2.0', model:'seed-tts-2.0-expressive', ws_url:'wss://openspeech.bytedance.com/api/v3/tts/bidirection', sample_rate:24000, audio_format:'pcm'},
+      tts:{api_key:'', api_key_set:false, speaker:'', resource_id:'seed-tts-2.0', model:'seed-tts-2.0-expressive', ws_url:'wss://openspeech.bytedance.com/api/v3/tts/bidirection', sample_rate:24000, audio_format:'pcm', app_id:'', app_id_set:false, access_token:'', access_token_set:false, voice_clone_resource_id:'seed-icl-2.0'},
       simText:'你好，我是小歪模拟器。', simSpkId:0, simResult:null, simAudioUrl:'',
     },
   }; },
@@ -558,19 +588,55 @@ createApp({
       }catch(e){ this.setup.result={ok:false,error:e.message||'保存失败'}; }
       finally{ this.setup.saving=false; }
     },
+    applyTtsConfig(config){
+      this.tts=Object.assign({}, this.tts, config || {}, {api_key:'', saving:false, result:this.tts.result||null});
+      if(!this.tts.resource_id) this.tts.resource_id='seed-tts-2.0';
+      if(!this.tts.model) this.tts.model='seed-tts-2.0-expressive';
+      if(!this.tts.ws_url) this.tts.ws_url='wss://openspeech.bytedance.com/api/v3/tts/bidirection';
+      if(!this.tts.sample_rate) this.tts.sample_rate=24000;
+      if(!this.tts.audio_format) this.tts.audio_format='pcm';
+      if(!this.tts.voice_clone_resource_id) this.tts.voice_clone_resource_id='seed-icl-2.0';
+      if(!this.tts.voice_clone_url) this.tts.voice_clone_url='https://openspeech.bytedance.com/api/v3/tts/voice_clone';
+      if(!this.tts.voice_status_url) this.tts.voice_status_url='https://openspeech.bytedance.com/api/v3/tts/get_voice';
+    },
+    async loadTtsConfig(){
+      try{
+        const d = await this.api('/api/doubao_tts/config');
+        this.applyTtsConfig(d.config || {});
+      }catch(e){
+        this.tts.result={ok:false,error:e.message||'声音配置读取失败'};
+      }
+    },
+    async saveTtsConfig(){
+      this.tts.saving=true; this.tts.result=null;
+      try{
+        const d = await this.api('/api/doubao_tts/config', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(this.tts)
+        });
+        this.applyTtsConfig(d.config || {});
+        this.tts.result={ok:true};
+      }catch(e){
+        this.tts.result={ok:false,error:e.message||'保存失败'};
+      }finally{
+        this.tts.saving=false;
+      }
+    },
     async resetAccount(){
       if(!confirm('确定要把当前账号重置为新用户状态吗？\n将解绑全部设备、吊销 API Key、清除本机大模型配置，且不可撤销。')) return;
       this.resetting=true;
       try{
         const d = await this.api('/api/debug/reset-account', {method:'POST'});
-        alert('已重置：解绑设备 '+(d.cleared?d.cleared.devices:0)+' 台，吊销 Key '+(d.cleared?d.cleared.api_keys:0)+' 个，已清除大模型配置。即将进入新用户引导。');
-        window.location.href='{{ url_for("app2c.onboarding") }}';
+        alert('已重置：解绑设备 '+(d.cleared?d.cleared.devices:0)+' 台，吊销 Key '+(d.cleared?d.cleared.api_keys:0)+' 个，已清除大模型配置。即将进入模型配置。');
+        window.location.href='{{ url_for("app2c.advanced") }}?tab=llm';
       }catch(e){ this.msg=e.message||'重置失败'; this.resetting=false; }
     },
     async load(){
       this.loading=true; this.msg='';
       const defaultTab = this.active;
       await this.loadSetup();
+      await this.loadTtsConfig();
       // 新用户还没配置本机大模型时，默认打开 LLM tab 而不是空空如也的用量 tab
       if(defaultTab==='usage' && !this.setup.api_key_set) this.active='llm';
       try{ this.applyPayload(await this.api('/api/advanced')); }
@@ -728,16 +794,6 @@ createApp({
       const s=(this.debug.ttsSpeakers||[]).find(x=>x.id===this.debug.tts.speaker);
       if(s && s.resource_id) this.debug.tts.resource_id=s.resource_id;
     },
-    async saveDebugTtsConfig(){
-      try{
-        const d=await this.api('/api/doubao_tts/config',{
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify(this.debug.tts)
-        });
-        this.applyDebugTtsConfig(d.config||{});
-        this.msg='TTS 配置已保存';
-      }catch(e){ this.msg=e.message||'TTS 配置保存失败'; }
-    },
     revokeDebugAudio(key){
       const url=this.debug[key];
       if(url && url.startsWith('blob:')) URL.revokeObjectURL(url);
@@ -774,7 +830,11 @@ createApp({
       }
     },
   },
-  mounted(){ this.load(); },
+  mounted(){
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if(['usage','keys','llm','account','debug'].includes(tab)) this.active=tab;
+    this.load();
+  },
   beforeUnmount(){ this.revokeDebugAudio('ttsAudioUrl'); this.revokeDebugAudio('simAudioUrl'); },
 }).mount('#advancedApp');
 </script>

@@ -10,19 +10,10 @@
     <div>
       <div class="eyebrow">SYSTEM · ONLINE</div>
       <h1>[[ greeting ]]，[[ owner ]]</h1>
-      <p>你的桌搭子现在很有精神。</p>
+      <p>专属于你的桌面机器人小歪现在很有精神。</p>
     </div>
     <a class="btn ghost" href="{{ url_for('app2c.devices') }}">＋ 绑定设备</a>
   </div>
-
-  <a v-if="llmNeedsConfig" class="setup-cta" href="{{ url_for('app2c.onboarding') }}">
-    <span class="setup-cta-txt"><b>还没配置大模型</b><small>AI 表情和对话需要先配置火山方舟 Ark，点这里 1 分钟搞定 →</small></span>
-    <span class="setup-cta-btn">去配置</span>
-  </a>
-  <a v-else-if="!bound" class="setup-cta" href="{{ url_for('app2c.devices') }}">
-    <span class="setup-cta-txt"><b>还差最后一步：绑定设备</b><small>大模型已配置好，绑定你的第一台桌搭子就能用了 →</small></span>
-    <span class="setup-cta-btn">去绑定</span>
-  </a>
 
   <div class="homegrid">
     <!-- STAGE -->
@@ -51,7 +42,7 @@
       <div class="heroes">
         <a class="hero" href="{{ url_for('app2c.expr') }}">
           <div class="emoji"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg></div>
-          <div><b>捏表情</b><span>换张脸 · 配情绪</span></div>
+          <div><b>捏表情</b><span>换张脸 · 配情绪</span><small class="hero-subtle">含表情包生成</small></div>
         </a>
         <a class="hero" href="{{ url_for('app2c.voice') }}">
           <div class="emoji"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/><path d="M19 6a8 8 0 010 12"/></svg></div>
@@ -89,7 +80,7 @@ createApp({
     greeting:'你好', owner:{{ (nav_display_name or '主人')|tojson }},
     bound:false, deviceName:'未绑定', deviceId:'',
     voiceLabel:'未设置音色', emotionCount:0, memoryCount:0, reminderCount:0, peopleCount:0, deviceCount:0,
-    scenes:[], emotionMap:{}, faceLabel:'待机', llmNeedsConfig:false,
+    scenes:[], emotionMap:{}, faceLabel:'待机',
   }; },
   computed:{
     homeFaceSvg(){
@@ -105,9 +96,6 @@ createApp({
       this.greeting = h<6?'凌晨好' : h<9?'早上好' : h<12?'上午好' : h<14?'中午好' : h<18?'下午好' : '晚上好';
     },
     async load(){
-      // 大模型是否已配置（未配置时首页顶部提示去配置）
-      const llm = await this.j('/api/setup/llm');
-      this.llmNeedsConfig = !!llm.needs_config;
       // 当前音色：火山引擎(豆包)返回 speaker id，再用音色清单解析成展示名称
       const cfg = await this.j('/api/doubao_tts/config');
       const sid = (cfg.config && cfg.config.speaker) || '';

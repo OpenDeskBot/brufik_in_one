@@ -5,48 +5,60 @@
 <div id="app">
   <div class="pagehd"><div><div class="eyebrow">VOICE · LIBRARY</div><h1>声音</h1><p>挑一个喜欢的音色，点试听，满意就设为当前。</p></div></div>
 
-  <div v-if="!cfg.api_key_set" class="setup-cta" role="button" tabindex="0" @click="configOpen=true">
-    <span class="setup-cta-txt"><b>还没配置 TTS Key</b><small>语音合成用的是火山引擎「语音技术」独立密钥，和大模型的方舟 Key 不是同一个，点这里展开配置 →</small></span>
-    <span class="setup-cta-btn">去配置</span>
+  <div class="voice-tabbar" role="tablist" aria-label="声音配置模式">
+    <button type="button" :class="{on: voiceTab==='library'}" @click="voiceTab='library'" role="tab" :aria-selected="String(voiceTab==='library')">直接使用</button>
+    <button type="button" :class="{on: voiceTab==='clone'}" @click="voiceTab='clone'" role="tab" :aria-selected="String(voiceTab==='clone')">声音复刻</button>
   </div>
 
-  <section class="tts-config">
-    <div class="panel-head">
+  <section class="voice-clone-panel" v-show="voiceTab==='clone'" role="tabpanel">
+    <div class="clone-head">
       <div>
-        <b>TTS 服务配置</b>
-        <small>火山引擎语音技术 · 独立于大模型的 Ark Key，<a href="https://console.volcengine.com/speech" target="_blank" rel="noopener">在这里获取 ↗</a></small>
+        <div class="blocktitle top">DOUBAO VOICE CLONE</div>
+        <h2>声音复刻</h2>
+        <small>上传一段清晰的训练音频，提交到火山引擎复刻音色；训练可用后可直接设为当前音色。</small>
       </div>
-      <button
-        type="button"
-        class="btn ghost config-toggle"
-        @click="configOpen=!configOpen"
-        :aria-expanded="String(configOpen)"
-        aria-controls="ttsConfigForm"
-      >
-        <svg class="chev" :class="{open: configOpen}" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
-        <span>[[ configOpen ? '收起配置' : '展开配置' ]]</span>
-      </button>
+      <a v-if="!cloneReady" class="btn ghost" href="{{ url_for('app2c.advanced') }}?tab=llm">配置 App ID / Token</a>
+      <span v-else class="tagdev">复刻已配置</span>
     </div>
-    <form v-show="configOpen" id="ttsConfigForm" class="tts-form" @submit.prevent="saveTtsConfig">
-      <input class="tinput" v-model.trim="cfg.api_key" type="password" autocomplete="off" :placeholder="cfg.api_key_set ? 'API Key 已配置，留空不修改' : 'DOUBAO_TTS_API_KEY'">
-      <input class="tinput" v-model.trim="cfg.resource_id" placeholder="Resource ID">
-      <input class="tinput" v-model.trim="cfg.model" placeholder="模型">
-      <input class="tinput" v-model.number="cfg.sample_rate" type="number" min="8000" step="1000" placeholder="采样率">
-      <input class="tinput wide" v-model.trim="cfg.ws_url" placeholder="WebSocket URL">
-      <select v-model="cfg.audio_format">
-        <option value="pcm">pcm</option>
-        <option value="wav">wav</option>
+
+    <form class="clone-form" @submit.prevent="cloneVoice">
+      <input class="tinput" v-model.trim="clone.voice_name" name="voice_name" placeholder="音色名称">
+      <input class="tinput" v-model.trim="clone.custom_speaker_id" placeholder="音色代号（可选，留空自动生成）">
+      <select v-model.number="clone.language" aria-label="训练语种">
+        <option v-for="lang in cloneLanguages" :key="lang.value" :value="lang.value">[[ lang.label ]]</option>
       </select>
-      <button type="submit" class="btn primary" :disabled="savingConfig">[[ savingConfig ? '保存中…' : '保存配置' ]]</button>
+      <label class="clone-file">
+        <input class="file-input-hidden" type="file" accept="audio/wav,audio/mpeg,audio/mp3,audio/ogg,audio/aac,audio/mp4,.wav,.mp3,.ogg,.m4a,.aac,.pcm,.flac" @change="onCloneFile">
+        <span>[[ clone.fileName || '选择训练音频' ]]</span>
+      </label>
+      <textarea class="tinput clone-prompt" v-model.trim="clone.prompt_text" rows="2" placeholder="可选：音频对应文本，用于质量检测"></textarea>
+      <div class="clone-actions">
+        <button type="submit" class="btn primary" :disabled="clone.submitting || !cloneReady">[[ clone.submitting ? '提交中…' : '提交复刻' ]]</button>
+        <button type="button" class="btn ghost" @click="checkCloneStatus" :disabled="clone.checking || !cloneLookupId || !cloneReady">[[ clone.checking ? '查询中…' : '查询状态' ]]</button>
+        <button type="button" class="btn ghost" @click="applyClonedVoice" :disabled="!clone.result || !clone.result.ready">设为当前</button>
+      </div>
     </form>
-    <div class="config-state">
-      <span :class="['led', cfg.api_key_set ? '' : 'off']"></span>
-      <b>[[ cfg.api_key_set ? 'TTS Key 已配置' : 'TTS Key 未配置' ]]</b>
-      <small>[[ current ? ('当前音色 ' + current) : '未设置当前音色' ]]</small>
+
+    <div class="clone-progress progress-strip" v-if="cloneProgressVisible" aria-live="polite">
+      <div class="progress-meta">
+        <b>[[ cloneProgressLabel ]]</b>
+        <span>[[ cloneProgress ]]%</span>
+      </div>
+      <progress max="100" :value="cloneProgress"></progress>
+    </div>
+
+    <div class="clone-state">
+      <span :class="['led', cloneReady ? '' : 'off']"></span>
+      <b>[[ cloneStatusText ]]</b>
+      <small>Resource ID: [[ cloneResourceId ]]</small>
+    </div>
+    <div class="debug-output" v-if="clone.result">
+      <b>[[ clone.result.ready ? '复刻音色可用' : ('训练状态：' + (clone.result.status_label || '未知')) ]]</b>
+      <small>ID: [[ clone.result.speaker_id ]] · [[ clone.result.model_type ? ('model_type=' + clone.result.model_type) : '等待火山引擎返回模型版本' ]]</small>
     </div>
   </section>
 
-  <section class="voice-library">
+  <section class="voice-library" v-show="voiceTab==='library'" role="tabpanel">
     <div class="library-head">
       <div>
         <div class="blocktitle top">DOUBAO PRESETS</div>
@@ -63,9 +75,9 @@
       </div>
     </div>
 
-    <div class="voice-preview-row">
+    <div class="voice-preview-row compact-preview">
       <audio ref="previewAudio" class="preview-audio" controls preload="none" :src="audioUrl" @ended="playing=''"></audio>
-      <div class="slider-card">
+      <div class="slider-card voice-volume-card">
         <div class="t">
           <span class="lab"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/></svg>试听音量</span>
           <span class="val">[[ vol ]]%</span>
@@ -96,16 +108,58 @@ const { createApp } = Vue;
 createApp({
   delimiters: ['[[', ']]'],
   data(){ return {
-    speakers:[], current:'', playing:'', vol:80, msg:'', audioUrl:'',
+    speakers:[], current:'', playing:'', vol:80, msg:'', audioUrl:'', voiceTab:'library',
     voiceSearch:'', activeScene:'',
-    configOpen:false, savingConfig:false,
     cfg:{
       api_key:'', api_key_set:false, speaker:'', resource_id:'seed-tts-2.0',
       model:'seed-tts-2.0-expressive', ws_url:'wss://openspeech.bytedance.com/api/v3/tts/bidirection',
-      sample_rate:24000, audio_format:'pcm'
+      sample_rate:24000, audio_format:'pcm',
+      app_id:'', app_id_set:false, access_token:'', access_token_set:false,
+      voice_clone_resource_id:'seed-icl-2.0',
+      voice_clone_url:'https://openspeech.bytedance.com/api/v3/tts/voice_clone',
+      voice_status_url:'https://openspeech.bytedance.com/api/v3/tts/get_voice'
     },
+    clone:{
+      voice_name:'小歪专属音色', custom_speaker_id:'', speaker_id:'', language:0, prompt_text:'',
+      audioFile:null, fileName:'', submitting:false, checking:false, result:null,
+      progress:0, progressLabel:'', progressTimer:null
+    },
+    cloneLanguages:[
+      {value:0,label:'中文'}, {value:1,label:'英文'}, {value:2,label:'日语'}, {value:3,label:'西班牙语'},
+      {value:4,label:'印尼语'}, {value:5,label:'葡萄牙语'}, {value:6,label:'德语'}, {value:7,label:'法语'}, {value:8,label:'韩语'}
+    ],
   }; },
   computed:{
+    cloneReady(){
+      return !!(this.cfg.app_id_set && this.cfg.access_token_set);
+    },
+    cloneResourceId(){
+      return this.cfg.voice_clone_resource_id || 'seed-icl-2.0';
+    },
+    cloneLookupId(){
+      return this.clone.speaker_id || this.clone.custom_speaker_id;
+    },
+    cloneProgressVisible(){
+      return !!(this.clone.submitting || this.clone.checking || this.clone.result || this.clone.progress > 0);
+    },
+    cloneProgress(){
+      if(this.clone.submitting || this.clone.checking) return Math.round(this.clone.progress || 12);
+      if(this.clone.result && this.clone.result.ready) return 100;
+      if(this.clone.result) return Math.max(64, Math.round(this.clone.progress || 64));
+      return Math.round(this.clone.progress || 0);
+    },
+    cloneProgressLabel(){
+      if(this.clone.submitting) return this.clone.progressLabel || '正在上传训练音频';
+      if(this.clone.checking) return this.clone.progressLabel || '正在查询训练状态';
+      if(this.clone.result && this.clone.result.ready) return '复刻完成，音色可用';
+      if(this.clone.result) return '训练中：' + (this.clone.result.status_label || '等待火山引擎处理');
+      return this.clone.progressLabel || '等待提交';
+    },
+    cloneStatusText(){
+      if(!this.cloneReady) return '请先在高级页配置火山语音 App ID 和 Access Token';
+      if(this.clone.result) return '当前状态：' + (this.clone.result.status_label || '未知');
+      return '可以提交声音复刻';
+    },
     sceneOptions(){
       return [...new Set(this.speakers.map(v => v.scene || '其他'))].sort((a,b) => a.localeCompare(b, 'zh-Hans-CN'));
     },
@@ -137,10 +191,7 @@ createApp({
         this.speakers = s.speakers || [];
         const c = await this.api('/api/doubao_tts/config');
         this.applyConfig(c.config || {});
-        if(!this.cfg.api_key_set) {
-          this.configOpen = true;
-          this.msg = '请先填写豆包 TTS API Key，保存后就可以试听。';
-        }
+        if(!this.cfg.api_key_set) this.msg = '请先到「高级 · 模型配置」里完成 AI 能力配置，然后再试听或设置音色。';
       }catch(e){
         this.msg = '声音配置加载失败：' + this.errText(e);
       }
@@ -153,27 +204,132 @@ createApp({
       if(!this.cfg.ws_url) this.cfg.ws_url='wss://openspeech.bytedance.com/api/v3/tts/bidirection';
       if(!this.cfg.sample_rate) this.cfg.sample_rate=24000;
       if(!this.cfg.audio_format) this.cfg.audio_format='pcm';
+      if(!this.cfg.voice_clone_resource_id) this.cfg.voice_clone_resource_id='seed-icl-2.0';
+      if(!this.cfg.voice_clone_url) this.cfg.voice_clone_url='https://openspeech.bytedance.com/api/v3/tts/voice_clone';
+      if(!this.cfg.voice_status_url) this.cfg.voice_status_url='https://openspeech.bytedance.com/api/v3/tts/get_voice';
     },
     errText(e){ return (e && e.message) ? e.message : String(e); },
     ensureTtsReady(){
       if(this.cfg.api_key_set || this.cfg.api_key) return true;
-      this.configOpen = true;
-      this.msg = '先填写并保存豆包 TTS API Key，再试听或设置音色。';
+      this.msg = '先到「高级 · 模型配置」里完成 AI 能力配置，再试听或设置音色。';
       return false;
     },
-    async saveTtsConfig(){
-      this.savingConfig = true; this.msg = '';
+    ensureCloneReady(){
+      if(this.cloneReady) return true;
+      this.msg = '先到「高级 · 模型配置」里配置火山语音 App ID 和 Access Token，再提交声音复刻。';
+      return false;
+    },
+    clearCloneProgressTimer(){
+      if(this.clone.progressTimer){
+        clearInterval(this.clone.progressTimer);
+        this.clone.progressTimer = null;
+      }
+    },
+    startCloneProgress(label, start, cap){
+      this.clearCloneProgressTimer();
+      this.clone.progress = start || 12;
+      this.clone.progressLabel = label || '正在处理';
+      const limit = cap || 88;
+      this.clone.progressTimer = setInterval(() => {
+        if(this.clone.progress >= limit) return;
+        const next = this.clone.progress + Math.max(1, Math.round((limit - this.clone.progress) * 0.14));
+        this.clone.progress = Math.min(limit, next);
+      }, 520);
+    },
+    finishCloneProgress(label, value){
+      this.clearCloneProgressTimer();
+      this.clone.progress = value;
+      this.clone.progressLabel = label || '';
+    },
+    onCloneFile(e){
+      const f = e.target.files && e.target.files[0];
+      this.clone.audioFile = f || null;
+      this.clone.fileName = f ? f.name : '';
+      this.clone.result = null;
+      this.finishCloneProgress('', 0);
+    },
+    handleCloneResult(data){
+      this.clone.result = {
+        speaker_id:data.speaker_id || this.clone.speaker_id,
+        status:data.status,
+        status_label:data.status_label || '未知',
+        ready:!!data.ready,
+        model_type:data.model_type || null,
+        raw:data.raw || null
+      };
+      if(data.speaker_id) this.clone.speaker_id = data.speaker_id;
+      if(data.speaker_id && !this.clone.custom_speaker_id) this.clone.custom_speaker_id = data.speaker_id;
+      this.finishCloneProgress(
+        this.clone.result.ready ? '复刻完成，音色可用' : ('训练中：' + this.clone.result.status_label),
+        this.clone.result.ready ? 100 : 68
+      );
+      this.msg = this.clone.result.ready ? '声音复刻已可用，可以设为当前音色。' : ('声音复刻已提交：' + this.clone.result.status_label);
+    },
+    async cloneVoice(){
+      if(!this.ensureCloneReady()) return;
+      if(!this.clone.voice_name){
+        this.msg = '请填写音色名称。';
+        return;
+      }
+      if(!this.clone.audioFile){
+        this.msg = '请先选择训练音频。';
+        return;
+      }
+      this.clone.submitting = true; this.msg='';
+      this.startCloneProgress('正在上传训练音频', 16, 86);
       try{
+        const fd = new FormData();
+        fd.append('voice_name', this.clone.voice_name);
+        fd.append('custom_speaker_id', this.clone.custom_speaker_id || '');
+        fd.append('language', String(this.clone.language || 0));
+        fd.append('prompt_text', this.clone.prompt_text || '');
+        fd.append('resource_id', this.cloneResourceId);
+        fd.append('audio', this.clone.audioFile);
+        const data = await this.api('/api/doubao_tts/voice-clone', {method:'POST', body:fd});
+        this.handleCloneResult(data);
+      }catch(e){
+        this.msg = '提交复刻失败：' + this.errText(e);
+        this.finishCloneProgress('', 0);
+      }finally{
+        this.clone.submitting = false;
+      }
+    },
+    async checkCloneStatus(){
+      if(!this.ensureCloneReady()) return;
+      if(!this.cloneLookupId){
+        this.msg = '请先提交复刻，拿到音色 ID 后再查询。';
+        return;
+      }
+      this.clone.checking = true; this.msg='';
+      this.startCloneProgress('正在查询训练状态', 72, 94);
+      try{
+        const data = await this.api('/api/doubao_tts/voice-clone/status', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({speaker_id:this.cloneLookupId, resource_id:this.cloneResourceId})});
+        this.handleCloneResult(data);
+      }catch(e){
+        this.msg = '查询复刻状态失败：' + this.errText(e);
+        this.finishCloneProgress('', 0);
+      }finally{
+        this.clone.checking = false;
+      }
+    },
+    async applyClonedVoice(){
+      if(!this.clone.result || !this.clone.result.ready) return;
+      if(!this.ensureTtsReady()) return;
+      try{
+        const payload = Object.assign({}, this.cfg, {
+          speaker:this.clone.result.speaker_id || this.clone.speaker_id,
+          resource_id:this.cloneResourceId
+        });
         const data = await this.api('/api/doubao_tts/config', {method:'POST',
           headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(this.cfg)});
+          body:JSON.stringify(payload)});
         this.applyConfig(data.config || {});
-        this.configOpen = false;
-        this.msg = 'TTS 配置已保存';
+        this.current = payload.speaker;
+        this.msg = '已把复刻音色设为当前：' + payload.speaker;
       }catch(e){
-        this.msg = '保存失败：' + this.errText(e);
-      }finally{
-        this.savingConfig = false;
+        this.msg = '设置复刻音色失败：' + this.errText(e);
       }
     },
     async setCurrent(v){
@@ -223,7 +379,7 @@ createApp({
       try{
         this.stopAudio();
         const payload = Object.assign({}, this.cfg, {
-          text:'你好，我是你的桌搭子小歪。',
+          text:'你好，我是专属于你的桌面机器人小歪。',
           speaker:v.id,
           resource_id:v.resource_id || this.cfg.resource_id
         });
@@ -240,7 +396,7 @@ createApp({
     },
   },
   mounted(){ this.load(); },
-  beforeUnmount(){ this.stopAudio(); },
+  beforeUnmount(){ this.stopAudio(); this.clearCloneProgressTimer(); },
 }).mount('#app');
 </script>
 {% endblock %}

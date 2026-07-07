@@ -14,7 +14,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{% block page_title %}小歪 · 我的桌搭子{% endblock %}</title>
+  <title>{% block page_title %}小歪 · 专属于你的桌面机器人{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -44,7 +44,7 @@
 
   <div class="app">
     <aside class="side">
-      <div class="brand"><div class="logo">歪</div><div><b>小歪</b><small>我的桌搭子</small></div></div>
+      <div class="brand"><div class="logo">歪</div><div><b>小歪</b><small>专属于你的桌面机器人</small></div></div>
       <nav class="navi">
         <a href="{{ url_for('app2c.home') }}" class="navlink {{ 'on' if active_nav=='home' }}">{{ icon('home') }}家</a>
         <div class="lbl">核心玩法</div>
@@ -60,7 +60,16 @@
       </nav>
       <div class="foot"><div class="userchip"><div class="ua">歪</div><div><b>{{ nav_display_name or '我' }}</b><small>{{ nav_user_email or '' }}</small></div></div></div>
     </aside>
-    <main>{% block content %}{% endblock %}</main>
+    <main>
+      <div
+        id="globalSetup"
+        class="global-setup"
+        data-suppress-model="{% block global_setup_suppress_model %}0{% endblock %}"
+        data-suppress-device="{% block global_setup_suppress_device %}0{% endblock %}"
+        hidden
+      ></div>
+      {% block content %}{% endblock %}
+    </main>
   </div>
 </div>
 <script>
@@ -85,6 +94,65 @@
       if(!current){ setState('off','未选择设备'); return; }
       setState(current.online ? '' : 'off', current.online ? 'LINK·OK' : 'LINK·离线');
     }).catch(function(){ setState('off','状态未知'); });
+  })();
+  (function(){
+    var box=document.getElementById('globalSetup'); if(!box) return;
+    var esc=function(s){return String(s||'').replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+    var item=function(kind,title,body,href,label){
+      return '<a class="global-setup-item '+kind+'" href="'+esc(href)+'">'
+        + '<span class="global-setup-dot"></span>'
+        + '<span class="global-setup-copy"><b>'+esc(title)+'</b><small>'+esc(body)+'</small></span>'
+        + '<span class="global-setup-action">'+esc(label)+'</span>'
+        + '</a>';
+    };
+    var suppressModel=String(box.getAttribute('data-suppress-model')||'').trim()==='1';
+    var suppressDevice=String(box.getAttribute('data-suppress-device')||'').trim()==='1';
+    Promise.all([
+      fetch('/api/setup/llm').then(function(r){return r.json();}).catch(function(){return {};}),
+      fetch('/app/api/devices').then(function(r){return r.json();}).catch(function(){return {};}),
+      fetch('/api/doubao_tts/config').then(function(r){return r.json();}).catch(function(){return {};})
+    ]).then(function(results){
+      var setup=results[0]||{}, devicesPayload=results[1]||{}, ttsPayload=results[2]||{};
+      var html=[];
+      var ttsConfig=ttsPayload.config||{};
+      var llmMissing=!!setup.needs_config;
+      var ttsMissing=!ttsConfig.api_key_set;
+      if(!suppressModel && (llmMissing || ttsMissing)){
+        var modelBody='对话、AI 表情设计、图片生成和声音都在这里统一配置。';
+        if(llmMissing && !ttsMissing) modelBody='对话、AI 表情设计和图片生成需要先配置火山方舟模型。';
+        if(!llmMissing && ttsMissing) modelBody='试听、语音合成和声音复刻需要先配置 TTS Key。';
+        html.push(item(
+          'model',
+          '还没完成 AI 能力配置',
+          modelBody,
+          '{{ url_for("app2c.advanced") }}?tab=llm',
+          '去配置'
+        ));
+      }
+      var devices=devicesPayload.devices||[];
+      var currentId=devicesPayload.current_device_id||'';
+      if(!suppressDevice && !devices.length){
+        html.push(item(
+          'device',
+          '还没绑定专属于你的桌面机器人小歪',
+          '绑定第一台小歪后，表情、声音、记忆和提醒才会同步到设备。',
+          '{{ url_for("app2c.devices") }}',
+          '去绑定'
+        ));
+      }else if(!suppressDevice && !currentId){
+        html.push(item(
+          'device',
+          '还没选择当前小歪',
+          '从已绑定设备里选择一台，控制台配置会同步到这台设备。',
+          '{{ url_for("app2c.devices") }}',
+          '去选择'
+        ));
+      }
+      if(html.length){
+        box.innerHTML=html.join('');
+        box.hidden=false;
+      }
+    });
   })();
 </script>
 {% block scripts %}{% endblock %}

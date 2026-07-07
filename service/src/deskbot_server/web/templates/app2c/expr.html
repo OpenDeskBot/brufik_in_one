@@ -12,11 +12,6 @@
       <button class="btn primary" type="button" @click="save" id="saveBtn">保存表情</button>
     </div>
   </div>
-  <div class="empty-banner" v-if="noDevice">
-    <div class="eb-ic"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg></div>
-    <div class="eb-txt"><b>还没绑定设备</b><small>表情需要保存到一台桌搭子上，先去绑定一台吧（下面可以先试玩捏脸）</small></div>
-    <a class="btn primary" href="{{ url_for('app2c.devices') }}">去绑定设备</a>
-  </div>
   <div class="exprgrid">
     <div class="stage expr-stage">
       <div class="brackets"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
@@ -43,8 +38,8 @@
     </div>
     <div class="expr-editor">
       <div class="expr-tabs" role="tablist" aria-label="表情编辑模式">
-        <button type="button" :class="{on: exprTab==='face'}" @click="exprTab='face'" role="tab" :aria-selected="String(exprTab==='face')">基础捏脸</button>
         <button type="button" :class="{on: exprTab==='image'}" @click="exprTab='image'" role="tab" :aria-selected="String(exprTab==='image')">图片生成</button>
+        <button type="button" :class="{on: exprTab==='face'}" @click="exprTab='face'" role="tab" :aria-selected="String(exprTab==='face')">基础捏脸</button>
         <button type="button" :class="{on: exprTab==='professional'}" @click="exprTab='professional'" role="tab" :aria-selected="String(exprTab==='professional')">专业设计</button>
       </div>
       <section v-show="exprTab==='face'" class="expr-tabpane" role="tabpanel">
@@ -113,6 +108,13 @@
             <button type="button" class="btn primary" @click="generateImageExpression" :disabled="generatingImageExpression || !imageExpressionFile">[[ generatingImageExpression ? '生成中…' : '生成 SVG' ]]</button>
           </div>
         </div>
+        <div class="image-generation-progress progress-strip" v-if="imageExpressionProgressVisible" aria-live="polite">
+          <div class="progress-meta">
+            <b>[[ imageExpressionProgressLabel ]]</b>
+            <span>[[ imageExpressionProgressValue ]]%</span>
+          </div>
+          <progress max="100" :value="imageExpressionProgressValue"></progress>
+        </div>
         <div class="image-ai-body" v-show="imageExpressionFile || imageExpressionResult">
           <div class="image-file-name" v-if="imageExpressionFileName">[[ imageExpressionFileName ]]</div>
           <textarea class="tinput debug-textarea image-prompt" v-model="imageExpressionPrompt" placeholder="可选：补充你想保留的情绪、嘴型或风格，例如：保留坏笑和眼神，做成小歪 OLED 表情"></textarea>
@@ -147,15 +149,6 @@
           </button>
         </div>
         <div class="design-ai-body" v-show="professionalAiOpen">
-          <div class="design-warnings" v-if="llmNeedsConfig">
-            <b>需要配置大模型</b>
-            <ul>
-              <li>[[ llmConfigMessage || 'AI 生成会调用当前设备的大模型。请先到「高级 · LLM 模型」填写模型 ID 和 ARK_API_KEY，并设为当前。' ]]</li>
-            </ul>
-            <div class="debug-actionbar">
-              <a class="btn ghost" href="{{ url_for('app2c.advanced') }}">去配置大模型</a>
-            </div>
-          </div>
           <textarea class="tinput debug-textarea" v-model="professionalPrompt" placeholder="例如：生成一套开心、困困、惊讶、思考、待机的圆润表情，嘴型适合中文说话"></textarea>
           <div class="debug-actionbar">
             <button type="button" class="btn primary" @click="generateProfessionalDesign" :disabled="generatingProfessional || !professionalPrompt.trim()">[[ generatingProfessional ? '生成中…' : 'AI 生成设计' ]]</button>
@@ -233,13 +226,13 @@ const DEFAULT_CUSTOM_FACE = Object.freeze({
 createApp({
   delimiters:['[[',']]'],
   data(){ return {
-    scenes:[], selected:0, mode:'custom', editingFace:false, exprTab:'face', deviceId:'', noDevice:false, sending:false, savingProfessional:false,
+    scenes:[], selected:0, mode:'custom', editingFace:false, exprTab:'image', deviceId:'', noDevice:false, sending:false, savingProfessional:false,
     emotions:[['happy','😄','开心'],['surprised','😲','惊讶'],['thinking','🤔','思考'],['sleepy','😴','困'],['idle','😐','待机']],
     map:{}, msg:'', customFace:{...DEFAULT_CUSTOM_FACE}, professionalDesign:null, professionalFileName:'',
     imageExpressionFile:null, imageExpressionFileName:'', imageExpressionResult:null,
     previewFrameIndex:0, previewPlaying:true, previewTimer:null,
     generatedFrameIndex:0, generatedPreviewPlaying:true, generatedPreviewTimer:null,
-    generatingImageExpression:false,
+    generatingImageExpression:false, imageExpressionProgress:0, imageExpressionProgressLabel:'', imageExpressionProgressTimer:null,
     imageExpressionPrompt:'保留原图最鲜明的情绪和嘴型，做成小歪 OLED 表情。',
     llmNeedsConfig:false, llmConfigMessage:'',
     professionalAiOpen:false, generatingProfessional:false,
@@ -253,11 +246,13 @@ createApp({
         if(!this.editingFace){
           const saved = (this.scenes || []).find(s => s && s.name === 'custom_face');
           if(saved) return saved;
+          const preview = window.DeskbotFacePreview;
+          return preview ? preview.pickScene(this.scenes, this.map, 'idle') : this.buildCustomScene();
         }
         return this.buildCustomScene();
       }
       const preview = window.DeskbotFacePreview;
-      return this.scenes[this.selected] || (preview && preview.fallbackScene) || this.buildCustomScene();
+      return this.scenes[this.selected] || (preview && preview.pickScene(this.scenes, this.map, 'idle')) || this.buildCustomScene();
     },
     previewTitle(){
       const s = this.previewScene || {};
@@ -284,6 +279,12 @@ createApp({
     },
     generatedFrameLabel(){
       return this.frameLabel(this.generatedPreviewScene, this.generatedFrameIndex);
+    },
+    imageExpressionProgressVisible(){
+      return !!(this.generatingImageExpression || this.imageExpressionProgress > 0);
+    },
+    imageExpressionProgressValue(){
+      return Math.round(this.imageExpressionProgress || 0);
     },
     professionalStats(){
       const design = this.professionalDesign || {};
@@ -358,6 +359,28 @@ createApp({
     clearGeneratedPreviewTimer(){
       if(this.generatedPreviewTimer){ clearTimeout(this.generatedPreviewTimer); this.generatedPreviewTimer = null; }
     },
+    clearImageExpressionProgressTimer(){
+      if(this.imageExpressionProgressTimer){
+        clearInterval(this.imageExpressionProgressTimer);
+        this.imageExpressionProgressTimer = null;
+      }
+    },
+    startImageExpressionProgress(label, start, cap){
+      this.clearImageExpressionProgressTimer();
+      this.imageExpressionProgress = start || 10;
+      this.imageExpressionProgressLabel = label || '正在生成 SVG';
+      const limit = cap || 90;
+      this.imageExpressionProgressTimer = setInterval(() => {
+        if(this.imageExpressionProgress >= limit) return;
+        const next = this.imageExpressionProgress + Math.max(1, Math.round((limit - this.imageExpressionProgress) * 0.12));
+        this.imageExpressionProgress = Math.min(limit, next);
+      }, 520);
+    },
+    finishImageExpressionProgress(label, value){
+      this.clearImageExpressionProgressTimer();
+      this.imageExpressionProgress = value;
+      this.imageExpressionProgressLabel = label || '';
+    },
     schedulePreviewPlayback(){
       this.clearPreviewTimer();
       if(!this.previewPlaying || this.previewFrameCount <= 1) return;
@@ -425,6 +448,7 @@ createApp({
         surprised:{eyeGap:116, eyeY:88, eyeSize:22, eyeSquint:0, mouthY:148, mouthWidth:34, mouthHeight:30, mouthCurve:0, blush:0},
       };
       this.customFace = {...DEFAULT_CUSTOM_FACE, ...(presets[name] || {})};
+      this.editingFace = true;
       this.mode = 'custom';
       this.resetPreviewPlayback();
     },
@@ -580,12 +604,14 @@ createApp({
       this.imageExpressionResult = null;
       this.generatedFrameIndex = 0;
       this.clearGeneratedPreviewTimer();
+      this.finishImageExpressionProgress('', 0);
       this.msg = '已选择图片：' + this.imageExpressionFileName;
     },
     async generateImageExpression(){
       if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }
       if(!this.imageExpressionFile){ this.msg = '请先选择一张图片'; return; }
       this.generatingImageExpression = true;
+      this.startImageExpressionProgress('正在上传图片并生成 SVG', 12, 90);
       try{
         const form = new FormData();
         form.append('device_id', this.deviceId);
@@ -597,9 +623,11 @@ createApp({
         this.generatedPreviewPlaying = true;
         this.resetGeneratedPlayback();
         this.applyImageExpressionScene({silent:true});
+        this.finishImageExpressionProgress('SVG 已生成，可预览后保存', 100);
         this.msg = '已生成多帧动画表情，检查后点击保存表情生效';
       }catch(e){
         this.msg = '图片表情包生成失败：' + (e && e.message ? e.message : e);
+        this.finishImageExpressionProgress('', 0);
       }finally{
         this.generatingImageExpression = false;
       }
@@ -630,7 +658,7 @@ createApp({
     },
     async generateProfessionalDesign(){
       if(this.llmNeedsConfig){
-        this.msg = this.llmConfigMessage || '请先到「高级 · LLM 模型」配置大模型';
+        this.msg = this.llmConfigMessage || '请先到「高级 · 模型配置」完成 AI 能力配置';
         return;
       }
       if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }
@@ -816,10 +844,10 @@ createApp({
         const d = await (await fetch('/app/api/devices')).json();
         this.deviceId = d.current_device_id || '';
         this.noDevice = !this.deviceId;
-        if(!this.deviceId){ this.scenes = [this.buildCustomScene()]; this.map = this.normalizeMap({}); return; }
+        if(!this.deviceId){ this.scenes = []; this.map = this.normalizeMap({}); this.mode = 'custom'; this.editingFace = false; this.resetPreviewPlayback(); return; }
         const q = '?device_id='+encodeURIComponent(this.deviceId);
         const r = await (await fetch('/api/face_expr_scenes'+q)).json();
-        this.scenes = (r.config && r.config.length) ? r.config : [this.buildCustomScene()];
+        this.scenes = (r.config && r.config.length) ? r.config : [];
         const m = await (await fetch('/api/emotion_expr_map'+q)).json();
         this.map = this.normalizeMap(m.map || {});
         const custom = (this.scenes || []).find(s => s && s.name === 'custom_face');
@@ -830,7 +858,10 @@ createApp({
         this.editingFace = false;  // 初始显示保存的场景本身，与首页一致
         this.resetPreviewPlayback();
       }catch(e){
-        this.scenes = [this.buildCustomScene()];
+        this.scenes = [];
+        this.map = this.normalizeMap({});
+        this.mode = 'custom';
+        this.editingFace = false;
         this.resetPreviewPlayback();
         this.msg = '表情数据加载失败：' + (e && e.message ? e.message : e);
       }
@@ -869,12 +900,15 @@ createApp({
     },
   },
   mounted(){
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if(['face','image','professional'].includes(tab)) this.exprTab = tab;
     this.load();
     this.schedulePreviewPlayback();
   },
   beforeUnmount(){
     this.clearPreviewTimer();
     this.clearGeneratedPreviewTimer();
+    this.clearImageExpressionProgressTimer();
   },
 }).mount('#app');
 </script>

@@ -4,11 +4,6 @@
 {% block content %}
 <div id="app">
   <div class="pagehd"><div><div class="eyebrow">MEMORY · [[ items.length ]] ENTRIES</div><h1>它记得的事</h1><p>机器人记住的关于你的小事，随时可改可删。</p></div></div>
-  <div class="empty-banner" v-if="noDevice">
-    <div class="eb-ic"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg></div>
-    <div class="eb-txt"><b>还没绑定设备</b><small>记忆需要关联到一台桌搭子，先去绑定一台吧</small></div>
-    <a class="btn primary" href="{{ url_for('app2c.devices') }}">去绑定设备</a>
-  </div>
   <div style="display:flex;gap:8px;margin-bottom:18px;max-width:560px" v-if="!noDevice">
     <input class="tinput" v-model="draft" placeholder="加一条它该记住的事…" @keyup.enter="add">
     <button class="btn primary" @click="add">＋ 加一条</button>
@@ -41,9 +36,12 @@ createApp({
   delimiters:['[[',']]'],
   data(){ return { items:[], draft:'', msg:'', editing:'', editText:'', noDevice:false }; },
   methods:{
-    async load(){ const r=await (await fetch('/app/api/memories')).json();
-      this.noDevice = (r.error === '请先选择设备');
-      if(r.ok) this.items=r.memories||[]; else if(!this.noDevice) this.msg=r.error||'加载失败'; },
+    async load(){
+      const d=await (await fetch('/app/api/devices')).json();
+      this.noDevice = !d.current_device_id;
+      if(this.noDevice){ this.items=[]; return; }
+      const r=await (await fetch('/app/api/memories')).json();
+      if(r.ok) this.items=r.memories||[]; else this.msg=r.error||'加载失败'; },
     async add(){ const t=this.draft.trim(); if(!t) return;
       const r=await (await fetch('/app/api/memories',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})})).json();
       if(r.ok){ this.draft=''; this.msg='已添加记忆'; this.load(); } else this.msg=r.error||'添加失败'; },
