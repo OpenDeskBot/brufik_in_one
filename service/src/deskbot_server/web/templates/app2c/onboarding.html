@@ -95,12 +95,16 @@
         <input class="tinput" v-model="form.api_key" type="password" placeholder="粘贴你的 ARK_API_KEY">
         <span class="hint">🔒 只保存在你本机（服务端 .env），不会上传云端</span>
       </div>
-      <button class="ob-adv-toggle" type="button" @click="advOpen=!advOpen">[[ advOpen ? '收起高级' : '高级：切换模型 / 协议 / Base URL' ]]</button>
+      <button class="ob-adv-toggle" type="button" @click="toggleAdv">[[ advOpen ? '收起高级' : '高级：切换模型 / 协议 / Base URL' ]]</button>
       <div v-show="advOpen">
         <div class="ob-field">
-          <label>文本模型</label>
-          <input class="tinput" v-model="form.model_name" placeholder="doubao-seed-2-1-pro-260628">
-          <span class="hint">默认与图片生成同款；也可换成你已开通的其它模型</span>
+          <label>文本模型 <span v-if="models.length" style="color:var(--faint);font-weight:400">· 已检测到 [[ models.length ]] 个可用</span></label>
+          <input class="tinput" v-model="form.model_name" list="arkModels" placeholder="doubao-seed-2-1-pro-260628">
+          <datalist id="arkModels"><option v-for="m in models" :key="m.id" :value="m.id"></option></datalist>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:2px">
+            <button class="ob-adv-toggle" type="button" style="padding:0" @click="detectModels" :disabled="loadingModels || !form.api_key.trim()">[[ loadingModels ? '检测中…' : '🔄 检测可用模型' ]]</button>
+            <span class="hint">默认与图片生成同款；可换成已检测到的其它模型</span>
+          </div>
         </div>
         <div class="ob-field">
           <label>协议</label>
@@ -150,13 +154,27 @@ createApp({
   delimiters:['[[',']]'],
   data(){ return {
     step:1, advOpen:false, testing:false, saving:false, testResult:null, msg:'',
-    protocols:['ark','openai'],
+    protocols:['ark','openai'], models:[], loadingModels:false,
     form:{ model_name:'doubao-seed-2-1-pro-260628', api_key:'', protocol:'ark', base_url:'' },
   }; },
   computed:{
     canSubmit(){ return !!this.form.api_key.trim(); },
   },
   methods:{
+    toggleAdv(){
+      this.advOpen=!this.advOpen;
+      if(this.advOpen && this.form.api_key.trim() && !this.models.length) this.detectModels();
+    },
+    async detectModels(){
+      if(!this.form.api_key.trim()){ this.msg='请先填写 API Key'; return; }
+      this.loadingModels=true;
+      try{
+        const d = await this.api('/api/setup/llm/models', {api_key:this.form.api_key, base_url:this.form.base_url});
+        if(d.ok){ this.models = d.models || []; }
+        else { this.msg = d.error || '获取模型清单失败'; }
+      }catch(e){ this.msg = (e&&e.message)||'获取模型清单失败'; }
+      finally{ this.loadingModels=false; }
+    },
     async api(url, body){
       const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
       const d = await r.json().catch(()=>({ok:false,error:'响应解析失败'}));
