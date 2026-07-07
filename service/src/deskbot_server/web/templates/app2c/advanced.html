@@ -1,6 +1,18 @@
 {% extends "base_2c.html" %}
 {% block page_title %}高级 · 小歪{% endblock %}
-{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+<style>
+  .usage-chart-card{border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel);padding:12px;margin-top:12px}
+  .usage-chart{width:100%;height:200px;display:block}
+  .usage-chart .uc-axis{stroke:var(--line);stroke-width:1.5}
+  .usage-chart .uc-tick{fill:var(--dim);font-family:var(--mono);font-size:10px}
+  .usage-chart .uc-date{fill:var(--faint);font-family:var(--mono);font-size:10px}
+  .usage-legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:10px}
+  .usage-legend .uc-item{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .usage-legend .uc-dot{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--line);flex:none}
+  .usage-chart-empty{margin-top:12px;padding:20px;text-align:center;color:var(--faint);font-family:var(--mono);font-size:11px;
+    border:var(--bw) dashed var(--line);border-radius:var(--r)}
+</style>{% endblock %}
 {% block content %}
 <div id="advancedApp">
   <div class="pagehd">
@@ -49,6 +61,48 @@
         </tbody>
       </table>
     </div>
+    <div class="blocktitle">近 14 日设备用量趋势</div>
+    <div class="usage-chart-card" v-if="deviceUsageSeries.series.length">
+      <svg class="usage-chart" viewBox="0 0 640 200" preserveAspectRatio="none" role="img">
+        <line class="uc-axis" x1="28" y1="172" x2="612" y2="172"></line>
+        <text class="uc-tick" x="24" y="32" text-anchor="end">[[ fmtBytes(deviceUsageSeries.max) ]]</text>
+        <text class="uc-tick" x="24" y="172" text-anchor="end">0</text>
+        <polyline v-for="(s, i) in deviceUsageSeries.series" :key="s.sub_id"
+                  fill="none" :stroke="chartColor(i)" stroke-width="2"
+                  stroke-linejoin="round" stroke-linecap="round"
+                  :points="svgPoints(s, deviceUsageSeries.max)"></polyline>
+        <text class="uc-date" x="28" y="190" text-anchor="start">[[ deviceUsageSeries.dates[0] ]]</text>
+        <text class="uc-date" x="612" y="190" text-anchor="end">[[ deviceUsageSeries.dates[deviceUsageSeries.dates.length-1] ]]</text>
+      </svg>
+      <div class="usage-legend">
+        <span v-for="(s, i) in deviceUsageSeries.series" :key="s.sub_id" class="uc-item">
+          <i class="uc-dot" :style="{background: chartColor(i)}"></i>[[ s.label ]]
+        </span>
+      </div>
+    </div>
+    <div class="usage-chart-empty" v-else>暂无趋势数据</div>
+
+    <div class="blocktitle">近 14 日 API Key 用量趋势</div>
+    <div class="usage-chart-card" v-if="keyUsageSeries.series.length">
+      <svg class="usage-chart" viewBox="0 0 640 200" preserveAspectRatio="none" role="img">
+        <line class="uc-axis" x1="28" y1="172" x2="612" y2="172"></line>
+        <text class="uc-tick" x="24" y="32" text-anchor="end">[[ fmtBytes(keyUsageSeries.max) ]]</text>
+        <text class="uc-tick" x="24" y="172" text-anchor="end">0</text>
+        <polyline v-for="(s, i) in keyUsageSeries.series" :key="s.sub_id"
+                  fill="none" :stroke="chartColor(i)" stroke-width="2"
+                  stroke-linejoin="round" stroke-linecap="round"
+                  :points="svgPoints(s, keyUsageSeries.max)"></polyline>
+        <text class="uc-date" x="28" y="190" text-anchor="start">[[ keyUsageSeries.dates[0] ]]</text>
+        <text class="uc-date" x="612" y="190" text-anchor="end">[[ keyUsageSeries.dates[keyUsageSeries.dates.length-1] ]]</text>
+      </svg>
+      <div class="usage-legend">
+        <span v-for="(s, i) in keyUsageSeries.series" :key="s.sub_id" class="uc-item">
+          <i class="uc-dot" :style="{background: chartColor(i)}"></i>[[ s.label ]]
+        </span>
+      </div>
+    </div>
+    <div class="usage-chart-empty" v-else>暂无趋势数据</div>
+
     <div class="blocktitle">近 14 日设备明细</div>
     <div class="adv-table-wrap">
       <table class="adv-table">
@@ -352,7 +406,57 @@ createApp({
       simText:'你好，我是小歪模拟器。', simSpkId:0, simResult:null, simAudioUrl:'',
     },
   }; },
+  computed:{
+    deviceUsageSeries(){ return this.buildUsageSeries(this.usage.device_daily_rows); },
+    keyUsageSeries(){ return this.buildUsageSeries(this.usage.key_daily_rows); },
+  },
   methods:{
+    buildUsageSeries(rows){
+      rows = Array.isArray(rows) ? rows : [];
+      const dateSet = {};
+      const groups = {};
+      const order = [];
+      for(const r of rows){
+        const date = r.date;
+        if(date != null) dateSet[date] = true;
+        const sid = r.sub_id != null ? String(r.sub_id) : '';
+        if(!groups[sid]){
+          groups[sid] = { sub_id: sid, label: r.label || r.sub_id || '未命名', byDate: {} };
+          order.push(sid);
+        }
+        groups[sid].byDate[date] = (groups[sid].byDate[date] || 0) + (Number(r.total_bytes) || 0);
+      }
+      const dates = Object.keys(dateSet).sort();
+      let max = 0;
+      const series = order.map(sid => {
+        const g = groups[sid];
+        const points = dates.map(d => {
+          const v = Number(g.byDate[d]) || 0;
+          if(v > max) max = v;
+          return v;
+        });
+        return { sub_id: g.sub_id, label: g.label, points };
+      });
+      return { dates, series, max: max || 1 };
+    },
+    svgPoints(series, max){
+      const W = 640, H = 200, pad = 28;
+      const left = pad, right = W - pad, top = pad, bottom = H - pad;
+      const plotW = right - left, plotH = bottom - top;
+      const m = (Number(max) || 0) || 1;
+      const pts = (series && series.points) || [];
+      const n = pts.length;
+      if(n === 0) return '';
+      return pts.map((v, i) => {
+        const x = n === 1 ? (left + plotW / 2) : (left + (plotW * i) / (n - 1));
+        const y = bottom - ((Number(v) || 0) / m) * plotH;
+        return x.toFixed(1) + ',' + y.toFixed(1);
+      }).join(' ');
+    },
+    chartColor(i){
+      const palette = ['#ff6700', '#2f7de1', '#1fa87a', '#c94fb0', '#e0a400', '#5b5bd6'];
+      return palette[i % palette.length];
+    },
     toggleAdvanced(key){
       this.advancedOpen[key]=!this.advancedOpen[key];
       if(key==='debug' && this.advancedOpen.debug) this.prepareDebug();

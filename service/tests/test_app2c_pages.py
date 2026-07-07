@@ -324,6 +324,11 @@ def test_2c_expr_page_exposes_professional_design_tab(temp_db):
     assert "图片表情包生成" in html
     assert "generateImageExpression" in html
     assert "/api/face_design/generate-from-image" in html
+    assert "previewFrameIndex" in html
+    assert "generatedPreviewSvg" in html
+    assert "togglePreviewPlayback" in html
+    assert "prevGeneratedFrame" in html
+    assert "[[ generatedFrameLabel ]]" in html
     assert html.index("图片生成 / ARK SEED") < html.index("专业设计 / VISEMESYNC")
     assert "preserveMap:true" in html
     assert "/api/face_mouth_by_phoneme" in html
@@ -604,6 +609,24 @@ def test_2c_advanced_usage_includes_daily_breakdown(temp_db):
     html = client.get("/advanced").get_data(as_text=True)
     assert "近 14 日设备明细" in html
     assert "近 14 日 API Key 明细" in html
+
+
+def test_2c_advanced_usage_has_trend_charts(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("usage-charts2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "usage-charts2c@example.com", "password": "password1234"})
+
+    html = client.get("/advanced").get_data(as_text=True)
+    assert "近 14 日设备用量趋势" in html
+    assert "近 14 日 API Key 用量趋势" in html
+    assert "<svg" in html
+    assert "<polyline" in html
+    assert "deviceUsageSeries" in html
+    assert "keyUsageSeries" in html
 
 
 def test_old_app_pages_removed_but_apis_kept(temp_db):
