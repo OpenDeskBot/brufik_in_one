@@ -319,6 +319,17 @@ def test_2c_expr_page_exposes_professional_design_tab(temp_db):
     assert "AI 辅助生成" in html
     assert "generateProfessionalDesign" in html
     assert "/api/face_design/generate" in html
+    assert "exprTab==='image'" in html
+    assert "图片生成 / ARK SEED" in html
+    assert "图片表情包生成" in html
+    assert "generateImageExpression" in html
+    assert "/api/face_design/generate-from-image" in html
+    assert "previewFrameIndex" in html
+    assert "generatedPreviewSvg" in html
+    assert "togglePreviewPlayback" in html
+    assert "prevGeneratedFrame" in html
+    assert "[[ generatedFrameLabel ]]" in html
+    assert html.index("图片生成 / ARK SEED") < html.index("专业设计 / VISEMESYNC")
     assert "preserveMap:true" in html
     assert "/api/face_mouth_by_phoneme" in html
 
@@ -557,3 +568,82 @@ def test_2c_expr_ai_generation_reminds_llm_config_required(temp_db):
     assert "loadLlmConfigStatus" in html
     assert "llmNeedsConfig" in html
     assert "/advanced" in html
+
+
+def test_2c_advanced_llm_form_has_test_connection(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("llm-test2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "llm-test2c@example.com", "password": "password1234"})
+
+    resp = client.get("/advanced")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "测试连接" in html
+    assert "testLlmModel" in html
+    assert "/app/api/llm-models/test" in html
+    assert 'v-model="llmForm.test_prompt"' in html
+
+
+def test_2c_advanced_usage_includes_daily_breakdown(temp_db):
+    from deskbot_server.auth.device_service import bind_device
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    user = create_user("usage-daily2c@example.com", "password1234")
+    bind_device(user.id, "deskbot_usage")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "usage-daily2c@example.com", "password": "password1234"})
+    client.post("/app/api/devices/select", json={"device_id": "deskbot_usage"})
+
+    payload = client.get("/api/advanced").get_json()
+    assert "device_daily_rows" in payload["usage"]
+    assert "key_daily_rows" in payload["usage"]
+    assert isinstance(payload["usage"]["device_daily_rows"], list)
+
+    html = client.get("/advanced").get_data(as_text=True)
+    assert "近 14 日设备明细" in html
+    assert "近 14 日 API Key 明细" in html
+
+
+def test_2c_advanced_usage_has_trend_charts(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("usage-charts2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "usage-charts2c@example.com", "password": "password1234"})
+
+    html = client.get("/advanced").get_data(as_text=True)
+    assert "近 14 日设备用量趋势" in html
+    assert "近 14 日 API Key 用量趋势" in html
+    assert "<svg" in html
+    assert "<polyline" in html
+    assert "deviceUsageSeries" in html
+    assert "keyUsageSeries" in html
+
+
+def test_old_app_pages_removed_but_apis_kept(temp_db):
+    from deskbot_server.auth.device_service import bind_device
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    user = create_user("retire-app@example.com", "password1234")
+    bind_device(user.id, "deskbot_retire")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "retire-app@example.com", "password": "password1234"})
+    client.post("/app/api/devices/select", json={"device_id": "deskbot_retire"})
+
+    for page in ["/app/", "/app/usage", "/app/settings", "/app/llm-models", "/app/scheduled-tasks", "/app/face-profiles", "/app/configure", "/app/memories", "/app/devices"]:
+        assert client.get(page).status_code == 404, page
+
+    assert client.get("/app/api/scheduled-tasks").status_code == 200
+    assert client.get("/app/api/llm-models?device_id=deskbot_retire").status_code == 200
+    assert client.get("/app/api/tts/speakers").status_code == 200

@@ -88,7 +88,7 @@ def _require_developer_for_debug():
     if path.startswith("/api/"):
         return jsonify({"ok": False, "error": "需要开发者权限"}), 403
     flash("需要开发者权限", "error")
-    return redirect(url_for("app.dashboard"))
+    return redirect(url_for("app2c.home"))
 
 
 def _deny_foreign_device(device_id: str):

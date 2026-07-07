@@ -18,7 +18,7 @@
 <body class="agent-theme">
   <div class="app-shell">
     <header class="app-topbar">
-      <a class="app-brand" href="{{ url_for('app.dashboard') }}">
+      <a class="app-brand" href="{{ url_for('app2c.home') }}">
         <span class="app-brand-mark">O</span>
         <span>OpenDesk<small>Agent Cloud</small></span>
       </a>
@@ -50,13 +50,13 @@
         <nav class="app-nav">
           <div class="nav-group">
             <div class="nav-group-label">工作台</div>
-            <a href="{{ url_for('app.dashboard') }}" class="{% if active_nav == 'app' %}active{% endif %}">控制台</a>
-            <a href="{{ url_for('app.scheduled_tasks_page') }}" class="{% if active_nav == 'scheduled_tasks' %}active{% endif %}">定时任务</a>
-            <a href="{{ url_for('app.face_profiles_page') }}" class="{% if active_nav == 'face_profiles' %}active{% endif %}">人脸识别</a>
-            <a href="{{ url_for('app.memories_page') }}" class="{% if active_nav == 'memories' %}active{% endif %}">记忆</a>
-            <a href="{{ url_for('app.configure_page') }}" class="{% if active_nav == 'configure' %}active{% endif %}">设置</a>
-            <a href="{{ url_for('app.llm_models_page') }}" class="{% if active_nav == 'llm_models' %}active{% endif %}">LLM 管理</a>
-            <a href="{{ url_for('app.usage_page') }}" class="{% if active_nav == 'usage' %}active{% endif %}">用量看板</a>
+            <a href="{{ url_for('app2c.home') }}" class="{% if active_nav == 'app' %}active{% endif %}">控制台</a>
+            <a href="{{ url_for('app2c.reminders') }}" class="{% if active_nav == 'scheduled_tasks' %}active{% endif %}">定时任务</a>
+            <a href="{{ url_for('app2c.people') }}" class="{% if active_nav == 'face_profiles' %}active{% endif %}">人脸识别</a>
+            <a href="{{ url_for('app2c.memories') }}" class="{% if active_nav == 'memories' %}active{% endif %}">记忆</a>
+            <a href="{{ url_for('app2c.advanced') }}" class="{% if active_nav == 'configure' %}active{% endif %}">设置</a>
+            <a href="{{ url_for('app2c.advanced') }}" class="{% if active_nav == 'llm_models' %}active{% endif %}">LLM 管理</a>
+            <a href="{{ url_for('app2c.advanced') }}" class="{% if active_nav == 'usage' %}active{% endif %}">用量看板</a>
           </div>
           {% if nav_is_developer %}
           <div class="nav-group">
@@ -69,7 +69,7 @@
           {% endif %}
           <div class="nav-group">
             <div class="nav-group-label">账户</div>
-            <a href="{{ url_for('app.settings_page') }}" class="{% if active_nav == 'account' %}active{% endif %}">账号设置</a>
+            <a href="{{ url_for('app2c.advanced') }}" class="{% if active_nav == 'account' %}active{% endif %}">账号设置</a>
           </div>
         </nav>
       </aside>

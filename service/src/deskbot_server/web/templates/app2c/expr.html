@@ -33,6 +33,7 @@
     <div class="expr-editor">
       <div class="expr-tabs" role="tablist" aria-label="表情编辑模式">
         <button type="button" :class="{on: exprTab==='face'}" @click="exprTab='face'" role="tab" :aria-selected="String(exprTab==='face')">基础捏脸</button>
+        <button type="button" :class="{on: exprTab==='image'}" @click="exprTab='image'" role="tab" :aria-selected="String(exprTab==='image')">图片生成</button>
         <button type="button" :class="{on: exprTab==='professional'}" @click="exprTab='professional'" role="tab" :aria-selected="String(exprTab==='professional')">专业设计</button>
       </div>
       <section v-show="exprTab==='face'" class="expr-tabpane" role="tabpanel">
@@ -84,6 +85,35 @@
             <option value="">（不指定）</option>
             <option v-for="s in scenes" :key="s.name" :value="s.name">[[ s.title || s.name ]]</option>
           </select>
+        </div>
+      </section>
+      <section v-show="exprTab==='image'" class="expr-tabpane image-design" role="tabpanel">
+        <div class="blocktitle top">图片生成 / ARK SEED</div>
+        <div class="design-loader image-ai">
+          <input ref="imageExpressionFile" class="file-input-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" @change="selectImageExpressionFile">
+          <div>
+            <b>图片表情包生成</b>
+            <small>上传表情包图片，使用 Ark Seed 2.1 生成可预览的 SVG，并转成当前设备可保存的表情 scene。</small>
+          </div>
+          <div class="design-actions">
+            <button type="button" class="btn" @click="$refs.imageExpressionFile && $refs.imageExpressionFile.click()">选择图片</button>
+            <button type="button" class="btn primary" @click="generateImageExpression" :disabled="generatingImageExpression || !imageExpressionFile">[[ generatingImageExpression ? '生成中…' : '生成 SVG' ]]</button>
+          </div>
+        </div>
+        <div class="image-ai-body" v-show="imageExpressionFile || imageExpressionResult">
+          <div class="image-file-name" v-if="imageExpressionFileName">[[ imageExpressionFileName ]]</div>
+          <textarea class="tinput debug-textarea image-prompt" v-model="imageExpressionPrompt" placeholder="可选：补充你想保留的情绪、嘴型或风格，例如：保留坏笑和眼神，做成小歪 OLED 表情"></textarea>
+          <div class="generated-svg-card" v-if="imageExpressionResult">
+            <div class="generated-svg-preview" v-html="imageExpressionResult.svg"></div>
+            <div class="generated-svg-meta">
+              <b>[[ imageExpressionResult.title || imageExpressionResult.name ]]</b>
+              <small>[[ imageExpressionResult.model || 'doubao-seed-2-1-pro-260628' ]]</small>
+              <div class="debug-actionbar">
+                <button type="button" class="btn primary" @click="applyImageExpressionScene">加入当前表情</button>
+                <button type="button" class="btn ghost" @click="downloadImageExpressionSvg">下载 SVG</button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
       <section v-show="exprTab==='professional'" class="expr-tabpane professional-design" role="tabpanel">
@@ -187,6 +217,9 @@ createApp({
     scenes:[], selected:0, mode:'custom', exprTab:'face', deviceId:'', sending:false, savingProfessional:false,
     emotions:[['happy','😄','开心'],['surprised','😲','惊讶'],['thinking','🤔','思考'],['sleepy','😴','困'],['idle','😐','待机']],
     map:{}, msg:'', customFace:{...DEFAULT_CUSTOM_FACE}, professionalDesign:null, professionalFileName:'',
+    imageExpressionFile:null, imageExpressionFileName:'', imageExpressionResult:null,
+    generatingImageExpression:false,
+    imageExpressionPrompt:'保留原图最鲜明的情绪和嘴型，做成小歪 OLED 表情。',
     llmNeedsConfig:false, llmConfigMessage:'',
     professionalAiOpen:false, generatingProfessional:false,
     professionalPrompt:'做一套小歪默认表情：开心、困困、惊讶、思考、待机，风格圆润，嘴型适合中文拼音。'
@@ -401,6 +434,58 @@ createApp({
       }finally{
         if(input) input.value = '';
       }
+    },
+    selectImageExpressionFile(event){
+      const input = event && event.target;
+      const file = input && input.files && input.files[0];
+      if(!file) return;
+      this.imageExpressionFile = file;
+      this.imageExpressionFileName = file.name || 'image';
+      this.imageExpressionResult = null;
+      this.msg = '已选择图片：' + this.imageExpressionFileName;
+    },
+    async generateImageExpression(){
+      if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }
+      if(!this.imageExpressionFile){ this.msg = '请先选择一张图片'; return; }
+      this.generatingImageExpression = true;
+      try{
+        const form = new FormData();
+        form.append('device_id', this.deviceId);
+        form.append('prompt', String(this.imageExpressionPrompt || '').trim());
+        form.append('image', this.imageExpressionFile);
+        const res = await (await fetch('/api/face_design/generate-from-image', {method:'POST', body:form})).json();
+        if(!res.ok) throw new Error(res.error || '图片表情包生成失败');
+        this.imageExpressionResult = res;
+        this.applyImageExpressionScene({silent:true});
+        this.msg = '已生成 SVG 和表情 scene，检查后点击保存表情生效';
+      }catch(e){
+        this.msg = '图片表情包生成失败：' + (e && e.message ? e.message : e);
+      }finally{
+        this.generatingImageExpression = false;
+      }
+    },
+    applyImageExpressionScene(opts){
+      const silent = opts && opts.silent;
+      const scene = this.imageExpressionResult && this.imageExpressionResult.scene;
+      if(!scene){ if(!silent) this.msg = '没有可加入的表情 scene'; return; }
+      this.upsertScene(scene);
+      this.mode = 'preset';
+      if(!silent) this.msg = '已加入当前表情，点击保存表情后同步到设备配置';
+    },
+    downloadImageExpressionSvg(){
+      const svg = this.imageExpressionResult && this.imageExpressionResult.svg;
+      if(!svg){ this.msg = '还没有生成 SVG'; return; }
+      const name = this.slugName(this.imageExpressionResult.name || 'image-expression', 'image-expression');
+      const blob = new Blob([svg], {type:'image/svg+xml'});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = name + '.svg';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      this.msg = '已下载 SVG';
     },
     async generateProfessionalDesign(){
       if(this.llmNeedsConfig){

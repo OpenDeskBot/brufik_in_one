@@ -1,6 +1,18 @@
 {% extends "base_2c.html" %}
 {% block page_title %}高级 · 小歪{% endblock %}
-{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+<style>
+  .usage-chart-card{border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel);padding:12px;margin-top:12px}
+  .usage-chart{width:100%;height:200px;display:block}
+  .usage-chart .uc-axis{stroke:var(--line);stroke-width:1.5}
+  .usage-chart .uc-tick{fill:var(--dim);font-family:var(--mono);font-size:10px}
+  .usage-chart .uc-date{fill:var(--faint);font-family:var(--mono);font-size:10px}
+  .usage-legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:10px}
+  .usage-legend .uc-item{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .usage-legend .uc-dot{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--line);flex:none}
+  .usage-chart-empty{margin-top:12px;padding:20px;text-align:center;color:var(--faint);font-family:var(--mono);font-size:11px;
+    border:var(--bw) dashed var(--line);border-radius:var(--r)}
+</style>{% endblock %}
 {% block content %}
 <div id="advancedApp">
   <div class="pagehd">
@@ -46,6 +58,84 @@
             <td><b>[[ fmtBytes(d.total_bytes) ]]</b></td>
           </tr>
           <tr v-if="!usage.today_by_device.length"><td colspan="6">暂无设备用量</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="blocktitle">近 14 日设备用量趋势</div>
+    <div class="usage-chart-card" v-if="deviceUsageSeries.series.length">
+      <svg class="usage-chart" viewBox="0 0 640 200" preserveAspectRatio="none" role="img">
+        <line class="uc-axis" x1="28" y1="172" x2="612" y2="172"></line>
+        <text class="uc-tick" x="24" y="32" text-anchor="end">[[ fmtBytes(deviceUsageSeries.max) ]]</text>
+        <text class="uc-tick" x="24" y="172" text-anchor="end">0</text>
+        <polyline v-for="(s, i) in deviceUsageSeries.series" :key="s.sub_id"
+                  fill="none" :stroke="chartColor(i)" stroke-width="2"
+                  stroke-linejoin="round" stroke-linecap="round"
+                  :points="svgPoints(s, deviceUsageSeries.max)"></polyline>
+        <text class="uc-date" x="28" y="190" text-anchor="start">[[ deviceUsageSeries.dates[0] ]]</text>
+        <text class="uc-date" x="612" y="190" text-anchor="end">[[ deviceUsageSeries.dates[deviceUsageSeries.dates.length-1] ]]</text>
+      </svg>
+      <div class="usage-legend">
+        <span v-for="(s, i) in deviceUsageSeries.series" :key="s.sub_id" class="uc-item">
+          <i class="uc-dot" :style="{background: chartColor(i)}"></i>[[ s.label ]]
+        </span>
+      </div>
+    </div>
+    <div class="usage-chart-empty" v-else>暂无趋势数据</div>
+
+    <div class="blocktitle">近 14 日 API Key 用量趋势</div>
+    <div class="usage-chart-card" v-if="keyUsageSeries.series.length">
+      <svg class="usage-chart" viewBox="0 0 640 200" preserveAspectRatio="none" role="img">
+        <line class="uc-axis" x1="28" y1="172" x2="612" y2="172"></line>
+        <text class="uc-tick" x="24" y="32" text-anchor="end">[[ fmtBytes(keyUsageSeries.max) ]]</text>
+        <text class="uc-tick" x="24" y="172" text-anchor="end">0</text>
+        <polyline v-for="(s, i) in keyUsageSeries.series" :key="s.sub_id"
+                  fill="none" :stroke="chartColor(i)" stroke-width="2"
+                  stroke-linejoin="round" stroke-linecap="round"
+                  :points="svgPoints(s, keyUsageSeries.max)"></polyline>
+        <text class="uc-date" x="28" y="190" text-anchor="start">[[ keyUsageSeries.dates[0] ]]</text>
+        <text class="uc-date" x="612" y="190" text-anchor="end">[[ keyUsageSeries.dates[keyUsageSeries.dates.length-1] ]]</text>
+      </svg>
+      <div class="usage-legend">
+        <span v-for="(s, i) in keyUsageSeries.series" :key="s.sub_id" class="uc-item">
+          <i class="uc-dot" :style="{background: chartColor(i)}"></i>[[ s.label ]]
+        </span>
+      </div>
+    </div>
+    <div class="usage-chart-empty" v-else>暂无趋势数据</div>
+
+    <div class="blocktitle">近 14 日设备明细</div>
+    <div class="adv-table-wrap">
+      <table class="adv-table">
+        <thead><tr><th>日期</th><th>设备</th><th>ASR</th><th>人脸</th><th>LLM</th><th>TTS</th><th>合计</th></tr></thead>
+        <tbody>
+          <tr v-for="(r, i) in usage.device_daily_rows" :key="r.date + '|' + r.sub_id + '|' + i">
+            <td>[[ r.date ]]</td>
+            <td><b>[[ r.label || r.sub_id ]]</b><small>[[ r.sub_id ]]</small></td>
+            <td>[[ fmtBytes(r.asr_bytes) ]]</td>
+            <td>[[ fmtBytes(r.face_bytes) ]]</td>
+            <td>[[ fmtBytes(r.llm_bytes) ]]</td>
+            <td>[[ fmtBytes(r.tts_bytes) ]]</td>
+            <td><b>[[ fmtBytes(r.total_bytes) ]]</b></td>
+          </tr>
+          <tr v-if="!usage.device_daily_rows.length"><td colspan="7">暂无设备明细</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="blocktitle">近 14 日 API Key 明细</div>
+    <div class="adv-table-wrap">
+      <table class="adv-table">
+        <thead><tr><th>日期</th><th>API Key</th><th>ASR</th><th>人脸</th><th>LLM</th><th>TTS</th><th>合计</th></tr></thead>
+        <tbody>
+          <tr v-for="(r, i) in usage.key_daily_rows" :key="r.date + '|' + r.sub_id + '|' + i">
+            <td>[[ r.date ]]</td>
+            <td><b>[[ r.label || r.sub_id ]]</b><small>[[ r.sub_label ]]</small></td>
+            <td>[[ fmtBytes(r.asr_bytes) ]]</td>
+            <td>[[ fmtBytes(r.face_bytes) ]]</td>
+            <td>[[ fmtBytes(r.llm_bytes) ]]</td>
+            <td>[[ fmtBytes(r.tts_bytes) ]]</td>
+            <td><b>[[ fmtBytes(r.total_bytes) ]]</b></td>
+          </tr>
+          <tr v-if="!usage.key_daily_rows.length"><td colspan="7">暂无 API Key 明细</td></tr>
         </tbody>
       </table>
     </div>
@@ -120,11 +210,17 @@
         </select>
         <input class="tinput" v-model="llmForm.base_url" placeholder="Base URL，Ark 可留空">
         <input class="tinput" v-model="llmForm.api_key" type="password" :placeholder="editingModelId ? 'API Key 留空则不修改' : 'ARK_API_KEY'">
+        <input class="tinput" v-model="llmForm.test_prompt" placeholder="测试 Prompt，例如 你好，请用一句话介绍你自己。">
         <div class="btngroup">
           <button type="submit" class="btn primary">[[ editingModelId ? '保存模型' : '添加模型' ]]</button>
+          <button type="button" class="btn ghost" @click="testLlmModel" :disabled="llmTesting">[[ llmTesting ? '测试中…' : '测试连接' ]]</button>
           <button type="button" class="btn ghost" v-if="editingModelId" @click="resetLlmForm">取消编辑</button>
         </div>
       </form>
+      <div class="debug-output" v-if="llmTestResult">
+        <b>[[ llmTestResult.ok ? (llmTestResult.reply || '连接成功') : (llmTestResult.error || '测试失败') ]]</b>
+        <small v-if="llmTestResult.meta">[[ llmTestResult.meta.display_name || llmTestResult.meta.model ]]</small>
+      </div>
 
       <div class="adv-table-wrap">
         <table class="adv-table">
@@ -297,11 +393,11 @@ createApp({
     password:{old_password:'',new_password:'',confirm_password:''},
     devices:[], currentDeviceId:'',
     advancedOpen:{keys:false,llm:false,account:false,debug:false},
-    usage:{today:{}, fourteen_day:{}, today_by_device:[]},
+    usage:{today:{}, fourteen_day:{}, today_by_device:[], device_daily_rows:[], key_daily_rows:[]},
     apiKeys:[], newKeyName:'', rawKey:'',
     llm:{protocols:['ark','openai'], models:[], active_model_id:null, active:null, system_default:null, error:''},
-    editingModelId:'',
-    llmForm:{name:'', model_name:'', protocol:'ark', base_url:'', api_key:''},
+    editingModelId:'', llmTesting:false, llmTestResult:null,
+    llmForm:{name:'', model_name:'', protocol:'ark', base_url:'', api_key:'', test_prompt:'你好，请用一句话介绍你自己。'},
     debug:{
       health:null, token:'', tokenExpires:0,
       systemPrompt:'', llmText:'你好，做一个简短自检。', llmResult:null,
@@ -310,7 +406,57 @@ createApp({
       simText:'你好，我是小歪模拟器。', simSpkId:0, simResult:null, simAudioUrl:'',
     },
   }; },
+  computed:{
+    deviceUsageSeries(){ return this.buildUsageSeries(this.usage.device_daily_rows); },
+    keyUsageSeries(){ return this.buildUsageSeries(this.usage.key_daily_rows); },
+  },
   methods:{
+    buildUsageSeries(rows){
+      rows = Array.isArray(rows) ? rows : [];
+      const dateSet = {};
+      const groups = {};
+      const order = [];
+      for(const r of rows){
+        const date = r.date;
+        if(date != null) dateSet[date] = true;
+        const sid = r.sub_id != null ? String(r.sub_id) : '';
+        if(!groups[sid]){
+          groups[sid] = { sub_id: sid, label: r.label || r.sub_id || '未命名', byDate: {} };
+          order.push(sid);
+        }
+        groups[sid].byDate[date] = (groups[sid].byDate[date] || 0) + (Number(r.total_bytes) || 0);
+      }
+      const dates = Object.keys(dateSet).sort();
+      let max = 0;
+      const series = order.map(sid => {
+        const g = groups[sid];
+        const points = dates.map(d => {
+          const v = Number(g.byDate[d]) || 0;
+          if(v > max) max = v;
+          return v;
+        });
+        return { sub_id: g.sub_id, label: g.label, points };
+      });
+      return { dates, series, max: max || 1 };
+    },
+    svgPoints(series, max){
+      const W = 640, H = 200, pad = 28;
+      const left = pad, right = W - pad, top = pad, bottom = H - pad;
+      const plotW = right - left, plotH = bottom - top;
+      const m = (Number(max) || 0) || 1;
+      const pts = (series && series.points) || [];
+      const n = pts.length;
+      if(n === 0) return '';
+      return pts.map((v, i) => {
+        const x = n === 1 ? (left + plotW / 2) : (left + (plotW * i) / (n - 1));
+        const y = bottom - ((Number(v) || 0) / m) * plotH;
+        return x.toFixed(1) + ',' + y.toFixed(1);
+      }).join(' ');
+    },
+    chartColor(i){
+      const palette = ['#ff6700', '#2f7de1', '#1fa87a', '#c94fb0', '#e0a400', '#5b5bd6'];
+      return palette[i % palette.length];
+    },
     toggleAdvanced(key){
       this.advancedOpen[key]=!this.advancedOpen[key];
       if(key==='debug' && this.advancedOpen.debug) this.prepareDebug();
@@ -391,8 +537,8 @@ createApp({
       }catch(e){ this.msg=e.message||'切换失败'; }
     },
     resetLlmForm(){
-      this.editingModelId='';
-      this.llmForm={name:'',model_name:'',protocol:(this.llm.protocols&&this.llm.protocols[0])||'ark',base_url:'',api_key:''};
+      this.editingModelId=''; this.llmTestResult=null;
+      this.llmForm={name:'',model_name:'',protocol:(this.llm.protocols&&this.llm.protocols[0])||'ark',base_url:'',api_key:'',test_prompt:'你好，请用一句话介绍你自己。'};
     },
     editLlmModel(m){
       this.editingModelId=m.id;
@@ -408,6 +554,17 @@ createApp({
         await this.api(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         this.resetLlmForm(); await this.load(); this.active='llm'; this.msg='模型已保存';
       }catch(e){ this.msg=e.message||'保存失败'; }
+    },
+    async testLlmModel(){
+      if(!this.currentDeviceId){ this.msg='请先选择设备'; return; }
+      this.llmTesting=true; this.llmTestResult=null;
+      const payload=Object.assign({}, this.llmForm, {prompt:this.llmForm.test_prompt});
+      if(this.editingModelId){ payload.model_id=this.editingModelId; }
+      try{
+        this.llmTestResult=await this.api('/app/api/llm-models/test?device_id='+encodeURIComponent(this.currentDeviceId),
+          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      }catch(e){ this.llmTestResult={ok:false,error:e.message||'测试失败'}; }
+      finally{ this.llmTesting=false; }
     },
     async selectLlmModel(m){
       try{
