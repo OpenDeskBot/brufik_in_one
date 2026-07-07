@@ -10,10 +10,10 @@
   --ink:#16171b; --dim:#56564f; --faint:#86867c;
   --line:#16171b;
   --accent:#ff6700; --accent-ink:#fff;          /* 小米橙 */
-  --bw:2.5px;                                    /* 边框粗细 */
-  --r:6px; --rl:9px; --rs:5px;                   /* 圆角：常规 / 大 / 小 */
-  --shadow:4px 4px 0 var(--line);
-  --shadow-sm:2px 2px 0 var(--line);
+  --bw:1.5px;                                    /* 边框粗细（轻量化：2.5→1.5）*/
+  --r:7px; --rl:10px; --rs:6px;                  /* 圆角略增，观感更柔 */
+  --shadow:2px 2px 0 var(--line);                /* 硬阴影偏移减小：4→2 */
+  --shadow-sm:1px 1px 0 var(--line);
   --mono:'Space Mono',ui-monospace,Menlo,monospace;
   --topbar-h:56px;
 }
