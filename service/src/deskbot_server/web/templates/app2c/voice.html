@@ -5,11 +5,16 @@
 <div id="app">
   <div class="pagehd"><div><div class="eyebrow">VOICE · LIBRARY</div><h1>声音</h1><p>挑一个喜欢的音色，点试听，满意就设为当前。</p></div></div>
 
+  <div v-if="!cfg.api_key_set" class="setup-cta" role="button" tabindex="0" @click="configOpen=true">
+    <span class="setup-cta-txt"><b>还没配置 TTS Key</b><small>语音合成用的是火山引擎「语音技术」独立密钥，和大模型的方舟 Key 不是同一个，点这里展开配置 →</small></span>
+    <span class="setup-cta-btn">去配置</span>
+  </div>
+
   <section class="tts-config">
     <div class="panel-head">
       <div>
         <b>TTS 服务配置</b>
-        <small>火山引擎豆包语音 · API Key 留空表示沿用已保存配置</small>
+        <small>火山引擎语音技术 · 独立于大模型的 Ark Key，<a href="https://console.volcengine.com/speech" target="_blank" rel="noopener">在这里获取 ↗</a></small>
       </div>
       <button
         type="button"

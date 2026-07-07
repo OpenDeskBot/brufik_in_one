@@ -442,15 +442,15 @@ input[type=range]{width:100%;accent-color:var(--accent);height:6px}
   .side{display:none}
 }
 
-/* 首页：大模型未配置引导条 */
-.llm-cta{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;padding:13px 18px;
+/* 首页/声音页：配置未完成引导条 */
+.setup-cta{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;padding:13px 18px;
   background:var(--accent);color:var(--accent-ink);border:var(--bw) solid var(--line);border-radius:var(--r);
-  box-shadow:var(--shadow-sm);text-decoration:none;transition:transform .12s,box-shadow .12s}
-.llm-cta:hover{transform:translate(1px,1px);box-shadow:none}
-.llm-cta .llm-cta-txt{display:flex;flex-direction:column;gap:2px}
-.llm-cta .llm-cta-txt b{font-size:14px}
-.llm-cta .llm-cta-txt small{font-size:12px;opacity:.92}
-.llm-cta .llm-cta-btn{flex:none;background:var(--panel);color:var(--ink);border:var(--bw) solid var(--line);
+  box-shadow:var(--shadow-sm);text-decoration:none;cursor:pointer;transition:transform .12s,box-shadow .12s}
+.setup-cta:hover{transform:translate(1px,1px);box-shadow:none}
+.setup-cta .setup-cta-txt{display:flex;flex-direction:column;gap:2px}
+.setup-cta .setup-cta-txt b{font-size:14px}
+.setup-cta .setup-cta-txt small{font-size:12px;opacity:.92}
+.setup-cta .setup-cta-btn{flex:none;background:var(--panel);color:var(--ink);border:var(--bw) solid var(--line);
   border-radius:var(--rs);padding:7px 14px;font-weight:700;font-size:13px;box-shadow:var(--shadow-sm)}
 
 /* 高级页：本机大模型面板 */

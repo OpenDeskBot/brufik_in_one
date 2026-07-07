@@ -15,13 +15,13 @@
     <a class="btn ghost" href="{{ url_for('app2c.devices') }}">＋ 绑定设备</a>
   </div>
 
-  <a v-if="llmNeedsConfig" class="llm-cta" href="{{ url_for('app2c.onboarding') }}">
-    <span class="llm-cta-txt"><b>还没配置大模型</b><small>AI 表情和对话需要先配置火山方舟 Ark，点这里 1 分钟搞定 →</small></span>
-    <span class="llm-cta-btn">去配置</span>
+  <a v-if="llmNeedsConfig" class="setup-cta" href="{{ url_for('app2c.onboarding') }}">
+    <span class="setup-cta-txt"><b>还没配置大模型</b><small>AI 表情和对话需要先配置火山方舟 Ark，点这里 1 分钟搞定 →</small></span>
+    <span class="setup-cta-btn">去配置</span>
   </a>
-  <a v-else-if="!bound" class="llm-cta" href="{{ url_for('app2c.devices') }}">
-    <span class="llm-cta-txt"><b>还差最后一步：绑定设备</b><small>大模型已配置好，绑定你的第一台桌搭子就能用了 →</small></span>
-    <span class="llm-cta-btn">去绑定</span>
+  <a v-else-if="!bound" class="setup-cta" href="{{ url_for('app2c.devices') }}">
+    <span class="setup-cta-txt"><b>还差最后一步：绑定设备</b><small>大模型已配置好，绑定你的第一台桌搭子就能用了 →</small></span>
+    <span class="setup-cta-btn">去绑定</span>
   </a>
 
   <div class="homegrid">
