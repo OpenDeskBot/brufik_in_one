@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='theme_2c.css') }}?v=20260707-reset" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme_2c.css') }}?v=20260707-advtab" />
   <script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
   <style>
     .ob-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px 20px;background:var(--bg);
@@ -34,7 +34,6 @@
     .ob-field label{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--faint);text-transform:uppercase}
     .ob-field .hint{font-size:11px;color:var(--faint)}
     .ob-card .tinput{width:100%;box-sizing:border-box}
-    .ob-adv-toggle{background:none;border:none;color:var(--dim);font-family:var(--mono);font-size:11px;cursor:pointer;padding:0 0 12px;text-decoration:underline}
     .ob-result{border:var(--bw) solid var(--line);border-radius:var(--r);padding:12px 14px;margin:2px 0 16px;font-size:13px;box-shadow:var(--shadow-sm)}
     .ob-result.ok{background:var(--panel2)}
     .ob-result.err{background:var(--accent);color:var(--accent-ink)}

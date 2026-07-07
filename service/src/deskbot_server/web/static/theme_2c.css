@@ -479,3 +479,11 @@ input[type=range]{width:100%;accent-color:var(--accent);height:6px}
 .empty-banner .eb-txt{flex:1}
 .empty-banner .eb-txt b{font-size:14px;display:block}
 .empty-banner .eb-txt small{color:var(--dim);font-size:12px;display:block;margin-top:2px}
+
+/* 设备页：设备 ID 获取提示 */
+.device-id-hint{margin:10px 0 0;max-width:560px;color:var(--faint);font-size:12px;line-height:1.6}
+.device-id-hint code{font-family:var(--mono);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+
+/* 通用「低调展开」按钮：无边框、下划线，用于次要/高级选项的折叠触发 */
+.ob-adv-toggle{background:none;border:none;color:var(--dim);font-family:var(--mono);font-size:11px;
+  cursor:pointer;padding:0 0 12px;text-decoration:underline}

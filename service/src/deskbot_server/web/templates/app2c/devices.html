@@ -13,9 +13,10 @@
     </div>
   </div>
   <div style="display:flex;gap:8px;margin-top:16px;max-width:560px">
-    <input class="tinput" v-model="newId" placeholder="设备 ID" @keyup.enter="bind">
+    <input class="tinput" v-model="newId" placeholder="设备 ID，例如 deskbot_a1b2c3" @keyup.enter="bind">
     <button class="btn primary" @click="bind">＋ 绑定新设备</button>
   </div>
+  <p class="device-id-hint">设备开机联网后，屏幕上会显示它的设备 ID（形如 <code>deskbot_xxxxxx</code>），照着输入即可绑定。</p>
   <p class="lead" v-if="msg">[[ msg ]]</p>
 </div>
 {% endblock %}

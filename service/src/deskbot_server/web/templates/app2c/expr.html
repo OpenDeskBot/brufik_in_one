@@ -84,16 +84,18 @@
           </label>
         </div>
 
-        <div class="blocktitle top">面孔风格 / SKIN</div>
-        <div class="thumbs">
-          <button type="button" class="thumb" :class="{sel: i===selected}" v-for="(s,i) in scenes" :key="s.name"
-               @click="selectScene(i)">[[ s.title || s.name ]]</button>
-        </div>
+        <template v-if="scenes.length > 1">
+          <div class="blocktitle top">已保存的表情 / SWITCH</div>
+          <div class="thumbs">
+            <button type="button" class="thumb" :class="{sel: i===selected}" v-for="(s,i) in scenes" :key="s.name"
+                 @click="selectScene(i)">[[ s.title || s.name ]]</button>
+          </div>
+        </template>
         <div class="blocktitle">情绪 → 表情 / MAP</div>
         <div class="maprow" v-for="[k,emoji,label] in emotions" :key="k">
           <div class="lab"><span class="e">[[ emoji ]]</span>[[ label ]]</div>
-          <select v-model="map[k]" @change="syncSelectedMood(k)">
-            <option value="">（不指定）</option>
+          <select v-model="map[k]" @change="syncSelectedMood(k)" :disabled="noDevice">
+            <option value="">[[ noDevice ? '绑定设备后可配置' : '（不指定）' ]]</option>
             <option v-for="s in scenes" :key="s.name" :value="s.name">[[ s.title || s.name ]]</option>
           </select>
         </div>
@@ -425,6 +427,13 @@ createApp({
       this.customFace = {...DEFAULT_CUSTOM_FACE, ...(presets[name] || {})};
       this.mode = 'custom';
       this.resetPreviewPlayback();
+    },
+    normalizeMap(map){
+      // 确保每个情绪 key 都有值（哪怕是空字符串），避免 <select v-model> 绑到
+      // undefined 时匹配不到任何 <option>，在浏览器里显示成空白下拉框
+      const out = Object.assign({}, map);
+      this.emotions.forEach(([k]) => { if(out[k] === undefined) out[k] = ''; });
+      return out;
     },
     buildCustomScene(){
       const f = this.customFace || DEFAULT_CUSTOM_FACE;
@@ -807,12 +816,12 @@ createApp({
         const d = await (await fetch('/app/api/devices')).json();
         this.deviceId = d.current_device_id || '';
         this.noDevice = !this.deviceId;
-        if(!this.deviceId){ this.scenes = [this.buildCustomScene()]; return; }
+        if(!this.deviceId){ this.scenes = [this.buildCustomScene()]; this.map = this.normalizeMap({}); return; }
         const q = '?device_id='+encodeURIComponent(this.deviceId);
         const r = await (await fetch('/api/face_expr_scenes'+q)).json();
         this.scenes = (r.config && r.config.length) ? r.config : [this.buildCustomScene()];
         const m = await (await fetch('/api/emotion_expr_map'+q)).json();
-        this.map = m.map || {};
+        this.map = this.normalizeMap(m.map || {});
         const custom = (this.scenes || []).find(s => s && s.name === 'custom_face');
         if(custom) this.customFace = this.faceFromScene(custom);
         this.syncHomePreviewScene();

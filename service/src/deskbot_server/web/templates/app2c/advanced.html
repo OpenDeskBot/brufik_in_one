@@ -176,23 +176,10 @@
 
   <div class="adv-panel" v-if="active==='llm'">
     <div class="panel-head">
-      <div><b>LLM 模型</b><small>按当前设备保存模型配置</small></div>
-      <div class="btngroup">
-        <button type="button" class="btn ghost" @click="toggleAdvanced('llm')">[[ advancedOpen.llm ? '收起配置' : '展开配置' ]]</button>
-        <select v-model="currentDeviceId" @change="switchDevice">
-          <option value="">选择设备</option>
-          <option v-for="d in devices" :key="d.device_id" :value="d.device_id">[[ d.display_name ]] · [[ d.device_id ]]</option>
-        </select>
-      </div>
+      <div><b>LLM 模型</b><small>对话、AI 表情设计和图片生成用的大模型</small></div>
     </div>
 
-    <div class="llm-current">
-      <div><span>当前生效</span><b>[[ llm.active ? llm.active.display_name : (llm.error || '未配置') ]]</b></div>
-      <small v-if="llm.active">[[ llm.active.model ]] · [[ llm.active.source==='device' ? '设备自定义' : '系统默认' ]]</small>
-      <button type="button" class="btn ghost" @click="useSystemModel" :disabled="!currentDeviceId">切回系统默认</button>
-    </div>
-
-    <div class="blocktitle">本机大模型 · 火山方舟</div>
+    <div class="blocktitle top">本机大模型 · 火山方舟</div>
     <div class="setup-card">
       <div class="setup-row">
         <div><b>火山方舟 API Key</b><small>[[ setup.api_key_set ? '已配置（只保存在本机 .env，不上云）· 大模型/表情/图片共用' : '未配置' ]]</small></div>
@@ -214,17 +201,32 @@
       </div>
       <small class="setup-hint">对话与 AI 表情用这里的模型；图片生成用同一个 Key。下面的「按设备覆盖」仅高级用户需要。</small>
     </div>
-    <div class="design-warnings" v-if="llm.needs_config">
+
+    <div class="design-warnings" v-if="llm.needs_config && !setup.api_key_set">
       <b>需要配置大模型</b>
       <ul>
-        <li>[[ llm.config_message || '请展开配置，填写模型 ID 与 ARK_API_KEY，保存并设为当前。' ]]</li>
+        <li>上面先配置火山方舟 API Key；如果要给某台设备单独用不同模型，可以在下面「按设备覆盖」里配置。</li>
       </ul>
-      <div class="debug-actionbar">
-        <button type="button" class="btn primary" @click="advancedOpen.llm=true">展开配置</button>
-      </div>
     </div>
 
+    <button type="button" class="ob-adv-toggle" style="margin-top:16px" @click="toggleAdvanced('llm')">[[ advancedOpen.llm ? '收起「按设备覆盖」' : '高级：按设备覆盖某台设备的模型 ▾' ]]</button>
+
     <div v-show="advancedOpen.llm">
+      <div class="panel-head" style="margin-top:14px">
+        <div><small>选择要覆盖的设备</small></div>
+        <select v-model="currentDeviceId" @change="switchDevice">
+          <option value="">选择设备</option>
+          <option v-for="d in devices" :key="d.device_id" :value="d.device_id">[[ d.display_name ]] · [[ d.device_id ]]</option>
+        </select>
+      </div>
+
+      <div class="llm-current">
+        <div><span>当前生效</span><b>[[ llm.active ? llm.active.display_name : (llm.error || '未配置') ]]</b></div>
+        <small v-if="llm.active">[[ llm.active.model ]] · [[ llm.active.source==='device' ? '设备自定义' : '系统默认' ]]</small>
+        <button type="button" class="btn ghost" @click="useSystemModel" :disabled="!currentDeviceId">切回系统默认</button>
+      </div>
+      <p class="lead" v-if="llm.needs_config && !currentDeviceId" style="font-size:12px">[[ llm.config_message ]]</p>
+
       <form class="llm-form" @submit.prevent="saveLlmModel">
         <input class="tinput" v-model="llmForm.name" placeholder="显示名称，例如 火山方舟 豆包">
         <input class="tinput" v-model="llmForm.model_name" placeholder="模型 ID，例如 ep-xxxxxxxx">
@@ -567,7 +569,10 @@ createApp({
     },
     async load(){
       this.loading=true; this.msg='';
-      this.loadSetup();
+      const defaultTab = this.active;
+      await this.loadSetup();
+      // 新用户还没配置本机大模型时，默认打开 LLM tab 而不是空空如也的用量 tab
+      if(defaultTab==='usage' && !this.setup.api_key_set) this.active='llm';
       try{ this.applyPayload(await this.api('/api/advanced')); }
       catch(e){ this.msg=e.message||'加载失败'; }
       finally{ this.loading=false; }
