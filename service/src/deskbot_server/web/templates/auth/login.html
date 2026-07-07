@@ -1,20 +1,17 @@
 {% extends "auth_base.html" %}
-{% block page_title %}登录 · OpenDesk{% endblock %}
+{% block page_title %}登录 · BRUFIK CONSOLE{% endblock %}
 {% block content %}
 <h1>登录</h1>
-<p class="sub">使用邮箱和密码登录控制台</p>
+<p class="sub">用邮箱和密码进入控制台</p>
 <form method="post" action="{{ url_for('auth.login_post') }}">
   <input type="hidden" name="next" value="{{ next_url }}" />
   <label for="email">邮箱</label>
-  <input id="email" name="email" type="email" required autocomplete="username" value="{{ email or '' }}" />
+  <input id="email" name="email" type="email" class="tinput" required autocomplete="username" value="{{ email or '' }}" />
   <label for="password">密码</label>
-  <input id="password" name="password" type="password" required autocomplete="current-password" />
+  <input id="password" name="password" type="password" class="tinput" required autocomplete="current-password" />
   <div class="row">
-    <button type="submit" class="agent-btn">登录</button>
-    <a class="agent-btn secondary" href="{{ url_for('auth.register') }}">注册</a>
+    <button type="submit" class="btn primary">登录</button>
+    <a class="btn ghost" href="{{ url_for('auth.register') }}">注册</a>
   </div>
 </form>
-<div class="links">
-  <a href="{{ url_for('site.index') }}">返回官网</a>
-</div>
 {% endblock %}

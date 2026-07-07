@@ -1,16 +1,16 @@
 {% extends "auth_base.html" %}
-{% block page_title %}注册 · OpenDesk{% endblock %}
+{% block page_title %}注册 · BRUFIK CONSOLE{% endblock %}
 {% block content %}
 <h1>注册</h1>
 <p class="sub">创建账号，绑定设备后即可远程管理</p>
 <form method="post" action="{{ url_for('auth.register_post') }}">
   <label for="email">邮箱</label>
-  <input id="email" name="email" type="email" required value="{{ email or '' }}" />
+  <input id="email" name="email" type="email" class="tinput" required value="{{ email or '' }}" />
   <label for="password">密码（至少 8 位）</label>
-  <input id="password" name="password" type="password" required minlength="8" />
+  <input id="password" name="password" type="password" class="tinput" required minlength="8" />
   <label for="confirm_password">确认密码</label>
-  <input id="confirm_password" name="confirm_password" type="password" required minlength="8" />
-  <button type="submit" class="agent-btn">注册并登录</button>
+  <input id="confirm_password" name="confirm_password" type="password" class="tinput" required minlength="8" />
+  <button type="submit" class="btn primary">注册并登录</button>
 </form>
 <div class="links"><a href="{{ url_for('auth.login') }}">已有账号？去登录</a></div>
 {% endblock %}
