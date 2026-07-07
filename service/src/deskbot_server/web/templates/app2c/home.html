@@ -15,6 +15,11 @@
     <a class="btn ghost" href="{{ url_for('app2c.devices') }}">＋ 绑定设备</a>
   </div>
 
+  <a v-if="llmNeedsConfig" class="llm-cta" href="{{ url_for('app2c.onboarding') }}">
+    <span class="llm-cta-txt"><b>还没配置大模型</b><small>AI 表情和对话需要先配置火山方舟 Ark，点这里 1 分钟搞定 →</small></span>
+    <span class="llm-cta-btn">去配置</span>
+  </a>
+
   <div class="homegrid">
     <!-- STAGE -->
     <div class="stage">
@@ -80,7 +85,7 @@ createApp({
     greeting:'你好', owner:{{ (nav_display_name or '主人')|tojson }},
     bound:false, deviceName:'未绑定', deviceId:'',
     voiceLabel:'未设置音色', emotionCount:0, memoryCount:0, reminderCount:0, peopleCount:0, deviceCount:0,
-    scenes:[], emotionMap:{}, faceLabel:'待机',
+    scenes:[], emotionMap:{}, faceLabel:'待机', llmNeedsConfig:false,
   }; },
   computed:{
     homeFaceSvg(){
@@ -96,6 +101,9 @@ createApp({
       this.greeting = h<6?'凌晨好' : h<9?'早上好' : h<12?'上午好' : h<14?'中午好' : h<18?'下午好' : '晚上好';
     },
     async load(){
+      // 大模型是否已配置（未配置时首页顶部提示去配置）
+      const llm = await this.j('/api/setup/llm');
+      this.llmNeedsConfig = !!llm.needs_config;
       // 当前音色：火山引擎(豆包)返回 speaker id，再用音色清单解析成展示名称
       const cfg = await this.j('/api/doubao_tts/config');
       const sid = (cfg.config && cfg.config.speaker) || '';
