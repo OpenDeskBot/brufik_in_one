@@ -3,17 +3,55 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{% block page_title %}OpenDesk{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}" />
+  <title>{% block page_title %}BRUFIK CONSOLE{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme_2c.css') }}?v=20260707-auth-2c" />
+  <style>
+    .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px 20px;
+      background:var(--bg);
+      background-image:linear-gradient(var(--panel2) 1px,transparent 1px),linear-gradient(90deg,var(--panel2) 1px,transparent 1px);
+      background-size:26px 26px}
+    .auth-card{width:100%;max-width:392px;background:var(--panel);border:var(--bw) solid var(--line);
+      border-radius:var(--rl);box-shadow:var(--shadow);padding:26px 26px 24px}
+    .auth-brand{display:flex;align-items:center;gap:10px;margin-bottom:22px}
+    .auth-brand .mark{width:34px;height:34px;background:var(--accent);border:var(--bw) solid var(--line);
+      border-radius:var(--rs);display:flex;align-items:center;justify-content:center;color:var(--accent-ink);
+      font-weight:700;font-size:17px;box-shadow:var(--shadow-sm)}
+    .auth-brand .name{font-family:var(--mono);font-size:14px;letter-spacing:.1em;font-weight:700;color:var(--ink)}
+    .auth-brand .sub{font-family:var(--mono);font-size:14px;letter-spacing:.1em;color:var(--faint)}
+    .auth-card h1{font-size:26px;margin:0 0 6px;font-weight:700;letter-spacing:-.02em}
+    .auth-card .sub{margin:0 0 20px;color:var(--dim);font-size:13px}
+    .auth-card form{display:flex;flex-direction:column;gap:6px}
+    .auth-card label{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;
+      color:var(--faint);margin-top:12px;text-transform:uppercase}
+    .auth-card .tinput{width:100%;box-sizing:border-box}
+    .auth-card .row{display:flex;gap:10px;margin-top:20px}
+    .auth-card .row .btn{flex:1}
+    .auth-card form > .btn{margin-top:20px}
+    .auth-card .links{margin-top:20px;display:flex;justify-content:space-between;gap:12px;
+      font-family:var(--mono);font-size:11px;letter-spacing:.03em}
+    .auth-card .links a{color:var(--dim);text-decoration:none;border-bottom:1.5px solid transparent;padding-bottom:1px}
+    .auth-card .links a:hover{color:var(--ink);border-bottom-color:var(--accent)}
+    .flash-msg{border:var(--bw) solid var(--line);border-radius:var(--rs);padding:10px 12px;margin-bottom:16px;
+      font-size:13px;font-weight:600;box-shadow:var(--shadow-sm)}
+    .flash-msg.success{background:var(--panel2);color:var(--ink)}
+    .flash-msg.error{background:var(--accent);color:var(--accent-ink)}
+  </style>
 </head>
-<body class="agent-theme auth-page">
+<body>
   <div class="auth-wrap">
     <div class="auth-card">
-      <p class="agent-badge" style="margin-bottom:14px;">账户登录</p>
+      <div class="auth-brand">
+        <span class="mark">歪</span>
+        <span class="name">BRUFIK</span>
+        <span class="sub">CONSOLE</span>
+      </div>
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           {% for category, message in messages %}
-            <div class="flash-msg {% if category == 'error' %}error{% else %}success{% endif %}" style="margin-bottom:14px;">{{ message }}</div>
+            <div class="flash-msg {% if category == 'error' %}error{% else %}success{% endif %}">{{ message }}</div>
           {% endfor %}
         {% endif %}
       {% endwith %}
