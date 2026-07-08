@@ -19,7 +19,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='theme_2c.css') }}?v=20260708-home-dashboard">
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme_2c.css') }}?v=20260708-home-media-triptych">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -122,7 +122,7 @@
       if(!suppressModel && (llmMissing || ttsMissing)){
         var modelBody='对话、AI 表情设计、图片生成和声音都在这里统一配置。';
         if(llmMissing && !ttsMissing) modelBody='对话、AI 表情设计和图片生成需要先配置火山方舟模型。';
-        if(!llmMissing && ttsMissing) modelBody='试听和语音合成会复用火山方舟 API Key；声音复刻才需要额外凭证。';
+        if(!llmMissing && ttsMissing) modelBody='试听和语音合成需要豆包语音 API Key；声音复刻还需要额外凭证。';
         html.push(item(
           'model',
           '还没完成 AI 能力配置',

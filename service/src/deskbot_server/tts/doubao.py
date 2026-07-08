@@ -37,11 +37,11 @@ DEFAULT_SPEAKER = "zh_female_vv_uranus_bigtts"
 DEFAULT_VOICE_CLONE_RESOURCE_ID = "seed-icl-2.0"
 DEFAULT_VOICE_CLONE_URL = "https://openspeech.bytedance.com/api/v3/tts/voice_clone"
 DEFAULT_VOICE_STATUS_URL = "https://openspeech.bytedance.com/api/v3/tts/get_voice"
-SHARED_VOLCENGINE_KEY_ENV_NAMES = (
-    "ARK_API_KEY",
-    "VOLCENGINE_API_KEY",
-    "DOUBAO_API_KEY",
-    "LLM_API_KEY",
+TTS_API_KEY_ENV_NAMES = (
+    "DOUBAO_TTS_API_KEY",
+    "VOLCENGINE_TTS_API_KEY",
+    "SEED_TTS_API_KEY",
+    "BYTEPLUS_SEED_SPEECH_API_KEY",
 )
 
 
@@ -117,10 +117,7 @@ def resolve_optional_secret(incoming, fallback: str) -> str:
 
 
 def _resolve_tts_api_key() -> str:
-    specific = (os.environ.get("DOUBAO_TTS_API_KEY") or "").strip()
-    if specific:
-        return specific
-    for name in SHARED_VOLCENGINE_KEY_ENV_NAMES:
+    for name in TTS_API_KEY_ENV_NAMES:
         value = (os.environ.get(name) or "").strip()
         if value:
             return value
@@ -184,11 +181,14 @@ def _describe_ws_connect_error(exc: Exception) -> str:
         status = exc.response.status_code
         hint = ""
         if status == 401:
-            hint = "（鉴权失败：请核对火山 API Key，可用 DOUBAO_TTS_API_KEY 或 ARK_API_KEY）"
+            hint = (
+                "（鉴权失败：请核对豆包语音/Seed Speech API Key，"
+                "使用 DOUBAO_TTS_API_KEY，不要使用 ARK_API_KEY）"
+            )
         elif status == 403 and "not granted" in body:
             hint = "（资源未授权：请在控制台开通对应 Resource ID，例如 seed-tts-2.0）"
         elif status == 400 and "no token" in body:
-            hint = "（未提供 API Key：请配置火山 API Key）"
+            hint = "（未提供 API Key：请配置 DOUBAO_TTS_API_KEY）"
         detail = f"HTTP {status}"
         if body:
             detail += f": {body}"
@@ -242,7 +242,7 @@ class DoubaoTtsConnection:
         if not clean:
             raise ValueError("空文本")
         if not self._cfg.api_key:
-            raise ValueError("豆包 TTS 未配置火山 API Key")
+            raise ValueError("豆包 TTS 未配置 DOUBAO_TTS_API_KEY")
         if not self._cfg.speaker:
             raise ValueError("未设置 speaker（音色）")
 

@@ -301,7 +301,7 @@ def api_doubao_tts_config_post():
     base = load_doubao_tts_config()
     api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
     if not api_key:
-        return jsonify({"ok": False, "error": "api_key 不能为空"}), 400
+        return jsonify({"ok": False, "error": "DOUBAO_TTS_API_KEY 不能为空"}), 400
     try:
         save_doubao_tts_env(payload)
     except OSError as exc:

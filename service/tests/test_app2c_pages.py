@@ -111,7 +111,7 @@ def test_2c_advanced_json_apis(temp_db):
     assert client.delete(f"/app/api/llm-models/{model_id}?device_id=deskbot_adv").status_code == 200
 
 
-def test_2c_tts_config_reuses_system_ark_key(temp_db, monkeypatch):
+def test_2c_tts_config_does_not_reuse_system_ark_key(temp_db, monkeypatch):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
@@ -128,7 +128,26 @@ def test_2c_tts_config_reuses_system_ark_key(temp_db, monkeypatch):
     assert resp.status_code == 200
     payload = resp.get_json()
     assert payload["ok"] is True
-    assert payload["config"]["api_key_set"] is True
+    assert payload["config"]["api_key_set"] is False
+
+
+def test_2c_advanced_guides_users_to_volcengine_key_pages(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("key-guide2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "key-guide2c@example.com", "password": "password1234"})
+
+    resp = client.get("/advanced?tab=llm")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey" in html
+    assert "https://console.volcengine.com/speech/new/setting/apikeys?projectName=default" in html
+    assert "复制新建的 API Key，回到这里粘贴到输入框" in html
+    assert "不要把火山方舟 ARK_API_KEY 填到豆包语音 API Key" in html
 
 
 def test_2c_advanced_debug_is_inline_not_old_debug_links(temp_db):
@@ -192,6 +211,29 @@ def test_2c_lab_surfaces_device_runtime_features(temp_db):
     assert "devicePipelineWsBase" in html
 
 
+def test_2c_lab_restores_robot_motion_preview(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("lab-robot2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "lab-robot2c@example.com", "password": "password1234"})
+
+    resp = client.get("/lab")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert '"three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"' in html
+    assert "3D 形象" in html
+    assert 'ref="robot3dHost"' in html
+    assert "simServo" in html
+    assert "robotInit3d" in html
+    assert "_robotSyncServoAngles" in html
+    assert "animateServoPreview" in html
+    assert "drawDefaultFace" in html
+
+
 def test_2c_lab_allows_browsing_before_device_selection(temp_db):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
@@ -210,6 +252,8 @@ def test_2c_lab_allows_browsing_before_device_selection(temp_db):
     assert "this.loadPbScenes({silent:true})" in html
     assert "this.loadScenePlaybooks({silent:true})" in html
     assert "this.loadCameraMode({silent:true})" in html
+    assert "this.loadRuntimeToggles({silent:true})" in html
+    assert "async loadRuntimeToggles(options)" in html
     assert "requireDevice(options)" in html
     assert "请先选择设备" in html
 
@@ -315,14 +359,55 @@ def test_2c_home_embeds_live_camera_view_under_stage(temp_db):
 
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert 'class="leftcol"' in html
-    assert 'class="home-camera-panel"' in html
-    assert 'class="home-camera-frame"' in html
+    assert 'class="stage home-console"' in html
+    assert 'class="home-media"' in html
+    assert 'class="media-tile"' in html
+    assert "CAMERA · LIVE" in html
+    assert 'class="media-stage"' in html
     assert "摄像头画面" in html
     assert "cameraViewWsBase" in html
     assert "openHomeCamera()" in html
     assert "closeHomeCamera()" in html
     assert "debug_token" in html
+
+
+def test_2c_home_integrates_robot_motion_preview(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("home-robot2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "home-robot2c@example.com", "password": "password1234"})
+
+    resp = client.get("/home")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert '"three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"' in html
+    assert "window.__HOME_FACE__" in html
+    assert "3D 小歪" in html
+    assert 'class="home-robot-host"' in html
+    assert 'ref="homeRobot3dHost"' in html
+    assert "homeRobotInit3d" in html
+    assert "animateHomeRobotServo" in html
+    assert "playHomeRobotMotion" in html
+    assert 'href="/lab?tab=servo"' in html
+    # 3D 模型屏幕上的表情与「表情 · 当前」卡片同源，保持一致
+    assert "updateHomeRobotFace" in html
+
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "deskbot_server"
+        / "web"
+        / "static"
+        / "theme_2c.css"
+    ).read_text(encoding="utf-8")
+    assert ".home-media" in css
+    assert ".home-robot-host" in css
+    assert ".home-deck-actions" in css
+    assert ".media-stage" in css
 
 
 def test_2c_home_is_state_aware_and_drops_duplicate_nav_panels(temp_db):
@@ -420,7 +505,9 @@ def test_2c_voice_page_links_to_model_config_and_keeps_player(temp_db):
     assert "高级 · 模型配置" in html
     assert "saveTtsConfig" not in html
     assert 'ref="previewAudio"' in html
+    assert 'class="preview-audio-hidden"' in html
     assert "playPreviewAudio" in html
+    assert "浏览器拦截了自动播放" in html
 
     advanced = client.get("/advanced")
     assert advanced.status_code == 200
@@ -431,7 +518,7 @@ def test_2c_voice_page_links_to_model_config_and_keeps_player(temp_db):
     assert "saveTtsConfig" in advanced_html
 
 
-def test_2c_voice_page_exposes_full_doubao_voice_library_controls(temp_db):
+def test_2c_voice_page_collapses_doubao_voice_library_by_default(temp_db):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
@@ -446,14 +533,32 @@ def test_2c_voice_page_exposes_full_doubao_voice_library_controls(temp_db):
     html = resp.get_data(as_text=True)
     assert "优选音色" in html
     assert "只展示 2.0 可用音色，已过滤旧版、测试和不稳定音色" in html
-    assert "已显示 [[ filteredSpeakers.length ]] / [[ speakers.length ]] 个优选音色" in html
+    assert "已显示 [[ visibleSpeakers.length ]] / [[ filteredSpeakers.length ]] 个优选音色" in html
     assert "/api/doubao_tts/speakers?scope=consumer" in html
     assert "voiceSearch" in html
     assert "sceneOptions" in html
     assert "filteredSpeakers" in html
+    assert "visibleSpeakers" in html
+    assert "voiceExpanded" in html
+    assert "voiceCollapsedLimit" in html
+    assert "hiddenSpeakerCount" in html
+    assert 'v-for="v in visibleSpeakers"' in html
+    assert "展开更多音色" in html
+    assert "收起音色" in html
+
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "deskbot_server"
+        / "web"
+        / "static"
+        / "theme_2c.css"
+    ).read_text(encoding="utf-8")
+    assert ".voice-expand-row" in css
+    assert ".voice-expand-btn" in css
 
 
-def test_2c_voice_preview_controls_are_compact_and_aligned(temp_db):
+def test_2c_voice_preview_plays_inline_without_visible_audio_bar(temp_db):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
@@ -466,8 +571,10 @@ def test_2c_voice_preview_controls_are_compact_and_aligned(temp_db):
 
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert 'class="voice-preview-row compact-preview"' in html
-    assert 'class="slider-card voice-volume-card"' in html
+    assert 'class="voice-preview-row compact-preview"' not in html
+    assert 'class="slider-card voice-volume-card"' not in html
+    assert "试听音量" not in html
+    assert "preview-audio-hidden" in html
 
     css = (
         Path(__file__).resolve().parents[1]
@@ -477,12 +584,8 @@ def test_2c_voice_preview_controls_are_compact_and_aligned(temp_db):
         / "static"
         / "theme_2c.css"
     ).read_text(encoding="utf-8")
-    assert "--voice-control-h:68px" in css
-    assert ".voice-preview-row.compact-preview" in css
-    assert "grid-template-columns:minmax(280px,468px) minmax(220px,320px)" in css
-    assert ".voice-preview-row.compact-preview .preview-audio" in css
-    assert ".voice-preview-row.compact-preview .voice-volume-card" in css
-    assert "height:var(--voice-control-h)" in css
+    assert ".preview-audio-hidden" in css
+    assert ".voice-preview-row.compact-preview" not in css
 
 
 def test_2c_theme_uses_bold_retro_tokens():
@@ -508,8 +611,8 @@ def test_2c_theme_uses_bold_retro_tokens():
     assert "white-space:nowrap" in css
     assert ".topbar .tb-sub,.topbar .tb-clock{display:none}" in css
     assert ".heroes,.home-recent{grid-template-columns:1fr}" in css
-    assert ".home-camera-frame{position:relative;aspect-ratio:16/9" in css
-    assert "?v=20260708-home-dashboard" in base
+    assert ".home-media{display:grid" in css
+    assert "?v=20260708-home-media-triptych" in base
     assert "?v=20260707-modelhierarchy" in auth_base
 
 

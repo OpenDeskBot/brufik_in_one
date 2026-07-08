@@ -64,7 +64,7 @@
         <div class="blocktitle top">DOUBAO PRESETS</div>
         <h2>优选音色</h2>
         <small>只展示 2.0 可用音色，已过滤旧版、测试和不稳定音色</small>
-        <small>已显示 [[ filteredSpeakers.length ]] / [[ speakers.length ]] 个优选音色</small>
+        <small>已显示 [[ visibleSpeakers.length ]] / [[ filteredSpeakers.length ]] 个优选音色</small>
       </div>
       <div class="voice-tools">
         <input class="tinput voice-search" v-model.trim="voiceSearch" type="search" autocomplete="off" placeholder="搜索音色 / ID / 场景">
@@ -75,19 +75,10 @@
       </div>
     </div>
 
-    <div class="voice-preview-row compact-preview">
-      <audio ref="previewAudio" class="preview-audio" controls preload="none" :src="audioUrl" @ended="playing=''"></audio>
-      <div class="slider-card voice-volume-card">
-        <div class="t">
-          <span class="lab"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/></svg>试听音量</span>
-          <span class="val">[[ vol ]]%</span>
-        </div>
-        <input type="range" min="0" max="100" v-model.number="vol">
-      </div>
-    </div>
+    <audio ref="previewAudio" class="preview-audio-hidden" preload="none" :src="audioUrl" @ended="playing=''"></audio>
 
     <div class="vgrid">
-      <div class="vcard" :class="{cur: v.id===current}" v-for="v in filteredSpeakers" :key="v.id">
+      <div class="vcard" :class="{cur: v.id===current}" v-for="v in visibleSpeakers" :key="v.id">
         <span class="curtag" v-if="v.id===current">当前</span>
         <b>[[ v.label ]]</b>
         <small>[[ v.scene || '其他' ]] · [[ v.resource_id ]]</small>
@@ -97,6 +88,11 @@
           <button type="button" class="vbtn set" @click="setCurrent(v)" :disabled="v.id===current">[[ v.id===current ? '使用中' : '设为当前' ]]</button>
         </div>
       </div>
+    </div>
+    <div class="voice-expand-row" v-if="filteredSpeakers.length > visibleSpeakers.length || voiceExpanded">
+      <button type="button" class="btn ghost voice-expand-btn" @click="voiceExpanded=!voiceExpanded">
+        [[ voiceExpanded ? '收起音色' : ('展开更多音色 · 还有 ' + hiddenSpeakerCount + ' 个') ]]
+      </button>
     </div>
   </section>
   <p class="lead" v-if="msg">[[ msg ]]</p>
@@ -109,7 +105,7 @@ createApp({
   delimiters: ['[[', ']]'],
   data(){ return {
     speakers:[], current:'', playing:'', vol:80, msg:'', audioUrl:'', voiceTab:'library',
-    voiceSearch:'', activeScene:'',
+    voiceSearch:'', activeScene:'', voiceExpanded:false, voiceCollapsedLimit:8,
     cfg:{
       api_key:'', api_key_set:false, speaker:'', resource_id:'seed-tts-2.0',
       model:'seed-tts-2.0-expressive', ws_url:'wss://openspeech.bytedance.com/api/v3/tts/bidirection',
@@ -171,10 +167,28 @@ createApp({
         if(!q) return true;
         return [v.label, v.id, scene, v.description, v.resource_id].some(x => String(x || '').toLowerCase().includes(q));
       });
-    }
+    },
+    visibleSpeakers(){
+      if(this.voiceExpanded) return this.filteredSpeakers;
+      const visible = this.filteredSpeakers.slice(0, this.voiceCollapsedLimit);
+      if(this.current && !visible.some(v => v.id === this.current)){
+        const currentVoice = this.filteredSpeakers.find(v => v.id === this.current);
+        if(currentVoice){
+          if(visible.length >= this.voiceCollapsedLimit) visible.splice(visible.length - 1, 1, currentVoice);
+          else visible.push(currentVoice);
+        }
+      }
+      return visible;
+    },
+    hiddenSpeakerCount(){
+      const visibleIds = new Set(this.visibleSpeakers.map(v => v.id));
+      return this.filteredSpeakers.filter(v => !visibleIds.has(v.id)).length;
+    },
   },
   watch:{
-    vol(){ const a=this.$refs.previewAudio; if(a) a.volume=this.vol/100; }
+    vol(){ const a=this.$refs.previewAudio; if(a) a.volume=this.vol/100; },
+    voiceSearch(){ this.voiceExpanded=false; },
+    activeScene(){ this.voiceExpanded=false; },
   },
   methods:{
     async api(url, options){

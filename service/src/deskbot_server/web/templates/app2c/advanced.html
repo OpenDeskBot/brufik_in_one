@@ -188,7 +188,18 @@
             <h2>火山方舟</h2>
             <p>对话、AI 表情设计和图片生成共用这组模型配置。</p>
           </div>
-          <span class="model-status" :class="{ok: setup.api_key_set}">[[ setup.api_key_set ? '已配置' : '待配置' ]]</span>
+          <div class="secondary-actions">
+            <span class="model-status" :class="{ok: setup.api_key_set}">[[ setup.api_key_set ? '已配置' : '待配置' ]]</span>
+            <a class="btn ghost" href="https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey" target="_blank" rel="noopener">打开 Key 管理</a>
+          </div>
+        </div>
+        <div class="model-guide">
+          <b>去哪里复制？</b>
+          <ol>
+            <li>打开火山方舟控制台的 <a href="https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey" target="_blank" rel="noopener">API Key 管理</a>，新建或复制一个长效 API Key。</li>
+            <li>复制新建的 API Key，回到这里粘贴到输入框「API Key」。</li>
+            <li>这个 Key 用于对话、AI 表情设计和图片生成，保存后会写入本机配置。</li>
+          </ol>
         </div>
         <form class="llm-form model-core-form" @submit.prevent="saveSetup">
           <label class="model-field model-field-key">
@@ -217,17 +228,25 @@
           <div>
             <span class="model-step">02 · 声音能力</span>
             <h2>火山引擎语音技术</h2>
-            <p>试听和语音合成会复用火山方舟 API Key；只有声音复刻需要额外 App ID / Access Token。</p>
+            <p>试听和语音合成需要豆包语音 / Seed Speech API Key；声音复刻还需要额外 App ID / Access Token。</p>
           </div>
           <div class="secondary-actions">
             <span class="model-status" :class="{ok: tts.api_key_set}">[[ tts.api_key_set ? '已配置' : '可稍后' ]]</span>
-            <a class="btn ghost" href="https://console.volcengine.com/speech" target="_blank" rel="noopener">获取 Key</a>
+            <a class="btn ghost" href="https://console.volcengine.com/speech/new/setting/apikeys?projectName=default" target="_blank" rel="noopener">打开语音 Key 管理</a>
           </div>
+        </div>
+        <div class="model-guide">
+          <b>去哪里复制？</b>
+          <ol>
+            <li>打开豆包语音控制台的 <a href="https://console.volcengine.com/speech/new/setting/apikeys?projectName=default" target="_blank" rel="noopener">API Key 管理</a>，新建或复制 Seed Speech API Key。</li>
+            <li>复制新建的 API Key，回到这里粘贴到输入框「豆包语音 API Key」。</li>
+            <li>不要把火山方舟 ARK_API_KEY 填到豆包语音 API Key；它们不是同一个凭证。</li>
+          </ol>
         </div>
         <form class="tts-form voice-config-form" @submit.prevent="saveTtsConfig">
           <label class="model-field model-field-key">
-            <span>语音 API Key（可选覆盖）</span>
-            <input class="tinput" v-model.trim="tts.api_key" type="password" autocomplete="off" :placeholder="tts.api_key_set ? '已使用火山 API Key；留空不修改' : '默认复用上方火山方舟 API Key'">
+            <span>豆包语音 API Key</span>
+            <input class="tinput" v-model.trim="tts.api_key" type="password" autocomplete="off" :placeholder="tts.api_key_set ? '更新语音 API Key（留空则不修改）' : '粘贴 Seed Speech / DOUBAO_TTS_API_KEY，不要填 ARK_API_KEY'">
           </label>
           <button type="submit" class="btn ghost voice-save-btn" :disabled="tts.saving">[[ tts.saving ? '保存中…' : '保存声音配置' ]]</button>
           <details class="voice-advanced-fields">
@@ -249,7 +268,7 @@
         </form>
         <div class="config-state">
           <span :class="['led', tts.api_key_set ? '' : 'off']"></span>
-          <b>[[ tts.api_key_set ? '声音能力已配置' : '未检测到火山 Key' ]]</b>
+          <b>[[ tts.api_key_set ? '声音 API Key 已配置' : '未配置声音 API Key' ]]</b>
           <small>[[ tts.speaker ? ('当前音色 ' + tts.speaker) : '未设置当前音色' ]] · 复刻 [[ (tts.app_id_set && tts.access_token_set) ? '可用' : '未配置 App ID/Token' ]]</small>
         </div>
         <div class="debug-output" v-if="tts.result">
@@ -411,7 +430,7 @@
       </div>
       <div class="config-state">
         <span :class="['led', debug.tts.api_key_set ? '' : 'off']"></span>
-        <b>[[ debug.tts.api_key_set ? '声音能力已配置' : '未检测到火山 Key' ]]</b>
+        <b>[[ debug.tts.api_key_set ? '声音 API Key 已配置' : '未配置声音 API Key' ]]</b>
         <small>[[ debug.tts.model ]] · [[ debug.tts.resource_id ]]</small>
       </div>
       <div class="llm-form">

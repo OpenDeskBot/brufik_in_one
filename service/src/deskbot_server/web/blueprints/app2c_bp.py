@@ -49,6 +49,26 @@ from deskbot_server.web.session_device import get_current_device_id
 bp = Blueprint("app2c", __name__)
 
 
+def _default_robot_face_payload() -> dict:
+    from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
+    from deskbot_server.pb.shapes import _default_mouth_fallback_shape, default_face_circles
+
+    face = default_face_circles()
+    return {
+        "face_lcd_w": FACE_LCD_WIDTH,
+        "face_lcd_h": FACE_LCD_HEIGHT,
+        "expr_default_anim": {
+            "elements": {
+                "nose": face.get("nose") or [],
+                "eye_l": face.get("eye_l") or [],
+                "eye_r": face.get("eye_r") or [],
+                "mouth": (_default_mouth_fallback_shape().get("elements") or []),
+                "extra": [],
+            },
+        },
+    }
+
+
 @bp.get("/home")
 @login_required
 def home():
@@ -56,6 +76,7 @@ def home():
         "app2c/home.html",
         active_nav="home",
         camera_view_ws_base=camera_view_ws_base(),
+        **_default_robot_face_payload(),
     )
 
 
@@ -79,6 +100,7 @@ def lab():
         active_nav="lab",
         camera_view_ws_base=camera_view_ws_base(),
         device_pipeline_ws_base=device_pipeline_ws_base(),
+        **_default_robot_face_payload(),
     )
 
 

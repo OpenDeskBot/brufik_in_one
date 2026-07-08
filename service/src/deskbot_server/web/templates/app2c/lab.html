@@ -2,6 +2,20 @@
 {% block page_title %}设备实验台 · 小歪{% endblock %}
 {% block global_setup_suppress_device %}1{% endblock %}
 {% block extra_head %}
+<script>
+  window.__LAB_FACE__ = {
+    w: {{ face_lcd_w|int }},
+    h: {{ face_lcd_h|int }},
+    defaultAnim: {{ expr_default_anim|tojson }},
+  };
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
 <script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
 <style>
   .lab-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}
@@ -34,9 +48,25 @@
   .lab-table th{background:var(--panel2);font-size:11px;text-transform:uppercase}
   .lab-table tr:last-child td{border-bottom:0}
   .lab-json-input{min-height:150px;font-family:var(--mono);font-size:12px}
+  .lab-robot-panel{overflow:hidden}
+  .lab-robot-layout{display:grid;grid-template-columns:minmax(320px,1.05fr) minmax(260px,.95fr);gap:14px;align-items:stretch}
+  .lab-robot-stage{border:var(--bw) solid var(--line);border-radius:var(--r);background:#111318;box-shadow:var(--shadow-sm);min-height:260px;overflow:hidden}
+  .lab-robot-host{position:relative;width:100%;height:100%;min-height:260px;display:grid;place-items:center}
+  .lab-robot-host canvas{display:block;width:100%!important;height:100%!important}
+  .lab-robot-fallback{color:#fff;font-weight:900;margin:0;text-align:center}
+  .lab-robot-info{display:grid;align-content:space-between;gap:12px}
+  .lab-robot-kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .lab-robot-kv div{border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel2);padding:10px;min-width:0}
+  .lab-robot-kv span{display:block;color:var(--dim);font-size:11px;font-weight:900;text-transform:uppercase}
+  .lab-robot-kv b{display:block;font-family:var(--mono);font-size:18px;margin-top:4px}
+  .lab-robot-slider{border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel2);padding:12px}
+  .lab-robot-slider label{display:flex;justify-content:space-between;gap:10px;font-weight:900;margin-bottom:8px}
+  .lab-robot-slider input{width:100%}
   @media(max-width:900px){
     .lab-grid{grid-template-columns:1fr}
     .lab-form-grid,.lab-form-grid.two,.lab-kv{grid-template-columns:1fr}
+    .lab-robot-layout{grid-template-columns:1fr}
+    .lab-robot-kv{grid-template-columns:1fr}
   }
 </style>
 {% endblock %}
@@ -68,6 +98,40 @@
   <p class="lead" v-if="msg">[[ msg ]]</p>
 
   <section v-show="active==='servo'" class="lab-grid">
+    <div class="lab-panel wide lab-robot-panel">
+      <div class="lab-head">
+        <div>
+          <b>3D 形象模拟</b>
+          <small>模拟舵机 x / y 和机器人视角；下发舵机或运行预设时会同步动作预览。</small>
+        </div>
+        <button type="button" class="btn ghost" @click="robotInit3d">重新载入 3D</button>
+      </div>
+      <div class="lab-robot-layout">
+        <div class="lab-robot-stage">
+          <div ref="robot3dHost" class="lab-robot-host" aria-label="机器人 3D 预览">
+            <p v-if="robot3dError" class="lab-robot-fallback">[[ robot3dError ]]</p>
+          </div>
+        </div>
+        <div class="lab-robot-info">
+          <div class="lab-robot-kv">
+            <div><span>servo x</span><b>[[ robotServoXLabel ]]</b></div>
+            <div><span>servo y</span><b>[[ robotServoYLabel ]]</b></div>
+            <div><span>view</span><b>[[ robotViewYawLabel ]]</b></div>
+          </div>
+          <div class="lab-robot-slider">
+            <label><span>观察视角</span><span>[[ robotViewYawLabel ]]</span></label>
+            <input type="range" min="-180" max="180" step="1" v-model.number="robotViewYawDeg" aria-label="水平旋转 3D 形象">
+          </div>
+          <div class="lab-toolbar">
+            <button type="button" class="btn ghost" @click="animateServoPreview({x:90,y:90,xm:0,ym:0,ms:450})">回正模拟</button>
+            <button type="button" class="btn ghost" @click="animateServoPreview({x:-18,y:0,xm:1,ym:1,ms:360})">左看模拟</button>
+            <button type="button" class="btn ghost" @click="animateServoPreview({x:18,y:0,xm:1,ym:1,ms:360})">右看模拟</button>
+          </div>
+          <small class="lab-note">本地模拟不需要选择设备；真正下发仍会在接口调用前检查设备。</small>
+        </div>
+      </div>
+    </div>
+
     <div class="lab-panel">
       <div class="lab-head"><div><b>舵机限位与视角</b><small>读取 / 保存 servo.json，含左右视角语义和动作预设。</small></div></div>
       <div class="lab-form-grid">
@@ -275,6 +339,19 @@
 {% block scripts %}
 <script>
 const { createApp } = Vue;
+const LAB_FACE = window.__LAB_FACE__ || {};
+const FACE_LCD_W = Number(LAB_FACE.w) || 284;
+const FACE_LCD_H = Number(LAB_FACE.h) || 240;
+const EXPR_DEFAULT_ANIM = LAB_FACE.defaultAnim || {
+  elements: {
+    nose: [{shape:'circle',x:142,y:124,r:11}],
+    eye_l: [{shape:'circle',x:93,y:107,r:16}],
+    eye_r: [{shape:'circle',x:191,y:107,r:16}],
+    mouth: [{shape:'rect',x:102,y:151,w:80,h:20}],
+    extra: [],
+  },
+};
+const ROBOT_SERVO_CENTER = 90;
 function initialLabTab(){
   const allowed = ['servo','camera','scene','pb','logs'];
   const params = new URLSearchParams(window.location.search);
@@ -289,6 +366,9 @@ createApp({
     devicePipelineWsBase: {{ device_pipeline_ws_base|tojson }},
     devices:[], currentDeviceId:'',
     token:'',
+    simServo:{x:90,y:90},
+    robotViewYawDeg:0,
+    robot3dError:'',
     servo:{
       config:{x_min:0,x_max:180,y_min:0,y_max:180,x_reverse:0,y_reverse:0,perspective:'viewer'},
       presets:[],
@@ -304,6 +384,36 @@ createApp({
     },
     pipeline:{ws:null,status:'',events:[]},
   }; },
+  computed:{
+    robotServoXLabel(){
+      const x=Number(this.simServo && this.simServo.x);
+      return Number.isFinite(x) ? String(Math.round(x)) : String(ROBOT_SERVO_CENTER);
+    },
+    robotServoYLabel(){
+      const y=Number(this.simServo && this.simServo.y);
+      return Number.isFinite(y) ? String(Math.round(y)) : String(ROBOT_SERVO_CENTER);
+    },
+    robotViewYawLabel(){
+      const v=Number(this.robotViewYawDeg)||0;
+      return v.toFixed(0) + '°';
+    },
+    robotHorizDeg(){
+      const x=Number(this.simServo && this.simServo.x);
+      if(!Number.isFinite(x)) return 0;
+      return (this.servo.config.x_reverse ? -1 : 1) * (x - ROBOT_SERVO_CENTER);
+    },
+    robotVertDeg(){
+      const y=Number(this.simServo && this.simServo.y);
+      if(!Number.isFinite(y)) return 0;
+      return (this.servo.config.y_reverse ? -1 : 1) * (y - ROBOT_SERVO_CENTER);
+    },
+  },
+  watch:{
+    simServo:{deep:true,handler(){ this._robotSyncServoAngles(); }},
+    'servo.config.x_reverse'(){ this._robotSyncServoAngles(); },
+    'servo.config.y_reverse'(){ this._robotSyncServoAngles(); },
+    robotViewYawDeg(){ this._robotSyncViewYaw(); },
+  },
   methods:{
     json(v){ return JSON.stringify(v || {}, null, 2); },
     fmtBytes(n){ n=Number(n)||0; if(n>=1048576) return (n/1048576).toFixed(1)+' MB'; if(n>=1024) return (n/1024).toFixed(1)+' KB'; return n+' B'; },
@@ -335,7 +445,12 @@ createApp({
       }
       return true;
     },
-    setActive(tab){ this.active=tab; this.msg=''; if(tab==='camera') this.loadCameraMode({silent:true}); if(tab==='logs') this.loadRuntimeToggles(); },
+    setActive(tab){
+      this.active=tab; this.msg='';
+      if(tab==='servo') this.$nextTick(()=>{ if(!this._robot3d) void this.robotInit3d(); });
+      if(tab==='camera') this.loadCameraMode({silent:true});
+      if(tab==='logs') this.loadRuntimeToggles({silent:true});
+    },
     async loadDevices(){
       const d=await this.api('/app/api/devices');
       this.devices=d.devices||[];
@@ -353,7 +468,7 @@ createApp({
           this.loadServoConfig({silent:true}),
           this.loadPbScenes({silent:true}),
           this.loadScenePlaybooks({silent:true}),
-          this.loadRuntimeToggles(),
+          this.loadRuntimeToggles({silent:true}),
           this.loadCameraMode({silent:true})
         ]);
       }catch(e){ this.msg=e.message||'刷新失败'; }
@@ -387,12 +502,214 @@ createApp({
       if(!this.requireDevice()) return;
       const p=this.servo.direct;
       await this.api(this.proxyPath('/api/device_servo',{x:p.x,y:p.y,dyaw:p.x,dpitch:p.y,xm:p.xm,ym:p.ym,ms:p.ms,action:p.action,with_scene:p.with_scene}));
+      void this.animateServoPreview(p);
       this.msg='舵机命令已下发';
     },
     async runServoPreset(p){
-      const step=(p.steps&&p.steps[0])||p;
+      const steps=(Array.isArray(p.steps) && p.steps.length) ? p.steps : [p];
+      const step=steps[0]||p;
       this.servo.direct=Object.assign({}, this.servo.direct, {x:step.x??90,y:step.y??90,xm:step.xm??0,ym:step.ym??0,ms:step.ms??500});
+      void this.previewServoSteps(steps);
       await this.sendServo();
+    },
+    async previewServoSteps(steps){
+      for(const step of (steps||[])) await this.animateServoPreview(step);
+    },
+    animateServoPreview(step){
+      const p=step||{};
+      const startX=Number(this.simServo.x)||ROBOT_SERVO_CENTER;
+      const startY=Number(this.simServo.y)||ROBOT_SERVO_CENTER;
+      const xm=Number(p.xm)||0;
+      const ym=Number(p.ym)||0;
+      const rawX=Number(p.x);
+      const rawY=Number(p.y);
+      const c=this.servo.config||{};
+      const minX=Number.isFinite(Number(c.x_min)) ? Number(c.x_min) : 0;
+      const maxX=Number.isFinite(Number(c.x_max)) ? Number(c.x_max) : 180;
+      const minY=Number.isFinite(Number(c.y_min)) ? Number(c.y_min) : 0;
+      const maxY=Number.isFinite(Number(c.y_max)) ? Number(c.y_max) : 180;
+      const endX=Math.max(minX, Math.min(maxX, xm ? startX + (Number.isFinite(rawX)?rawX:0) : (Number.isFinite(rawX)?rawX:startX)));
+      const endY=Math.max(minY, Math.min(maxY, ym ? startY + (Number.isFinite(rawY)?rawY:0) : (Number.isFinite(rawY)?rawY:startY)));
+      const dur=Math.max(40, Number(p.ms)||450);
+      const seq=(this._servoPreviewSeq||0)+1;
+      this._servoPreviewSeq=seq;
+      return new Promise((resolve)=>{
+        const t0=performance.now();
+        const tick=()=>{
+          if(this._servoPreviewSeq!==seq){ resolve(); return; }
+          const t=Math.min(1, (performance.now()-t0)/dur);
+          const eased=1-Math.pow(1-t, 3);
+          this.simServo={x:startX+(endX-startX)*eased, y:startY+(endY-startY)*eased};
+          if(t<1) requestAnimationFrame(tick);
+          else resolve();
+        };
+        tick();
+      });
+    },
+    drawDefaultFace(canvas){
+      if(!canvas) return;
+      const ctx=canvas.getContext('2d');
+      if(!ctx) return;
+      ctx.fillStyle='#0d0f14';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      const el=(EXPR_DEFAULT_ANIM && EXPR_DEFAULT_ANIM.elements) || {};
+      const colors={eye_l:'#f6f5ef',eye_r:'#f6f5ef',nose:'#ffb928',mouth:'#ff5a00',extra:'#f6f5ef'};
+      for(const key of ['eye_l','eye_r','nose','mouth','extra']){
+        for(const shape of (el[key]||[])) this._drawFaceShape(ctx, shape, colors[key]||'#f6f5ef');
+      }
+    },
+    _drawFaceShape(ctx, s, color){
+      if(!s) return;
+      ctx.fillStyle=s.color||color;
+      ctx.strokeStyle=s.color||color;
+      ctx.lineWidth=Math.max(1, Number(s.line_width)||2);
+      const shape=String(s.shape||'rect').toLowerCase();
+      if(shape==='circle'){
+        ctx.beginPath();
+        ctx.arc(Number(s.x)||0, Number(s.y)||0, Math.max(1, Number(s.r)||4), 0, Math.PI*2);
+        ctx.fill();
+        return;
+      }
+      if(shape==='line'){
+        ctx.beginPath();
+        ctx.moveTo(Number(s.x1 ?? s.x)||0, Number(s.y1 ?? s.y)||0);
+        ctx.lineTo(Number(s.x2 ?? s.x)||0, Number(s.y2 ?? s.y)||0);
+        ctx.stroke();
+        return;
+      }
+      const x=Number(s.x)||0, y=Number(s.y)||0, w=Math.max(1, Number(s.w)||12), h=Math.max(1, Number(s.h)||6);
+      if(shape==='rect_outline') ctx.strokeRect(x,y,w,h);
+      else ctx.fillRect(x,y,w,h);
+    },
+    async _ensureThreeLoaded(){
+      if(window.__THREE__) return window.__THREE__;
+      if(!this._threeLoadPromise){
+        this._threeLoadPromise=import('three').then((mod)=>{ window.__THREE__=mod; return mod; }).catch((e)=>{ this._threeLoadPromise=null; throw e; });
+      }
+      return this._threeLoadPromise;
+    },
+    _robotMakeForwardArrow(THREE){
+      const mat=new THREE.MeshStandardMaterial({color:0x30d158,metalness:0.05,roughness:0.45});
+      const group=new THREE.Group();
+      const shaft=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,0.55,10), mat);
+      shaft.rotation.x=Math.PI/2; shaft.position.set(0,0.015,0.28); group.add(shaft);
+      const tip=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.2,10), mat);
+      tip.rotation.x=Math.PI/2; tip.position.set(0,0.015,0.62); group.add(tip);
+      group.position.set(0,0.005,1.05);
+      return group;
+    },
+    _robotSyncServoAngles(){
+      const st=this._robot3d;
+      const THREE=window.__THREE__;
+      if(!st || !st.headPivot || !THREE) return;
+      st.targetHeadYaw=THREE.MathUtils.degToRad(this.robotHorizDeg);
+      st.targetHeadPitch=THREE.MathUtils.degToRad(this.robotVertDeg);
+    },
+    _robotSyncViewYaw(){
+      const st=this._robot3d;
+      const THREE=window.__THREE__;
+      if(!st || !st.turntable || !THREE) return;
+      st.turntable.rotation.y=THREE.MathUtils.degToRad(Number(this.robotViewYawDeg)||0);
+    },
+    _robotDispose3d(){
+      if(this._robotAnimId){ cancelAnimationFrame(this._robotAnimId); this._robotAnimId=null; }
+      if(this._robotResizeObs){ try{ this._robotResizeObs.disconnect(); }catch(_e){} this._robotResizeObs=null; }
+      const st=this._robot3d;
+      if(st && st.renderer){
+        if(st.faceTexture){ try{ st.faceTexture.dispose(); }catch(_e){} }
+        try{ st.renderer.dispose(); }catch(_e){}
+        if(st.renderer.domElement && st.renderer.domElement.parentNode) st.renderer.domElement.parentNode.removeChild(st.renderer.domElement);
+      }
+      this._robot3d=null;
+    },
+    async robotInit3d(){
+      this._robotDispose3d();
+      this.robot3dError='';
+      const host=this.$refs.robot3dHost;
+      if(!host) return;
+      let THREE;
+      try{ THREE=await this._ensureThreeLoaded(); }
+      catch(_e){ this.robot3dError='Three.js 加载失败'; return; }
+      let renderer;
+      try{ renderer=new THREE.WebGLRenderer({antialias:true,alpha:false,preserveDrawingBuffer:true}); }
+      catch(_e){ this.robot3dError='WebGL 不可用'; return; }
+
+      const w=Math.max(160, host.clientWidth||360);
+      const h=Math.max(160, host.clientHeight||260);
+      const scene=new THREE.Scene();
+      scene.background=new THREE.Color(0x111318);
+      const camera=new THREE.PerspectiveCamera(38, w/h, 0.08, 50);
+      camera.position.set(0,0.92,2.65);
+      camera.lookAt(0,0.78,0);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+      renderer.setSize(w,h,false);
+      host.appendChild(renderer.domElement);
+
+      scene.add(new THREE.AmbientLight(0xffffff,0.7));
+      const key=new THREE.DirectionalLight(0xffffff,0.95);
+      key.position.set(1.5,3.5,2.5); scene.add(key);
+      const rim=new THREE.DirectionalLight(0xff7a1a,0.35);
+      rim.position.set(-2,1.2,-1.5); scene.add(rim);
+      scene.add(new THREE.GridHelper(2.4,8,0x55565d,0x25272f));
+      scene.add(this._robotMakeForwardArrow(THREE));
+
+      const turntable=new THREE.Group();
+      scene.add(turntable);
+      const bodyMat=new THREE.MeshStandardMaterial({color:0x4f535a,roughness:0.58,metalness:0.18});
+      const headMat=new THREE.MeshStandardMaterial({color:0xf6f5ef,roughness:0.42,metalness:0.06});
+      const neckMat=new THREE.MeshStandardMaterial({color:0xff5a00,roughness:0.36,metalness:0.18});
+      const base=new THREE.Mesh(new THREE.CylinderGeometry(0.55,0.62,0.07,24), new THREE.MeshStandardMaterial({color:0x25272f,roughness:0.58}));
+      base.position.y=-0.02; turntable.add(base);
+      const body=new THREE.Mesh(new THREE.BoxGeometry(0.82,0.62,0.52), bodyMat);
+      body.position.y=0.28; turntable.add(body);
+      const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.12,0.22,16), neckMat);
+      neck.position.y=0.66; turntable.add(neck);
+      const headPivot=new THREE.Group();
+      headPivot.position.y=0.8; turntable.add(headPivot);
+      const head=new THREE.Mesh(new THREE.BoxGeometry(0.62,0.5,0.54), headMat);
+      head.position.y=0.22; headPivot.add(head);
+
+      const faceCanvas=document.createElement('canvas');
+      faceCanvas.width=FACE_LCD_W; faceCanvas.height=FACE_LCD_H;
+      this.drawDefaultFace(faceCanvas);
+      const faceTexture=new THREE.CanvasTexture(faceCanvas);
+      faceTexture.magFilter=THREE.NearestFilter;
+      faceTexture.minFilter=THREE.NearestFilter;
+      const faceScreen=new THREE.Mesh(
+        new THREE.PlaneGeometry(0.42,0.42*FACE_LCD_H/FACE_LCD_W),
+        new THREE.MeshBasicMaterial({map:faceTexture,toneMapped:false}),
+      );
+      faceScreen.position.set(0,0.22,0.272);
+      headPivot.add(faceScreen);
+
+      this._robot3d={scene,camera,renderer,turntable,headPivot,faceCanvas,faceTexture,currentHeadYaw:0,currentHeadPitch:0,targetHeadYaw:0,targetHeadPitch:0};
+      this._robotSyncServoAngles();
+      this._robotSyncViewYaw();
+      const resize=()=>{
+        const st=this._robot3d;
+        if(!st || !host) return;
+        const rw=Math.max(160, host.clientWidth||360);
+        const rh=Math.max(160, host.clientHeight||260);
+        st.camera.aspect=rw/rh;
+        st.camera.updateProjectionMatrix();
+        st.renderer.setSize(rw,rh,false);
+      };
+      if(typeof ResizeObserver!=='undefined'){
+        this._robotResizeObs=new ResizeObserver(()=>resize());
+        this._robotResizeObs.observe(host);
+      }
+      const tick=()=>{
+        const st=this._robot3d;
+        if(!st) return;
+        st.currentHeadYaw+=(st.targetHeadYaw-st.currentHeadYaw)*0.2;
+        st.currentHeadPitch+=(st.targetHeadPitch-st.currentHeadPitch)*0.2;
+        st.headPivot.rotation.order='YXZ';
+        st.headPivot.rotation.y=st.currentHeadYaw;
+        st.headPivot.rotation.x=st.currentHeadPitch;
+        st.renderer.render(st.scene, st.camera);
+        this._robotAnimId=requestAnimationFrame(tick);
+      };
+      tick();
     },
     async openCamera(){
       if(!this.requireDevice()) return;
@@ -501,7 +818,8 @@ createApp({
       await this.api(this.proxyPath('/api/device_tts'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:this.currentDeviceId,text:this.pb.ttsText,scene:this.pb.ttsScene})});
       this.msg='TTS 已提交下发';
     },
-    async loadRuntimeToggles(){
+    async loadRuntimeToggles(options){
+      if(!this.requireDevice(options)) return;
       try{ const a=await this.api(this.proxyPath('/api/asr_auto_reply')); this.toggles.asr_auto_reply=!!a.enabled; }catch(_e){}
       try{ const p=await this.api(this.proxyPath('/api/pb_idle_auto_dispatch')); this.toggles.pb_idle_auto_dispatch=!!p.enabled; }catch(_e){}
     },
@@ -529,8 +847,15 @@ createApp({
       this.pipeline.status='snapshot';
     },
   },
-  async mounted(){ await this.loadAll(); },
-  beforeUnmount(){ this.closeCamera(); if(this.pipeline.ws) this.pipeline.ws.close(); },
+  async mounted(){
+    await this.loadAll();
+    this.$nextTick(()=>{ void this.robotInit3d(); });
+  },
+  beforeUnmount(){
+    this.closeCamera();
+    if(this.pipeline.ws) this.pipeline.ws.close();
+    this._robotDispose3d();
+  },
 }).mount('#labApp');
 </script>
 {% endblock %}

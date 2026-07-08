@@ -650,7 +650,7 @@ def api_tts_config_post():
     base = load_doubao_tts_config()
     api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
     if not api_key:
-        return jsonify({"ok": False, "error": "api_key 不能为空"}), 400
+        return jsonify({"ok": False, "error": "DOUBAO_TTS_API_KEY 不能为空"}), 400
     try:
         save_doubao_tts_env(payload)
     except OSError as exc:
@@ -685,7 +685,7 @@ def api_tts_preview():
         return jsonify({"ok": False, "error": "试听文本不能为空"}), 400
     cfg = _tts_cfg_from_payload(payload)
     if not cfg.api_key:
-        return jsonify({"ok": False, "error": "请先配置火山 API Key"}), 400
+        return jsonify({"ok": False, "error": "请先配置豆包语音 API Key（DOUBAO_TTS_API_KEY）"}), 400
     try:
         result = asyncio.run(synthesize_doubao_tts(text, cfg))
     except ValueError as exc:

@@ -1,6 +1,20 @@
 {% extends "base_2c.html" %}
 {% block page_title %}家 · 小歪{% endblock %}
 {% block extra_head %}
+<script>
+  window.__HOME_FACE__ = {
+    w: {{ face_lcd_w|int }},
+    h: {{ face_lcd_h|int }},
+    defaultAnim: {{ expr_default_anim|tojson }},
+  };
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
 <script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
 <script src="{{ url_for('static', filename='face_preview_2c.js') }}"></script>
 {% endblock %}
@@ -15,110 +29,136 @@
     <a v-if="!bound" class="btn ghost" href="{{ url_for('app2c.devices') }}">＋ 绑定设备</a>
   </div>
 
-  <div class="homegrid">
-    <!-- STAGE -->
-    <div class="leftcol">
-      <div class="stage">
-        <div class="brackets"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
-        <div class="stage-hd">
-          <span class="unit">UNIT · [[ deviceName ]]</span>
-          <span class="uid">[[ deviceId || '未绑定' ]]</span>
-        </div>
-        <div class="stage-mid">
-          <div class="face">
-            <div class="scanline"></div>
-            <svg width="240" height="200" viewBox="0 0 284 240" v-html="homeFaceSvg" aria-hidden="true"></svg>
-          </div>
-        </div>
-        <div class="readouts">
-          <a class="readout" href="{{ url_for('app2c.devices') }}"><span class="k">STATUS</span><span class="v"><span class="led" :style="bound ? null : 'background:#9a9a90'"></span>[[ bound ? '在线' : '未连接' ]]</span></a>
-          <a class="readout" href="{{ url_for('app2c.voice') }}"><span class="k">VOICE</span><span class="v">[[ voiceLabel ]]</span></a>
-          <a class="readout" href="{{ url_for('app2c.expr') }}"><span class="k">MOOD</span><span class="v">[[ faceLabel ]]</span></a>
-          <a class="readout" href="{{ url_for('app2c.memories') }}"><span class="k">MEMORY</span><span class="v">[[ memoryCount ]] 件</span></a>
+  <!-- 设备主控台：表情 / 3D / 摄像头 三块等大 + 读数 + 操作 -->
+  <div class="stage home-console">
+    <div class="brackets"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
+    <div class="stage-hd">
+      <span class="unit">UNIT · [[ deviceName ]]</span>
+      <span class="uid">[[ deviceId || '未绑定' ]]</span>
+    </div>
+
+    <div class="home-media">
+      <!-- 表情 -->
+      <div class="media-tile" aria-label="当前表情">
+        <div class="media-hd"><span>表情 · 当前</span><b>[[ faceLabel ]]</b></div>
+        <div class="media-stage">
+          <div class="face"><div class="scanline"></div><svg viewBox="0 0 284 240" v-html="homeFaceSvg" aria-hidden="true"></svg></div>
         </div>
       </div>
-
-      <section class="home-camera-panel" aria-label="摄像头画面">
-        <div class="home-camera-head">
-          <div><span>CAMERA · LIVE</span><b>摄像头画面</b></div>
-          <a href="{{ url_for('app2c.lab') }}?tab=camera">打开实验台</a>
+      <!-- 3D 模型 -->
+      <div class="media-tile" aria-label="3D 小歪状态模拟">
+        <div class="media-hd"><span>3D · SIM</span><b>小歪</b></div>
+        <div class="media-stage">
+          <div class="home-robot-host" ref="homeRobot3dHost">
+            <p v-if="homeRobotError" class="home-robot-fallback">[[ homeRobotError ]]</p>
+          </div>
         </div>
-        <div class="home-camera-frame">
+      </div>
+      <!-- 摄像头 -->
+      <div class="media-tile" aria-label="摄像头画面">
+        <div class="media-hd"><span>CAMERA · LIVE</span><a href="{{ url_for('app2c.lab') }}?tab=camera">打开实验台</a></div>
+        <div class="media-stage">
           <img v-if="camera.imageUrl" :src="camera.imageUrl" alt="摄像头实时画面">
           <div v-else class="home-camera-empty">
             <b>[[ camera.statusText ]]</b>
             <small>[[ bound ? '等待设备上行 camera_view 画面' : '绑定并选择设备后显示实时画面' ]]</small>
           </div>
         </div>
-      </section>
-    </div>
-
-    <!-- RIGHT -->
-    <div class="rightcol">
-      <!-- 主创作动作：任何状态都能进入 -->
-      <div class="heroes">
-        <a class="hero" href="{{ url_for('app2c.expr') }}">
-          <div class="emoji"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg></div>
-          <div><b>捏表情</b><span>换张脸 · 配情绪</span><small class="hero-subtle">含表情包生成</small></div>
-        </a>
-        <a class="hero" href="{{ url_for('app2c.voice') }}">
-          <div class="emoji"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/><path d="M19 6a8 8 0 010 12"/></svg></div>
-          <div><b>调声音</b><span>挑音色 · 试听</span></div>
-        </a>
       </div>
-
-      <!-- 状态 A：还没配置好 → 上手清单（引导下一步，而非罗列全部入口） -->
-      <section v-if="setupIncomplete" class="home-setup" aria-label="上手清单">
-        <div class="home-setup-hd"><span>GET STARTED</span><b>让小歪活起来，还差几步</b></div>
-        <a class="setup-step" :class="{done: !llmMissing}" href="{{ url_for('app2c.advanced') }}?tab=llm">
-          <span class="step-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></span>
-          <span class="step-copy"><b>配置对话模型</b><small>火山方舟 API Key · 本地保存，不上云</small></span>
-          <span class="step-state">[[ llmMissing ? '去配置' : '已完成' ]]</span>
-        </a>
-        <a class="setup-step" :class="{done: !ttsMissing}" href="{{ url_for('app2c.advanced') }}?tab=llm">
-          <span class="step-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></span>
-          <span class="step-copy"><b>选择声音能力</b><small>普通语音复用火山方舟 API Key；复刻才需额外凭证</small></span>
-          <span class="step-state">[[ ttsMissing ? '去配置' : '已完成' ]]</span>
-        </a>
-        <a class="setup-step" :class="{done: bound}" href="{{ url_for('app2c.devices') }}">
-          <span class="step-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></span>
-          <span class="step-copy"><b>绑定你的小歪</b><small>绑定后表情、声音、记忆才会同步到设备</small></span>
-          <span class="step-state">[[ bound ? '已完成' : '去绑定' ]]</span>
-        </a>
-      </section>
-
-      <!-- 状态 B：已配置 → 最近动态（展示内容，而非重复入口和空数字） -->
-      <section v-else class="home-recent" aria-label="最近动态">
-        <a class="recent-block" href="{{ url_for('app2c.memories') }}">
-          <div class="recent-hd"><span>MEMORY</span><b>它记得的事</b><i>[[ memoryCount ]]</i></div>
-          <ul v-if="recentMemories.length" class="recent-list">
-            <li v-for="m in recentMemories" :key="m.id">[[ m.text ]]</li>
-          </ul>
-          <p v-else class="recent-empty">还没有记忆，多和它聊聊，它会记住重要的事。</p>
-        </a>
-        <a class="recent-block" href="{{ url_for('app2c.people') }}">
-          <div class="recent-hd"><span>FACES</span><b>认识的人</b><i>[[ peopleCount ]]</i></div>
-          <div v-if="recentPeople.length" class="avatar-row">
-            <span v-for="p in recentPeople" :key="p.person_id" class="avatar" :title="p.name || ('#'+p.person_id)">[[ (p.name||'?').slice(0,1) ]]</span>
-          </div>
-          <p v-else class="recent-empty">还没有认识的人，让它用摄像头看看你。</p>
-        </a>
-        <a class="recent-block" href="{{ url_for('app2c.reminders') }}">
-          <div class="recent-hd"><span>NEXT</span><b>下一个提醒</b><i>[[ reminderCount ]]</i></div>
-          <div v-if="nextReminder" class="recent-next">
-            <b>[[ nextReminder.description || nextReminder.title || '提醒' ]]</b>
-            <small>下次 [[ nextReminder.next_run_at || nextReminder.cron_expr || nextReminder.cron || '' ]]</small>
-          </div>
-          <p v-else class="recent-empty">还没有提醒，去设一个吧。</p>
-        </a>
-      </section>
     </div>
+
+    <div class="home-deck">
+      <div class="readouts">
+        <a class="readout" href="{{ url_for('app2c.devices') }}"><span class="k">STATUS</span><span class="v"><span class="led" :style="bound ? null : 'background:#9a9a90'"></span>[[ bound ? '在线' : '未连接' ]]</span></a>
+        <a class="readout" href="{{ url_for('app2c.voice') }}"><span class="k">VOICE</span><span class="v">[[ voiceLabel ]]</span></a>
+        <a class="readout" href="{{ url_for('app2c.expr') }}"><span class="k">MOOD</span><span class="v">[[ faceLabel ]]</span></a>
+        <a class="readout" href="{{ url_for('app2c.memories') }}"><span class="k">MEMORY</span><span class="v">[[ memoryCount ]] 件</span></a>
+      </div>
+      <div class="home-deck-actions">
+        <button type="button" class="btn ghost" @click="playHomeRobotMotion">打招呼</button>
+        <a class="btn ghost" href="{{ url_for('app2c.lab') }}?tab=servo">舵机实验台</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 玩法 + 引导 -->
+  <div class="home-bottom">
+    <!-- 主创作动作：任何状态都能进入 -->
+    <div class="heroes heroes-stack">
+      <a class="hero" href="{{ url_for('app2c.expr') }}">
+        <div class="emoji"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg></div>
+        <div><b>捏表情</b><span>换张脸 · 配情绪</span><small class="hero-subtle">含表情包生成</small></div>
+      </a>
+      <a class="hero" href="{{ url_for('app2c.voice') }}">
+        <div class="emoji"><svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/><path d="M19 6a8 8 0 010 12"/></svg></div>
+        <div><b>调声音</b><span>挑音色 · 试听</span></div>
+      </a>
+    </div>
+
+    <!-- 状态 A：还没配置好 → 上手清单（引导下一步，而非罗列全部入口） -->
+    <section v-if="setupIncomplete" class="home-setup" aria-label="上手清单">
+      <div class="home-setup-hd"><span>GET STARTED</span><b>让小歪活起来，还差几步</b></div>
+      <a class="setup-step" :class="{done: !llmMissing}" href="{{ url_for('app2c.advanced') }}?tab=llm">
+        <span class="step-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></span>
+        <span class="step-copy"><b>配置对话模型</b><small>火山方舟 API Key · 本地保存，不上云</small></span>
+        <span class="step-state">[[ llmMissing ? '去配置' : '已完成' ]]</span>
+      </a>
+      <a class="setup-step" :class="{done: !ttsMissing}" href="{{ url_for('app2c.advanced') }}?tab=llm">
+        <span class="step-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></span>
+        <span class="step-copy"><b>选择声音能力</b><small>试听和语音合成需要豆包语音 API Key；复刻还需额外凭证</small></span>
+        <span class="step-state">[[ ttsMissing ? '去配置' : '已完成' ]]</span>
+      </a>
+      <a class="setup-step" :class="{done: bound}" href="{{ url_for('app2c.devices') }}">
+        <span class="step-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></span>
+        <span class="step-copy"><b>绑定你的小歪</b><small>绑定后表情、声音、记忆才会同步到设备</small></span>
+        <span class="step-state">[[ bound ? '已完成' : '去绑定' ]]</span>
+      </a>
+    </section>
+
+    <!-- 状态 B：已配置 → 最近动态（展示内容，而非重复入口和空数字） -->
+    <section v-else class="home-recent" aria-label="最近动态">
+      <a class="recent-block" href="{{ url_for('app2c.memories') }}">
+        <div class="recent-hd"><span>MEMORY</span><b>它记得的事</b><i>[[ memoryCount ]]</i></div>
+        <ul v-if="recentMemories.length" class="recent-list">
+          <li v-for="m in recentMemories" :key="m.id">[[ m.text ]]</li>
+        </ul>
+        <p v-else class="recent-empty">还没有记忆，多和它聊聊，它会记住重要的事。</p>
+      </a>
+      <a class="recent-block" href="{{ url_for('app2c.people') }}">
+        <div class="recent-hd"><span>FACES</span><b>认识的人</b><i>[[ peopleCount ]]</i></div>
+        <div v-if="recentPeople.length" class="avatar-row">
+          <span v-for="p in recentPeople" :key="p.person_id" class="avatar" :title="p.name || ('#'+p.person_id)">[[ (p.name||'?').slice(0,1) ]]</span>
+        </div>
+        <p v-else class="recent-empty">还没有认识的人，让它用摄像头看看你。</p>
+      </a>
+      <a class="recent-block" href="{{ url_for('app2c.reminders') }}">
+        <div class="recent-hd"><span>NEXT</span><b>下一个提醒</b><i>[[ reminderCount ]]</i></div>
+        <div v-if="nextReminder" class="recent-next">
+          <b>[[ nextReminder.description || nextReminder.title || '提醒' ]]</b>
+          <small>下次 [[ nextReminder.next_run_at || nextReminder.cron_expr || nextReminder.cron || '' ]]</small>
+        </div>
+        <p v-else class="recent-empty">还没有提醒，去设一个吧。</p>
+      </a>
+    </section>
   </div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 const { createApp } = Vue;
+const HOME_FACE = window.__HOME_FACE__ || {};
+const HOME_FACE_LCD_W = Number(HOME_FACE.w) || 284;
+const HOME_FACE_LCD_H = Number(HOME_FACE.h) || 240;
+const HOME_EXPR_DEFAULT_ANIM = HOME_FACE.defaultAnim || {
+  elements: {
+    nose: [{shape:'circle',x:142,y:124,r:11}],
+    eye_l: [{shape:'circle',x:93,y:107,r:16}],
+    eye_r: [{shape:'circle',x:191,y:107,r:16}],
+    mouth: [{shape:'rect',x:102,y:151,w:80,h:20}],
+    extra: [],
+  },
+};
+const HOME_ROBOT_CENTER = 90;
 createApp({
   delimiters: ['[[', ']]'],
   data(){ return {
@@ -128,6 +168,7 @@ createApp({
     voiceLabel:'未设置音色', emotionCount:0, memoryCount:0, reminderCount:0, peopleCount:0, deviceCount:0,
     recentMemories:[], recentPeople:[], nextReminder:null,
     scenes:[], emotionMap:{}, faceLabel:'待机',
+    homeRobotError:'', homeRobotServo:{x:90,y:90},
     cameraViewWsBase: {{ camera_view_ws_base|tojson }},
     debugToken:'',
     camera:{ws:null,status:'idle',statusText:'选择设备后显示摄像头画面',imageUrl:'',frameBytes:0},
@@ -139,6 +180,14 @@ createApp({
       const preview = window.DeskbotFacePreview;
       if(!preview) return '';
       return preview.sceneToSvg(preview.pickScene(this.scenes, this.emotionMap, 'idle'));
+    },
+    homeRobotYawDeg(){
+      const x = Number(this.homeRobotServo && this.homeRobotServo.x);
+      return Number.isFinite(x) ? x - HOME_ROBOT_CENTER : 0;
+    },
+    homeRobotPitchDeg(){
+      const y = Number(this.homeRobotServo && this.homeRobotServo.y);
+      return Number.isFinite(y) ? y - HOME_ROBOT_CENTER : 0;
     },
   },
   methods:{
@@ -193,6 +242,244 @@ createApp({
       const h=new Date().getHours();
       this.greeting = h<6?'凌晨好' : h<9?'早上好' : h<12?'上午好' : h<14?'中午好' : h<18?'下午好' : '晚上好';
     },
+    drawHomeRobotFace(canvas){
+      if(!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if(!ctx) return;
+      ctx.fillStyle = '#0d0f14';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const elements = (HOME_EXPR_DEFAULT_ANIM && HOME_EXPR_DEFAULT_ANIM.elements) || {};
+      const colors = {eye_l:'#f6f5ef', eye_r:'#f6f5ef', nose:'#ffb928', mouth:'#ff5a00', extra:'#f6f5ef'};
+      for(const key of ['eye_l','eye_r','nose','mouth','extra']){
+        for(const shape of (elements[key] || [])) this.drawHomeRobotShape(ctx, shape, colors[key] || '#f6f5ef');
+      }
+    },
+    drawHomeRobotShape(ctx, shape, color){
+      if(!shape) return;
+      const kind = String(shape.shape || 'rect').toLowerCase();
+      ctx.fillStyle = shape.color || color;
+      ctx.strokeStyle = shape.color || color;
+      ctx.lineWidth = Math.max(1, Number(shape.line_width) || 2);
+      if(kind === 'circle'){
+        ctx.beginPath();
+        ctx.arc(Number(shape.x) || 0, Number(shape.y) || 0, Math.max(1, Number(shape.r) || 4), 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+      if(kind === 'line'){
+        ctx.beginPath();
+        ctx.moveTo(Number(shape.x1 ?? shape.x) || 0, Number(shape.y1 ?? shape.y) || 0);
+        ctx.lineTo(Number(shape.x2 ?? shape.x) || 0, Number(shape.y2 ?? shape.y) || 0);
+        ctx.stroke();
+        return;
+      }
+      const x = Number(shape.x) || 0, y = Number(shape.y) || 0;
+      const w = Math.max(1, Number(shape.w) || 12), h = Math.max(1, Number(shape.h) || 6);
+      if(kind === 'rect_outline') ctx.strokeRect(x, y, w, h);
+      else ctx.fillRect(x, y, w, h);
+    },
+    updateHomeRobotFace(){
+      // 3D 模型屏幕上的表情与「表情 · 当前」卡片保持一致：直接把同一份 homeFaceSvg 光栅化到贴图
+      const state = this._homeRobot3d;
+      if(!state || !state.faceCanvas || !state.faceTexture) return;
+      const inner = this.homeFaceSvg;
+      if(!inner){ return; } // 预览组件还没就绪时保留初始绘制
+      const cv = state.faceCanvas;
+      // viewBox 与「表情 · 当前」卡片一致（284×240 设计坐标系），确保两处表情完全相同
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + cv.width + '" height="' + cv.height + '" viewBox="0 0 284 240" preserveAspectRatio="xMidYMid meet">'
+        + '<rect width="284" height="240" fill="#0d0f14"/>' + inner + '</svg>';
+      const img = new Image();
+      img.onload = () => {
+        const st = this._homeRobot3d;
+        if(!st || st.faceCanvas !== cv) return; // 已销毁或被替换
+        const ctx = cv.getContext('2d');
+        if(!ctx) return;
+        ctx.clearRect(0, 0, cv.width, cv.height);
+        ctx.drawImage(img, 0, 0, cv.width, cv.height);
+        st.faceTexture.needsUpdate = true;
+      };
+      img.onerror = () => {};
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    },
+    async ensureHomeThree(){
+      if(window.__HOME_THREE__) return window.__HOME_THREE__;
+      if(!this._homeThreePromise){
+        this._homeThreePromise = import('three').then((mod) => {
+          window.__HOME_THREE__ = mod;
+          return mod;
+        }).catch((e) => {
+          this._homeThreePromise = null;
+          throw e;
+        });
+      }
+      return this._homeThreePromise;
+    },
+    makeHomeForwardArrow(THREE){
+      const mat = new THREE.MeshStandardMaterial({color:0x30d158,metalness:0.05,roughness:0.45});
+      const group = new THREE.Group();
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,0.55,10), mat);
+      shaft.rotation.x = Math.PI / 2;
+      shaft.position.set(0,0.015,0.28);
+      group.add(shaft);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.09,0.2,10), mat);
+      tip.rotation.x = Math.PI / 2;
+      tip.position.set(0,0.015,0.62);
+      group.add(tip);
+      group.position.set(0,0.005,1.05);
+      return group;
+    },
+    syncHomeRobotServo(){
+      const state = this._homeRobot3d;
+      const THREE = window.__HOME_THREE__;
+      if(!state || !state.headPivot || !THREE) return;
+      state.targetHeadYaw = THREE.MathUtils.degToRad(this.homeRobotYawDeg);
+      state.targetHeadPitch = THREE.MathUtils.degToRad(this.homeRobotPitchDeg);
+    },
+    disposeHomeRobot3d(){
+      if(this._homeRobotAnimId){ cancelAnimationFrame(this._homeRobotAnimId); this._homeRobotAnimId = null; }
+      if(this._homeRobotResizeObs){ try{ this._homeRobotResizeObs.disconnect(); }catch(_e){} this._homeRobotResizeObs = null; }
+      const state = this._homeRobot3d;
+      if(state && state.renderer){
+        if(state.faceTexture){ try{ state.faceTexture.dispose(); }catch(_e){} }
+        try{ state.renderer.dispose(); }catch(_e){}
+        if(state.renderer.domElement && state.renderer.domElement.parentNode){
+          state.renderer.domElement.parentNode.removeChild(state.renderer.domElement);
+        }
+      }
+      this._homeRobot3d = null;
+    },
+    async homeRobotInit3d(){
+      this.disposeHomeRobot3d();
+      this.homeRobotError = '';
+      const host = this.$refs.homeRobot3dHost;
+      if(!host) return;
+      let THREE;
+      try{ THREE = await this.ensureHomeThree(); }
+      catch(_e){ this.homeRobotError = 'Three.js 加载失败'; return; }
+      let renderer;
+      try{ renderer = new THREE.WebGLRenderer({antialias:true,alpha:false,preserveDrawingBuffer:true}); }
+      catch(_e){ this.homeRobotError = 'WebGL 不可用'; return; }
+
+      const w = Math.max(180, host.clientWidth || 420);
+      const h = Math.max(180, host.clientHeight || 300);
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x111318);
+      const camera = new THREE.PerspectiveCamera(38, w / h, 0.08, 50);
+      camera.position.set(0,0.92,2.65);
+      camera.lookAt(0,0.78,0);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(w, h, false);
+      host.appendChild(renderer.domElement);
+
+      scene.add(new THREE.AmbientLight(0xffffff,0.7));
+      const key = new THREE.DirectionalLight(0xffffff,0.95);
+      key.position.set(1.5,3.5,2.5);
+      scene.add(key);
+      const rim = new THREE.DirectionalLight(0xff7a1a,0.35);
+      rim.position.set(-2,1.2,-1.5);
+      scene.add(rim);
+      scene.add(new THREE.GridHelper(2.4,8,0x55565d,0x25272f));
+      scene.add(this.makeHomeForwardArrow(THREE));
+
+      const turntable = new THREE.Group();
+      scene.add(turntable);
+      const bodyMat = new THREE.MeshStandardMaterial({color:0x4f535a,roughness:0.58,metalness:0.18});
+      const headMat = new THREE.MeshStandardMaterial({color:0xf6f5ef,roughness:0.42,metalness:0.06});
+      const neckMat = new THREE.MeshStandardMaterial({color:0xff5a00,roughness:0.36,metalness:0.18});
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.55,0.62,0.07,24), new THREE.MeshStandardMaterial({color:0x25272f,roughness:0.58}));
+      base.position.y = -0.02;
+      turntable.add(base);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.82,0.62,0.52), bodyMat);
+      body.position.y = 0.28;
+      turntable.add(body);
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.12,0.22,16), neckMat);
+      neck.position.y = 0.66;
+      turntable.add(neck);
+      const headPivot = new THREE.Group();
+      headPivot.position.y = 0.8;
+      turntable.add(headPivot);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.62,0.5,0.54), headMat);
+      head.position.y = 0.22;
+      headPivot.add(head);
+
+      const faceCanvas = document.createElement('canvas');
+      faceCanvas.width = HOME_FACE_LCD_W;
+      faceCanvas.height = HOME_FACE_LCD_H;
+      this.drawHomeRobotFace(faceCanvas);
+      const faceTexture = new THREE.CanvasTexture(faceCanvas);
+      faceTexture.magFilter = THREE.NearestFilter;
+      faceTexture.minFilter = THREE.NearestFilter;
+      const faceScreen = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.42,0.42 * HOME_FACE_LCD_H / HOME_FACE_LCD_W),
+        new THREE.MeshBasicMaterial({map:faceTexture,toneMapped:false}),
+      );
+      faceScreen.position.set(0,0.22,0.272);
+      headPivot.add(faceScreen);
+
+      this._homeRobot3d = {scene,camera,renderer,turntable,headPivot,faceCanvas,faceTexture,currentHeadYaw:0,currentHeadPitch:0,targetHeadYaw:0,targetHeadPitch:0,idle:0};
+      this.syncHomeRobotServo();
+      this.updateHomeRobotFace();
+      const resize = () => {
+        const state = this._homeRobot3d;
+        if(!state || !host) return;
+        const rw = Math.max(180, host.clientWidth || 420);
+        const rh = Math.max(180, host.clientHeight || 300);
+        state.camera.aspect = rw / rh;
+        state.camera.updateProjectionMatrix();
+        state.renderer.setSize(rw, rh, false);
+      };
+      if(typeof ResizeObserver !== 'undefined'){
+        this._homeRobotResizeObs = new ResizeObserver(() => resize());
+        this._homeRobotResizeObs.observe(host);
+      }
+      const tick = () => {
+        const state = this._homeRobot3d;
+        if(!state) return;
+        state.idle += 0.016;
+        this.syncHomeRobotServo();
+        state.currentHeadYaw += (state.targetHeadYaw - state.currentHeadYaw) * 0.16;
+        state.currentHeadPitch += (state.targetHeadPitch - state.currentHeadPitch) * 0.16;
+        state.headPivot.rotation.order = 'YXZ';
+        state.headPivot.rotation.y = state.currentHeadYaw + Math.sin(state.idle * 0.9) * 0.025;
+        state.headPivot.rotation.x = state.currentHeadPitch + Math.sin(state.idle * 1.2) * 0.012;
+        state.turntable.rotation.y = Math.sin(state.idle * 0.25) * 0.08;
+        state.renderer.render(state.scene, state.camera);
+        this._homeRobotAnimId = requestAnimationFrame(tick);
+      };
+      tick();
+    },
+    animateHomeRobotServo(step){
+      const payload = step || {};
+      const startX = Number(this.homeRobotServo.x) || HOME_ROBOT_CENTER;
+      const startY = Number(this.homeRobotServo.y) || HOME_ROBOT_CENTER;
+      const rawX = Number(payload.x);
+      const rawY = Number(payload.y);
+      const endX = Math.max(0, Math.min(180, payload.xm ? startX + (Number.isFinite(rawX) ? rawX : 0) : (Number.isFinite(rawX) ? rawX : startX)));
+      const endY = Math.max(0, Math.min(180, payload.ym ? startY + (Number.isFinite(rawY) ? rawY : 0) : (Number.isFinite(rawY) ? rawY : startY)));
+      const duration = Math.max(80, Number(payload.ms) || 420);
+      const seq = (this._homeRobotSeq || 0) + 1;
+      this._homeRobotSeq = seq;
+      return new Promise((resolve) => {
+        const t0 = performance.now();
+        const frame = () => {
+          if(this._homeRobotSeq !== seq){ resolve(); return; }
+          const t = Math.min(1, (performance.now() - t0) / duration);
+          const eased = 1 - Math.pow(1 - t, 3);
+          this.homeRobotServo = {
+            x: startX + (endX - startX) * eased,
+            y: startY + (endY - startY) * eased,
+          };
+          if(t < 1) requestAnimationFrame(frame);
+          else resolve();
+        };
+        frame();
+      });
+    },
+    async playHomeRobotMotion(){
+      await this.animateHomeRobotServo({x:70,y:86,xm:0,ym:0,ms:360});
+      await this.animateHomeRobotServo({x:110,y:94,xm:0,ym:0,ms:420});
+      await this.animateHomeRobotServo({x:90,y:90,xm:0,ym:0,ms:520});
+    },
     async load(){
       // 配置状态：对话模型 + 声音能力（与顶部全局提示条同源判断）
       const setup = await this.j('/api/setup/llm');
@@ -235,11 +522,21 @@ createApp({
         const face = preview ? preview.pickScene(this.scenes, this.emotionMap, 'idle') : null;
         this.faceLabel = face ? (face.title || face.name || '待机') : '待机';
       }
+      // 设备表情数据就绪后，同步刷新 3D 模型屏幕上的表情，与卡片保持一致
+      this.updateHomeRobotFace();
       await this.openHomeCamera();
     },
   },
-  mounted(){ this.setGreeting(); this.load(); },
-  beforeUnmount(){ this.closeHomeCamera(); if(this.camera.imageUrl) URL.revokeObjectURL(this.camera.imageUrl); },
+  mounted(){
+    this.setGreeting();
+    this.load();
+    this.$nextTick(() => { void this.homeRobotInit3d(); });
+  },
+  beforeUnmount(){
+    this.closeHomeCamera();
+    this.disposeHomeRobot3d();
+    if(this.camera.imageUrl) URL.revokeObjectURL(this.camera.imageUrl);
+  },
 }).mount('#home');
 </script>
 {% endblock %}
