@@ -468,7 +468,7 @@ def api_create_llm_model():
             device_id,
             name=str(payload.get("name") or "").strip(),
             model_name=str(payload.get("model_name") or "").strip(),
-            protocol=str(payload.get("protocol") or "openai").strip(),
+            protocol=str(payload.get("protocol") or "ark").strip(),
             base_url=str(payload.get("base_url") or "").strip(),
             api_key=str(payload.get("api_key") or "").strip(),
         )
@@ -491,7 +491,7 @@ def api_test_llm_model():
     model_id = str(payload.get("model_id") or "").strip() or None
     name = str(payload.get("name") or "").strip()
     model_name = str(payload.get("model_name") or "").strip()
-    protocol = str(payload.get("protocol") or "openai").strip().lower() or "openai"
+    protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
     base_url = str(payload.get("base_url") or "").strip()
     api_key = str(payload.get("api_key") or "").strip()
     prompt = str(payload.get("prompt") or "你好，请用一句话介绍你自己。").strip()
@@ -685,7 +685,7 @@ def api_tts_preview():
         return jsonify({"ok": False, "error": "试听文本不能为空"}), 400
     cfg = _tts_cfg_from_payload(payload)
     if not cfg.api_key:
-        return jsonify({"ok": False, "error": "请先配置 TTS API Key"}), 400
+        return jsonify({"ok": False, "error": "请先配置火山 API Key"}), 400
     try:
         result = asyncio.run(synthesize_doubao_tts(text, cfg))
     except ValueError as exc:

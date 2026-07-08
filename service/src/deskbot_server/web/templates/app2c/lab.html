@@ -1,0 +1,536 @@
+{% extends "base_2c.html" %}
+{% block page_title %}设备实验台 · 小歪{% endblock %}
+{% block global_setup_suppress_device %}1{% endblock %}
+{% block extra_head %}
+<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+<style>
+  .lab-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}
+  .lab-tabs button{border:var(--bw) solid var(--line);background:var(--panel2);border-radius:var(--r);padding:10px 12px;font-weight:900;box-shadow:var(--shadow);cursor:pointer}
+  .lab-tabs button.on{background:var(--accent);color:#fff}
+  .lab-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .lab-panel{border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel);padding:14px;box-shadow:var(--shadow);min-width:0}
+  .lab-panel.wide{grid-column:1/-1}
+  .lab-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+  .lab-head b{display:block;font-size:16px}
+  .lab-head small,.lab-note{display:block;color:var(--dim);font-size:12px;line-height:1.45}
+  .lab-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+  .lab-form-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+  .lab-form-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lab-form-grid .wide{grid-column:1/-1}
+  .lab-code{font-family:var(--mono);font-size:11px;background:var(--panel2);border:var(--bw) solid var(--line);border-radius:var(--r);padding:10px;white-space:pre-wrap;max-height:260px;overflow:auto}
+  .lab-stream{aspect-ratio:4/3;background:#111;border:var(--bw) solid var(--line);border-radius:var(--r);display:grid;place-items:center;overflow:hidden}
+  .lab-stream img{width:100%;height:100%;object-fit:contain;background:#111}
+  .lab-kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .lab-kv div{border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel2);padding:10px}
+  .lab-kv span{display:block;color:var(--dim);font-size:11px}
+  .lab-kv b{font-family:var(--mono);font-size:13px}
+  .lab-list{display:grid;gap:8px;margin-top:10px}
+  .lab-row{border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel2);padding:10px;display:flex;justify-content:space-between;gap:10px;align-items:center}
+  .lab-row b{display:block}
+  .lab-row small{display:block;color:var(--dim)}
+  .lab-table-wrap{overflow:auto;border:var(--bw) solid var(--line);border-radius:var(--r);background:var(--panel);margin-top:10px}
+  .lab-table{width:100%;border-collapse:collapse;font-size:12px}
+  .lab-table th,.lab-table td{border-bottom:1.5px solid var(--line);padding:8px;text-align:left;vertical-align:top}
+  .lab-table th{background:var(--panel2);font-size:11px;text-transform:uppercase}
+  .lab-table tr:last-child td{border-bottom:0}
+  .lab-json-input{min-height:150px;font-family:var(--mono);font-size:12px}
+  @media(max-width:900px){
+    .lab-grid{grid-template-columns:1fr}
+    .lab-form-grid,.lab-form-grid.two,.lab-kv{grid-template-columns:1fr}
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div id="labApp">
+  <div class="pagehd">
+    <div>
+      <div class="eyebrow">LAB · DEVICE RUNTIME</div>
+      <h1>设备实验台</h1>
+      <p>把后端已经具备的设备控制、摄像头、场景编排、PB 下发和流水日志集中到一个 2C 控制面。</p>
+    </div>
+    <div class="btngroup">
+      <select v-model="currentDeviceId" @change="switchDevice">
+        <option value="">选择设备</option>
+        <option v-for="d in devices" :key="d.device_id" :value="d.device_id">[[ d.display_name ]] · [[ d.device_id ]]</option>
+      </select>
+      <button type="button" class="btn ghost" @click="loadAll">刷新</button>
+    </div>
+  </div>
+
+  <div class="lab-tabs" role="tablist" aria-label="实验台功能">
+    <button type="button" :class="{on: active==='servo'}" @click="setActive('servo')">舵机控制</button>
+    <button type="button" :class="{on: active==='camera'}" @click="setActive('camera')">摄像头</button>
+    <button type="button" :class="{on: active==='scene'}" @click="setActive('scene')">场景编排</button>
+    <button type="button" :class="{on: active==='pb'}" @click="setActive('pb')">PB 表情</button>
+    <button type="button" :class="{on: active==='logs'}" @click="setActive('logs')">ASR / 流水日志</button>
+  </div>
+
+  <p class="lead" v-if="msg">[[ msg ]]</p>
+
+  <section v-show="active==='servo'" class="lab-grid">
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>舵机限位与视角</b><small>读取 / 保存 servo.json，含左右视角语义和动作预设。</small></div></div>
+      <div class="lab-form-grid">
+        <input class="tinput" v-model.number="servo.config.x_min" type="number" min="0" max="180" placeholder="X min">
+        <input class="tinput" v-model.number="servo.config.x_max" type="number" min="0" max="180" placeholder="X max">
+        <input class="tinput" v-model.number="servo.config.y_min" type="number" min="0" max="180" placeholder="Y min">
+        <input class="tinput" v-model.number="servo.config.y_max" type="number" min="0" max="180" placeholder="Y max">
+        <select v-model.number="servo.config.x_reverse"><option :value="0">X 不反向</option><option :value="1">X 反向</option></select>
+        <select v-model.number="servo.config.y_reverse"><option :value="0">Y 不反向</option><option :value="1">Y 反向</option></select>
+        <select v-model="servo.config.perspective"><option value="viewer">观众视角</option><option value="robot">机器人本体视角</option></select>
+        <button type="button" class="btn primary" @click="saveServoConfig">保存配置</button>
+      </div>
+      <small class="lab-note">接口：/proxy/deskbot/api/servo_config</small>
+    </div>
+
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>直接下发舵机</b><small>绝对 / 相对移动，支持同步追加一个表情场景。</small></div></div>
+      <div class="lab-form-grid">
+        <input class="tinput" v-model.number="servo.direct.x" type="number" min="0" max="180" placeholder="x / dyaw">
+        <input class="tinput" v-model.number="servo.direct.y" type="number" min="0" max="180" placeholder="y / dpitch">
+        <select v-model.number="servo.direct.xm"><option :value="0">X 绝对</option><option :value="1">X 相对</option></select>
+        <select v-model.number="servo.direct.ym"><option :value="0">Y 绝对</option><option :value="1">Y 相对</option></select>
+        <input class="tinput" v-model.number="servo.direct.ms" type="number" min="40" step="10" placeholder="ms">
+        <select v-model="servo.direct.action"><option value="replace">replace</option><option value="append">append</option><option value="default">default</option></select>
+        <input class="tinput" v-model.trim="servo.direct.with_scene" placeholder="with_scene / append_scene">
+        <button type="button" class="btn primary" @click="sendServo">下发舵机</button>
+      </div>
+      <small class="lab-note">接口：/proxy/deskbot/api/device_servo</small>
+    </div>
+
+    <div class="lab-panel wide">
+      <div class="lab-head">
+        <div><b>动作预设</b><small>从 servo.json 读取，点击即可按 preset 下发。</small></div>
+        <button type="button" class="btn ghost" @click="loadServoConfig({silent:true})">重新载入</button>
+      </div>
+      <div class="lab-list">
+        <div class="lab-row" v-for="p in servo.presets" :key="p.id || p.label">
+          <div><b>[[ p.label || p.id ]]</b><small>[[ p.id ]] · [[ (p.steps || []).length ]] 步</small></div>
+          <button type="button" class="btn ghost" @click="runServoPreset(p)">运行</button>
+        </div>
+        <div class="lab-row" v-if="!servo.presets.length"><div><b>暂无预设</b><small>保存 servo.json 后会显示在这里。</small></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section v-show="active==='camera'" class="lab-grid">
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>摄像头</b><small>订阅 camera_view，设备侧可经 /camera_uplink 或 /asr_chat camera_frame 上行。</small></div></div>
+      <div class="lab-stream">
+        <img v-if="camera.imageUrl" :src="camera.imageUrl" alt="camera frame">
+        <span v-else style="color:#fff">[[ camera.status || '未连接' ]]</span>
+      </div>
+      <div class="lab-toolbar">
+        <button type="button" class="btn primary" @click="openCamera">连接画面</button>
+        <button type="button" class="btn ghost" @click="closeCamera">断开</button>
+        <button type="button" class="btn ghost" @click="loadCameraMode({silent:true})">刷新跟随模式</button>
+      </div>
+      <small class="lab-note">WebSocket：cameraViewWsBase · camera_view</small>
+    </div>
+
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>人脸跟随模式</b><small>控制 camera_servo_auto_mode，配合自动应答和 camera_frame 生效。</small></div></div>
+      <div class="lab-form-grid two">
+        <select v-model="camera.mode">
+          <option value="">关闭跟随</option>
+          <option value="follow">跟随人脸</option>
+          <option value="follow_frontal">跟随正脸</option>
+          <option value="gaze">注视人脸</option>
+        </select>
+        <button type="button" class="btn primary" @click="saveCameraMode">保存模式</button>
+      </div>
+      <div class="lab-kv" style="margin-top:12px">
+        <div><span>连接状态</span><b>[[ camera.status || 'idle' ]]</b></div>
+        <div><span>最新帧</span><b>[[ camera.frameBytes ? fmtBytes(camera.frameBytes) : '-' ]]</b></div>
+        <div><span>模式</span><b>[[ camera.mode || 'off' ]]</b></div>
+      </div>
+      <small class="lab-note">接口：/proxy/deskbot/api/camera_servo_auto_mode</small>
+    </div>
+  </section>
+
+  <section v-show="active==='scene'" class="lab-grid">
+    <div class="lab-panel wide">
+      <div class="lab-head">
+        <div><b>场景编排</b><small>每个 chunk 可包含口播、表情和舵机，按 PB 协议顺序串行下发。</small></div>
+        <div class="btngroup">
+          <button type="button" class="btn ghost" @click="loadScenePlaybooks({silent:true})">载入</button>
+          <button type="button" class="btn primary" @click="saveScenePlaybooks">保存</button>
+          <button type="button" class="btn ghost" @click="addPlaybook">新增</button>
+        </div>
+      </div>
+      <div class="lab-table-wrap">
+        <table class="lab-table">
+          <thead><tr><th>名称</th><th>标题</th><th>Chunks</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="(pb, idx) in scene.playbooks" :key="pb.name + idx">
+              <td><input class="tinput" v-model.trim="pb.name"></td>
+              <td><input class="tinput" v-model.trim="pb.title"></td>
+              <td>
+                <div class="lab-list">
+                  <div class="lab-row" v-for="(c, cidx) in pb.chunks" :key="c.id + cidx">
+                    <div style="flex:1">
+                      <input class="tinput" v-model.trim="c.text" placeholder="口播文本">
+                      <div class="lab-form-grid" style="margin-top:8px">
+                        <input class="tinput" v-model.trim="c.expr.scene" placeholder="表情 scene">
+                        <input class="tinput" v-model.number="c.expr.ms" type="number" placeholder="表情 ms">
+                        <input class="tinput" v-model.trim="c.servo.preset" placeholder="舵机 preset">
+                        <input class="tinput" v-model.number="c.servo.ms" type="number" placeholder="舵机 ms">
+                      </div>
+                    </div>
+                    <button type="button" class="btn ghost" @click="pb.chunks.splice(cidx,1)">删除</button>
+                  </div>
+                </div>
+                <button type="button" class="btn ghost" @click="addChunk(pb)">新增 chunk</button>
+              </td>
+              <td>
+                <div class="btngroup">
+                  <button type="button" class="btn primary" @click="runPlaybook(pb)">运行</button>
+                  <button type="button" class="btn ghost" @click="exportPlaybook(pb)">排查包</button>
+                  <button type="button" class="btn ghost" @click="scene.playbooks.splice(idx,1)">删除</button>
+                </div>
+              </td>
+            </tr>
+            <tr v-if="!scene.playbooks.length"><td colspan="4">暂无场景编排</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <small class="lab-note">接口：/proxy/deskbot/api/scene_playbooks · /proxy/deskbot/api/scene_playbook/run</small>
+    </div>
+  </section>
+
+  <section v-show="active==='pb'" class="lab-grid">
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>PB 表情场景</b><small>列出 deskbot-face.json 中可直接下发的场景。</small></div></div>
+      <div class="lab-toolbar">
+        <button type="button" class="btn ghost" @click="loadPbScenes({silent:true})">刷新场景</button>
+        <button type="button" class="btn primary" @click="sendPbScene">下发表情</button>
+      </div>
+      <select v-model="pb.selectedScene">
+        <option value="">选择 PB scene</option>
+        <option v-for="s in pb.scenes" :key="s" :value="s">[[ s ]]</option>
+      </select>
+      <small class="lab-note">接口：/proxy/deskbot/api/device_pb_scenes · /proxy/deskbot/api/device_pb_scene</small>
+    </div>
+
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>Face Catalog / Play</b><small>按 phoneme 或 emotion 直接播放文件内表情。</small></div></div>
+      <div class="lab-toolbar">
+        <button type="button" class="btn ghost" @click="loadFaceCatalog">载入目录</button>
+        <select v-model="pb.faceKind"><option value="emotion">emotion</option><option value="phoneme">phoneme</option></select>
+        <input class="tinput" v-model.trim="pb.faceName" placeholder="名称">
+        <button type="button" class="btn primary" @click="playFaceCatalog">播放</button>
+      </div>
+      <pre class="lab-code">[[ json(pb.catalog) ]]</pre>
+      <small class="lab-note">接口：/proxy/deskbot/api/device_face_catalog · /proxy/deskbot/api/device_face_play</small>
+    </div>
+
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>PB Anim / Expr Scene</b><small>用于单片 anim 预览和从 2C 表情编辑器保存的 expr scene 下发。</small></div></div>
+      <textarea class="tinput lab-json-input" v-model="pb.animJson" spellcheck="false"></textarea>
+      <div class="lab-toolbar">
+        <button type="button" class="btn primary" @click="sendPbAnim">下发 PB Anim</button>
+        <input class="tinput" v-model.trim="pb.exprScene" placeholder="expr scene name">
+        <button type="button" class="btn ghost" @click="sendExprScene">下发 Expr Scene</button>
+      </div>
+      <small class="lab-note">接口：/proxy/deskbot/api/device_pb_anim · /proxy/deskbot/api/device_pb_expr_scene</small>
+    </div>
+
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>直发 TTS</b><small>跳过 LLM，直接把文本合成为 PB 下发；可追加 scene。</small></div></div>
+      <textarea class="tinput" v-model.trim="pb.ttsText" rows="4" placeholder="要播报的文本"></textarea>
+      <div class="lab-toolbar">
+        <input class="tinput" v-model.trim="pb.ttsScene" placeholder="追加 scene（可选）">
+        <button type="button" class="btn primary" @click="sendDeviceTts">下发 TTS</button>
+      </div>
+      <small class="lab-note">接口：/proxy/deskbot/api/device_tts</small>
+    </div>
+  </section>
+
+  <section v-show="active==='logs'" class="lab-grid">
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>ASR / 自动行为</b><small>控制自动应答、空闲 PB 自动下发和流水订阅。</small></div></div>
+      <div class="lab-form-grid two">
+        <button type="button" class="btn ghost" @click="toggleAsrAuto">[[ toggles.asr_auto_reply ? '关闭自动应答' : '开启自动应答' ]]</button>
+        <button type="button" class="btn ghost" @click="togglePbIdle">[[ toggles.pb_idle_auto_dispatch ? '关闭空闲 PB' : '开启空闲 PB' ]]</button>
+        <button type="button" class="btn primary" @click="openPipeline">连接实时流水</button>
+        <button type="button" class="btn ghost" @click="loadPipelineRecent">拉取最近事件</button>
+      </div>
+      <small class="lab-note">接口：/proxy/deskbot/api/asr_auto_reply · /proxy/deskbot/api/pb_idle_auto_dispatch · /proxy/deskbot/api/pipeline_recent</small>
+      <small class="lab-note">WebSocket：devicePipelineWsBase</small>
+    </div>
+    <div class="lab-panel">
+      <div class="lab-head"><div><b>运行状态</b><small>实时 WS 和 HTTP 快照会合并显示。</small></div></div>
+      <div class="lab-kv">
+        <div><span>pipeline</span><b>[[ pipeline.status || 'idle' ]]</b></div>
+        <div><span>events</span><b>[[ pipeline.events.length ]]</b></div>
+        <div><span>device</span><b>[[ currentDeviceId || '-' ]]</b></div>
+      </div>
+    </div>
+    <div class="lab-panel wide">
+      <pre class="lab-code">[[ json(pipeline.events.slice(0, 80)) ]]</pre>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+function initialLabTab(){
+  const allowed = ['servo','camera','scene','pb','logs'];
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get('tab') || '';
+  return allowed.includes(tab) ? tab : 'servo';
+}
+createApp({
+  delimiters:['[[',']]'],
+  data(){ return {
+    active:initialLabTab(), msg:'',
+    cameraViewWsBase: {{ camera_view_ws_base|tojson }},
+    devicePipelineWsBase: {{ device_pipeline_ws_base|tojson }},
+    devices:[], currentDeviceId:'',
+    token:'',
+    servo:{
+      config:{x_min:0,x_max:180,y_min:0,y_max:180,x_reverse:0,y_reverse:0,perspective:'viewer'},
+      presets:[],
+      direct:{x:90,y:90,xm:0,ym:0,ms:450,action:'replace',with_scene:''},
+    },
+    camera:{ws:null,status:'',imageUrl:'',frameBytes:0,mode:''},
+    toggles:{asr_auto_reply:false,pb_idle_auto_dispatch:false},
+    scene:{playbooks:[], export:null},
+    pb:{
+      scenes:[], selectedScene:'', catalog:null, faceKind:'emotion', faceName:'',
+      exprScene:'', ttsText:'你好，我是小歪。', ttsScene:'',
+      animJson:'{"anim":[{"ms":500,"elements":{"mouth":[],"nose":[],"eye_l":[],"eye_r":[],"extra":[]}}]}',
+    },
+    pipeline:{ws:null,status:'',events:[]},
+  }; },
+  methods:{
+    json(v){ return JSON.stringify(v || {}, null, 2); },
+    fmtBytes(n){ n=Number(n)||0; if(n>=1048576) return (n/1048576).toFixed(1)+' MB'; if(n>=1024) return (n/1024).toFixed(1)+' KB'; return n+' B'; },
+    async api(url, opts){
+      const r=await fetch(url, opts||{cache:'no-store'});
+      const d=await r.json().catch(()=>({ok:false,error:'响应解析失败'}));
+      if(!r.ok || d.ok===false) throw new Error(d.error||d.message||('HTTP '+r.status));
+      return d;
+    },
+    proxyPath(path, params){
+      const url = new URL('/proxy/deskbot' + path, window.location.origin);
+      if(this.currentDeviceId) url.searchParams.set('device_id', this.currentDeviceId);
+      for(const [k,v] of Object.entries(params||{})){
+        if(v !== undefined && v !== null && String(v) !== '') url.searchParams.set(k, v);
+      }
+      return url.toString();
+    },
+    async ensureToken(){
+      if(this.token) return this.token;
+      const d = await this.api('/api/debug/ws_token');
+      this.token = d.token || '';
+      return this.token;
+    },
+    requireDevice(options){
+      const silent = !!(options && options.silent);
+      if(!this.currentDeviceId){
+        if(!silent) this.msg='请先选择设备';
+        return false;
+      }
+      return true;
+    },
+    setActive(tab){ this.active=tab; this.msg=''; if(tab==='camera') this.loadCameraMode({silent:true}); if(tab==='logs') this.loadRuntimeToggles(); },
+    async loadDevices(){
+      const d=await this.api('/app/api/devices');
+      this.devices=d.devices||[];
+      this.currentDeviceId=d.current_device_id || (this.devices[0] && this.devices[0].device_id) || '';
+    },
+    async switchDevice(){
+      await this.api('/app/api/devices/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:this.currentDeviceId})});
+      this.msg=this.currentDeviceId ? '已切换当前设备' : '已清空当前设备';
+      await this.loadAll();
+    },
+    async loadAll(){
+      try{
+        await this.loadDevices();
+        await Promise.allSettled([
+          this.loadServoConfig({silent:true}),
+          this.loadPbScenes({silent:true}),
+          this.loadScenePlaybooks({silent:true}),
+          this.loadRuntimeToggles(),
+          this.loadCameraMode({silent:true})
+        ]);
+      }catch(e){ this.msg=e.message||'刷新失败'; }
+    },
+    normalizeServoConfig(cfg){
+      const c = cfg || {};
+      this.servo.config = Object.assign({}, this.servo.config, {
+        x_min:c.x_min ?? c.xMin ?? 0,
+        x_max:c.x_max ?? c.xMax ?? 180,
+        y_min:c.y_min ?? c.yMin ?? 0,
+        y_max:c.y_max ?? c.yMax ?? 180,
+        x_reverse:c.x_reverse ?? c.xReverse ?? 0,
+        y_reverse:c.y_reverse ?? c.yReverse ?? 0,
+        perspective:c.perspective || c.left_right_perspective || 'viewer',
+      });
+      this.servo.presets = Array.isArray(c.presets) ? c.presets : [];
+    },
+    async loadServoConfig(options){
+      if(!this.requireDevice(options)) return;
+      const d=await this.api(this.proxyPath('/api/servo_config'));
+      this.normalizeServoConfig(d.config || d);
+    },
+    async saveServoConfig(){
+      if(!this.requireDevice()) return;
+      const body=Object.assign({}, this.servo.config, {presets:this.servo.presets});
+      const d=await this.api(this.proxyPath('/api/servo_config'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      this.normalizeServoConfig(d.config || body);
+      this.msg='舵机配置已保存';
+    },
+    async sendServo(){
+      if(!this.requireDevice()) return;
+      const p=this.servo.direct;
+      await this.api(this.proxyPath('/api/device_servo',{x:p.x,y:p.y,dyaw:p.x,dpitch:p.y,xm:p.xm,ym:p.ym,ms:p.ms,action:p.action,with_scene:p.with_scene}));
+      this.msg='舵机命令已下发';
+    },
+    async runServoPreset(p){
+      const step=(p.steps&&p.steps[0])||p;
+      this.servo.direct=Object.assign({}, this.servo.direct, {x:step.x??90,y:step.y??90,xm:step.xm??0,ym:step.ym??0,ms:step.ms??500});
+      await this.sendServo();
+    },
+    async openCamera(){
+      if(!this.requireDevice()) return;
+      this.closeCamera();
+      const token=await this.ensureToken();
+      const url=new URL(this.cameraViewWsBase);
+      url.searchParams.set('device_id', this.currentDeviceId);
+      url.searchParams.set('debug_token', token);
+      this.camera.status='connecting';
+      const ws=new WebSocket(url.toString());
+      ws.binaryType='blob';
+      ws.onopen=()=>{ this.camera.status='connected'; };
+      ws.onclose=()=>{ this.camera.status='closed'; };
+      ws.onerror=()=>{ this.camera.status='error'; };
+      ws.onmessage=(ev)=>{
+        if(ev.data instanceof Blob){
+          if(this.camera.imageUrl) URL.revokeObjectURL(this.camera.imageUrl);
+          this.camera.frameBytes=ev.data.size;
+          this.camera.imageUrl=URL.createObjectURL(ev.data);
+          return;
+        }
+        try{ const data=JSON.parse(ev.data); this.camera.status=data.type || 'json'; }catch(_e){}
+      };
+      this.camera.ws=ws;
+    },
+    closeCamera(){ if(this.camera.ws){ try{ this.camera.ws.close(); }catch(_e){} } this.camera.ws=null; },
+    async loadCameraMode(options){
+      if(!this.requireDevice(options)) return;
+      try{ const d=await this.api(this.proxyPath('/api/camera_servo_auto_mode')); this.camera.mode=d.mode||''; }catch(_e){}
+    },
+    async saveCameraMode(){
+      await this.api(this.proxyPath('/api/camera_servo_auto_mode',{mode:this.camera.mode}));
+      this.msg='摄像头跟随模式已保存';
+    },
+    cleanChunk(c){
+      const out={id:c.id||Math.random().toString(16).slice(2,10), text:c.text||''};
+      if(c.expr && c.expr.scene) out.expr={scene:c.expr.scene, ms:Number(c.expr.ms)||500};
+      if(c.servo && c.servo.preset) out.servo={preset:c.servo.preset, ms:Number(c.servo.ms)||500};
+      return out;
+    },
+    cleanPlaybook(pb){
+      return {name:pb.name||'demo', title:pb.title||pb.name||'演示', chunks:(pb.chunks||[]).map(this.cleanChunk).filter(c=>c.text||c.expr||c.servo)};
+    },
+    editablePlaybook(pb){
+      const out=Object.assign({name:'demo',title:'演示',chunks:[]}, pb||{});
+      out.chunks=(out.chunks||[]).map(c=>Object.assign({id:Math.random().toString(16).slice(2,10),text:'',expr:{scene:'',ms:500},servo:{preset:'',ms:500}}, c, {expr:Object.assign({scene:'',ms:500}, c.expr||{}), servo:Object.assign({preset:'',ms:500}, c.servo||{})}));
+      return out;
+    },
+    async loadScenePlaybooks(options){
+      if(!this.requireDevice(options)) return;
+      const d=await this.api(this.proxyPath('/api/scene_playbooks'));
+      this.scene.playbooks=(d.config||[]).map(this.editablePlaybook);
+    },
+    async saveScenePlaybooks(){
+      if(!this.requireDevice()) return;
+      const rows=this.scene.playbooks.map(this.cleanPlaybook).filter(pb=>pb.name&&pb.chunks.length);
+      await this.api(this.proxyPath('/api/scene_playbooks'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rows)});
+      this.msg='场景编排已保存';
+      await this.loadScenePlaybooks();
+    },
+    addPlaybook(){ this.scene.playbooks.push(this.editablePlaybook({name:'demo_'+(this.scene.playbooks.length+1),title:'新编排',chunks:[{text:'你好',expr:{scene:'happy_smile',ms:1000},servo:{preset:'center',ms:500}}]})); },
+    addChunk(pb){ pb.chunks.push(this.editablePlaybook({chunks:[{text:'',expr:{scene:'',ms:500},servo:{preset:'',ms:500}}]}).chunks[0]); },
+    async runPlaybook(pb){
+      if(!this.requireDevice()) return;
+      await this.api(this.proxyPath('/api/scene_playbook/run'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:this.currentDeviceId,playbook:this.cleanPlaybook(pb)})});
+      this.msg='场景编排已提交运行';
+    },
+    async exportPlaybook(pb){
+      const d=await this.api('/api/scene_playbook/export_plan?device_id='+encodeURIComponent(this.currentDeviceId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playbook:this.cleanPlaybook(pb)})});
+      this.scene.export=d;
+      this.msg='排查包已生成，可在控制台查看 scene.export';
+    },
+    async loadPbScenes(options){
+      if(!this.requireDevice(options)) return;
+      const d=await this.api(this.proxyPath('/api/device_pb_scenes'));
+      this.pb.scenes=d.scenes||d.keys||[];
+      if(!this.pb.selectedScene && this.pb.scenes.length) this.pb.selectedScene=this.pb.scenes[0];
+    },
+    async sendPbScene(){
+      if(!this.requireDevice() || !this.pb.selectedScene) return;
+      await this.api(this.proxyPath('/api/device_pb_scene',{scene:this.pb.selectedScene}));
+      this.msg='PB 表情已下发';
+    },
+    async loadFaceCatalog(){
+      if(!this.requireDevice()) return;
+      this.pb.catalog=await this.api(this.proxyPath('/api/device_face_catalog'));
+    },
+    async playFaceCatalog(){
+      if(!this.requireDevice() || !this.pb.faceName) return;
+      await this.api(this.proxyPath('/api/device_face_play',{kind:this.pb.faceKind,name:this.pb.faceName}));
+      this.msg='Face catalog 表情已下发';
+    },
+    async sendPbAnim(){
+      if(!this.requireDevice()) return;
+      const body=JSON.parse(this.pb.animJson||'{}');
+      await this.api(this.proxyPath('/api/device_pb_anim'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({device_id:this.currentDeviceId}, body))});
+      this.msg='PB Anim 已下发';
+    },
+    async sendExprScene(){
+      if(!this.requireDevice() || !this.pb.exprScene) return;
+      await this.api(this.proxyPath('/api/device_pb_expr_scene',{scene:this.pb.exprScene}));
+      this.msg='Expr Scene 已下发';
+    },
+    async sendDeviceTts(){
+      if(!this.requireDevice() || !this.pb.ttsText) return;
+      await this.api(this.proxyPath('/api/device_tts'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:this.currentDeviceId,text:this.pb.ttsText,scene:this.pb.ttsScene})});
+      this.msg='TTS 已提交下发';
+    },
+    async loadRuntimeToggles(){
+      try{ const a=await this.api(this.proxyPath('/api/asr_auto_reply')); this.toggles.asr_auto_reply=!!a.enabled; }catch(_e){}
+      try{ const p=await this.api(this.proxyPath('/api/pb_idle_auto_dispatch')); this.toggles.pb_idle_auto_dispatch=!!p.enabled; }catch(_e){}
+    },
+    async toggleAsrAuto(){ const v=this.toggles.asr_auto_reply?0:1; const d=await this.api(this.proxyPath('/api/asr_auto_reply',{enabled:v})); this.toggles.asr_auto_reply=!!d.enabled; },
+    async togglePbIdle(){ const v=this.toggles.pb_idle_auto_dispatch?0:1; const d=await this.api(this.proxyPath('/api/pb_idle_auto_dispatch',{enabled:v})); this.toggles.pb_idle_auto_dispatch=!!d.enabled; },
+    async openPipeline(){
+      if(!this.requireDevice()) return;
+      if(this.pipeline.ws){ try{ this.pipeline.ws.close(); }catch(_e){} }
+      const token=await this.ensureToken();
+      const url=new URL(this.devicePipelineWsBase);
+      url.searchParams.set('device_id', this.currentDeviceId);
+      url.searchParams.set('debug_token', token);
+      this.pipeline.status='connecting';
+      const ws=new WebSocket(url.toString());
+      ws.onopen=()=>{ this.pipeline.status='connected'; };
+      ws.onclose=()=>{ this.pipeline.status='closed'; };
+      ws.onerror=()=>{ this.pipeline.status='error'; };
+      ws.onmessage=(ev)=>{ try{ this.pipeline.events.unshift(JSON.parse(ev.data)); }catch(_e){ this.pipeline.events.unshift({raw:String(ev.data)}); } this.pipeline.events=this.pipeline.events.slice(0,120); };
+      this.pipeline.ws=ws;
+    },
+    async loadPipelineRecent(){
+      if(!this.requireDevice()) return;
+      const d=await this.api(this.proxyPath('/api/pipeline_recent',{limit:100}));
+      this.pipeline.events=d.events||d.items||[];
+      this.pipeline.status='snapshot';
+    },
+  },
+  async mounted(){ await this.loadAll(); },
+  beforeUnmount(){ this.closeCamera(); if(this.pipeline.ws) this.pipeline.ws.close(); },
+}).mount('#labApp');
+</script>
+{% endblock %}

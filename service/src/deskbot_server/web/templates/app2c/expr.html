@@ -1,5 +1,6 @@
 {% extends "base_2c.html" %}
 {% block page_title %}表情 · 小歪{% endblock %}
+{% block global_setup_suppress_device %}1{% endblock %}
 {% block extra_head %}
 <script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
 <script src="{{ url_for('static', filename='face_preview_2c.js') }}?v=20260707-frame-browser"></script>
@@ -89,8 +90,8 @@
         <div class="blocktitle">情绪 → 表情 / MAP</div>
         <div class="maprow" v-for="[k,emoji,label] in emotions" :key="k">
           <div class="lab"><span class="e">[[ emoji ]]</span>[[ label ]]</div>
-          <select v-model="map[k]" @change="syncSelectedMood(k)" :disabled="noDevice">
-            <option value="">[[ noDevice ? '绑定设备后可配置' : '（不指定）' ]]</option>
+          <select v-model="map[k]" @change="syncSelectedMood(k)">
+            <option value="">（不指定）</option>
             <option v-for="s in scenes" :key="s.name" :value="s.name">[[ s.title || s.name ]]</option>
           </select>
         </div>
@@ -210,6 +211,125 @@
             </tbody>
           </table>
         </div>
+        <div class="viseme-diy" data-feature="visemesync-diy">
+          <div class="blocktitle top">VisemeSync DIY / PIXEL</div>
+          <div class="diy-head">
+            <div>
+              <b>VisemeSync DIY</b>
+              <small>[[ diyStats.name ]] · [[ diyStats.phonemes ]] 个音素表情 · [[ diyStats.emotions ]] 个情绪表情 · [[ diyStats.frames ]] 帧</small>
+            </div>
+            <div class="design-actions">
+              <button type="button" class="btn ghost" @click="diyUndo" :disabled="!diyUndoStack.length">撤销</button>
+              <button type="button" class="btn ghost" @click="diyRedo" :disabled="!diyRedoStack.length">重做</button>
+              <button type="button" class="btn ghost" @click="loadDiyFromCurrent">从当前载入</button>
+              <button type="button" class="btn ghost" @click="diyExportJson">导出 JSON</button>
+              <button type="button" class="btn primary" @click="diyApplyToProfessional">加入当前表情</button>
+            </div>
+          </div>
+          <div class="diy-grid">
+            <aside class="diy-list-panel">
+              <div class="diy-kind-tabs" role="tablist" aria-label="VisemeSync 编辑类型">
+                <button type="button" :class="{on:diyKind==='emotion'}" @click="setDiyKind('emotion')">情绪表情</button>
+                <button type="button" :class="{on:diyKind==='phoneme'}" @click="setDiyKind('phoneme')">音素表情</button>
+                <button type="button" :class="{on:diyKind==='source'}" @click="setDiyKind('source')">源码 JSON</button>
+              </div>
+              <template v-if="diyKind!=='source'">
+                <div class="diy-list-actions">
+                  <button type="button" class="btn ghost" @click="diyAddExpression">+ 表情</button>
+                  <button type="button" class="btn ghost" @click="diyDeleteExpression">删除</button>
+                </div>
+                <div class="diy-expression-list">
+                  <button type="button" class="diy-expression-row" :class="{sel:i===diySelectedIndex}" v-for="(item,i) in diyItems" :key="item.name + i" @click="selectDiyExpression(i)">
+                    <b>[[ item.title || item.name ]]</b>
+                    <small>[[ item.name ]] · [[ (item.alias || []).join(', ') || '-' ]]</small>
+                  </button>
+                </div>
+                <div class="diy-meta-form" v-if="activeDiyItem">
+                  <label>name<input class="tinput" v-model="activeDiyItem.name" @input="touchDiy"></label>
+                  <label>title<input class="tinput" v-model="activeDiyItem.title" @input="touchDiy"></label>
+                  <label>alias<input class="tinput" :value="(activeDiyItem.alias || []).join(', ')" @input="setDiyAlias($event.target.value)"></label>
+                </div>
+              </template>
+              <template v-else>
+                <div class="diy-source-actions">
+                  <button type="button" class="btn ghost" @click="diyFormatSource">格式化</button>
+                  <button type="button" class="btn ghost" @click="diyCopySource">复制</button>
+                  <button type="button" class="btn primary" @click="diyApplySource">应用源码</button>
+                </div>
+                <textarea class="tinput diy-source" v-model="diySourceText" spellcheck="false"></textarea>
+              </template>
+            </aside>
+            <section class="diy-canvas-panel">
+              <div class="diy-toolbar">
+                <label>当前图层
+                  <select v-model="diyLayer" @change="diySelectedPrimitiveIndex=-1">
+                    <option value="mouth">嘴巴</option>
+                    <option value="eye_l">左眼</option>
+                    <option value="eye_r">右眼</option>
+                    <option value="nose">鼻子</option>
+                    <option value="extra">附加</option>
+                  </select>
+                </label>
+                <label>颜色
+                  <input type="color" v-model="diyColor" @input="setSelectedDiyColor">
+                </label>
+                <label>帧时长
+                  <input class="tinput mini-input" type="number" min="40" max="5000" step="20" :value="activeDiyFrame.ms || 500" @input="setDiyFrameMs($event.target.value)">
+                </label>
+              </div>
+              <svg class="diy-canvas" viewBox="0 0 284 240" tabindex="0" @pointerdown="startDiyPointer($event)" @pointermove="moveDiyPointer" @pointerup="endDiyPointer" @pointercancel="endDiyPointer" @keydown="handleDiyKey">
+                <rect class="diy-canvas-bg" x="0" y="0" width="284" height="240"></rect>
+                <g class="diy-gridlines">
+                  <line v-for="x in diyGridXs" :key="'x'+x" :x1="x" y1="0" :x2="x" y2="240"></line>
+                  <line v-for="y in diyGridYs" :key="'y'+y" x1="0" :y1="y" x2="284" :y2="y"></line>
+                </g>
+                <g v-html="diyInactiveLayerSvg"></g>
+                <g>
+                  <template v-for="(p,i) in diyLayerPrimitives" :key="i">
+                    <rect v-if="diyShapeKind(p)==='pixel'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :x="p.x" :y="p.y" :width="p.w || 4" :height="p.h || 4" :fill="diyPrimitiveColor(p)" @pointerdown.stop="startDiyPointer($event,i)"></rect>
+                    <rect v-else-if="diyShapeKind(p)==='rect'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :x="p.x" :y="p.y" :width="p.w || 10" :height="p.h || 10" :rx="diyShapeRadius(p)" :fill="diyPrimitiveFill(p)" :stroke="diyPrimitiveStroke(p)" :stroke-width="p.sw || 2" @pointerdown.stop="startDiyPointer($event,i)"></rect>
+                    <ellipse v-else-if="diyShapeKind(p)==='ellipse'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :cx="p.x" :cy="p.y" :rx="p.rw || p.r || 6" :ry="p.rh || p.r || 6" :fill="diyPrimitiveFill(p)" :stroke="diyPrimitiveStroke(p)" :stroke-width="p.sw || 2" @pointerdown.stop="startDiyPointer($event,i)"></ellipse>
+                    <circle v-else-if="diyShapeKind(p)==='circle'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :cx="p.x" :cy="p.y" :r="p.r || 4" :fill="diyPrimitiveFill(p)" :stroke="diyPrimitiveStroke(p)" :stroke-width="p.sw || 2" @pointerdown.stop="startDiyPointer($event,i)"></circle>
+                    <line v-else-if="diyShapeKind(p)==='line'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :x1="p.x1" :y1="p.y1" :x2="p.x2" :y2="p.y2" :stroke="diyPrimitiveColor(p)" :stroke-width="p.sw || 3" stroke-linecap="round" @pointerdown.stop="startDiyPointer($event,i)"></line>
+                  </template>
+                </g>
+              </svg>
+              <div class="diy-shape-palette">
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('pixel')">像素块</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('rect')">矩形</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('round_rect')">圆角</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('ellipse_fill')">椭圆</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('circle')">圆点</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('line')">线条</button>
+              </div>
+              <div class="diy-framebar">
+                <button type="button" class="btn ghost" @click="diyPrevFrame">上一帧</button>
+                <button type="button" class="btn ghost" @click="diyAddFrame">+ 帧</button>
+                <button type="button" class="btn ghost" @click="diyDuplicateFrame">复制帧</button>
+                <button type="button" class="btn ghost" @click="diyDeleteFrame">删帧</button>
+                <button type="button" class="btn ghost" @click="diyNextFrame">下一帧</button>
+                <span>动画帧 [[ diyFrameIndex + 1 ]] / [[ diyFrameCount ]] · 总时长 [[ diyTotalMs ]]ms</span>
+              </div>
+            </section>
+            <aside class="diy-props-panel">
+              <h3>图元库</h3>
+              <div class="diy-layer-chips">
+                <button type="button" v-for="layer in diyLayers" :key="layer" :class="{on:diyLayer===layer}" @click="diyLayer=layer;diySelectedPrimitiveIndex=-1">[[ diyLayerLabel(layer) ]]</button>
+              </div>
+              <h3>颜色</h3>
+              <div class="diy-color-row">
+                <button type="button" v-for="c in diyPalette" :key="c" :style="{background:c}" :class="{on:diyColor===c}" @click="diyColor=c;setSelectedDiyColor()"></button>
+              </div>
+              <h3>图元属性</h3>
+              <div class="diy-props" v-if="selectedDiyPrimitive">
+                <label v-for="key in selectedDiyKeys" :key="key">[[ key ]]<input class="tinput" type="number" step="1" :value="selectedDiyPrimitive[key]" @input="setDiyPrimitiveNumber(key,$event.target.value)"></label>
+                <button type="button" class="btn ghost" @click="diyClonePrimitive">复制图元</button>
+                <button type="button" class="btn ghost" @click="diyDeletePrimitive">删除图元</button>
+              </div>
+              <p class="lead" v-else>选择一个图元后可编辑坐标。</p>
+            </aside>
+          </div>
+        </div>
       </section>
     </div>
   </div>
@@ -229,6 +349,11 @@ createApp({
     scenes:[], selected:0, mode:'custom', editingFace:false, exprTab:'image', deviceId:'', noDevice:false, sending:false, savingProfessional:false,
     emotions:[['happy','😄','开心'],['surprised','😲','惊讶'],['thinking','🤔','思考'],['sleepy','😴','困'],['idle','😐','待机']],
     map:{}, msg:'', customFace:{...DEFAULT_CUSTOM_FACE}, professionalDesign:null, professionalFileName:'',
+    diyDesign:null, diyKind:'emotion', diySelectedIndex:0, diyFrameIndex:0, diyLayer:'mouth',
+    diySelectedPrimitiveIndex:-1, diyColor:'#ff6700', diySourceText:'', diyDrag:null,
+    diyUndoStack:[], diyRedoStack:[], diyLastSnapshot:'',
+    diyLayers:['mouth','eye_l','eye_r','nose','extra'],
+    diyPalette:['#f4f4ef','#ff6700','#ffd23f','#69e7ff','#ff5c8a','#16171b'],
     imageExpressionFile:null, imageExpressionFileName:'', imageExpressionResult:null,
     previewFrameIndex:0, previewPlaying:true, previewTimer:null,
     generatedFrameIndex:0, generatedPreviewPlaying:true, generatedPreviewTimer:null,
@@ -303,7 +428,6 @@ createApp({
     professionalWarnings(){
       if(!this.professionalDesign) return ['还没有导入专业设计，也可以先从当前表情生成一份 JSON。'];
       const warnings = [];
-      if(!this.deviceId) warnings.push('请先在「我的设备」选择一台设备，才能保存到设备配置。');
       if(!this.professionalStats.phonemes) warnings.push('没有 phonemes，保存时不会更新拼音嘴型。');
       if(!this.professionalStats.emotions) warnings.push('没有 emotions，保存时不会更新情绪表情库。');
       return warnings;
@@ -325,12 +449,467 @@ createApp({
       collect(design.emotions, 'emotion');
       collect(design.phonemes, 'phoneme');
       return rows.slice(0, 12);
+    },
+    diyItems(){
+      const design = this.ensureDiyDesign();
+      return this.diyKind === 'phoneme' ? design.phonemes : design.emotions;
+    },
+    activeDiyItem(){
+      if(this.diyKind === 'source') return null;
+      const items = this.diyItems;
+      return items[Math.max(0, Math.min(this.diySelectedIndex, items.length - 1))] || null;
+    },
+    activeDiyFrame(){
+      const item = this.activeDiyItem;
+      if(!item || !Array.isArray(item.frames) || !item.frames.length) return {ms:500, elements:this.emptyElements()};
+      return item.frames[Math.max(0, Math.min(this.diyFrameIndex, item.frames.length - 1))] || item.frames[0];
+    },
+    diyFrameCount(){
+      const item = this.activeDiyItem;
+      return Math.max(1, item && Array.isArray(item.frames) ? item.frames.length : 1);
+    },
+    diyTotalMs(){
+      const item = this.activeDiyItem;
+      return (item && Array.isArray(item.frames) ? item.frames : []).reduce((sum, frame) => sum + this.clamp(frame.ms || 500, 40, 5000), 0);
+    },
+    diyLayerPrimitives(){
+      const frame = this.activeDiyFrame;
+      const elements = frame && frame.elements && typeof frame.elements === 'object' ? frame.elements : {};
+      return Array.isArray(elements[this.diyLayer]) ? elements[this.diyLayer] : [];
+    },
+    selectedDiyPrimitive(){
+      return this.diyLayerPrimitives[this.diySelectedPrimitiveIndex] || null;
+    },
+    selectedDiyKeys(){
+      const p = this.selectedDiyPrimitive || {};
+      const shape = this.diyShapeKind(p);
+      if(shape === 'line') return ['x1','y1','x2','y2','sw'];
+      if(shape === 'rect' || shape === 'pixel') return ['x','y','w','h','radius','sw'];
+      if(shape === 'ellipse') return ['x','y','rw','rh','sw'];
+      if(shape === 'circle') return ['x','y','r','sw'];
+      return [];
+    },
+    diyStats(){
+      const design = this.ensureDiyDesign();
+      const rows = (design.phonemes || []).concat(design.emotions || []);
+      return {
+        name: design.name || 'deskbot-face-design',
+        phonemes: (design.phonemes || []).length,
+        emotions: (design.emotions || []).length,
+        frames: rows.reduce((sum, item) => sum + (Array.isArray(item.frames) ? item.frames.length : 0), 0),
+      };
+    },
+    diyGridXs(){
+      const out = [];
+      for(let x = 0; x <= 284; x += 20) out.push(x);
+      return out;
+    },
+    diyGridYs(){
+      const out = [];
+      for(let y = 0; y <= 240; y += 20) out.push(y);
+      return out;
+    },
+    diyInactiveLayerSvg(){
+      const frame = this.activeDiyFrame;
+      const clone = this.copyJson(frame, {ms:500, elements:this.emptyElements()});
+      if(clone.elements && clone.elements[this.diyLayer]) clone.elements[this.diyLayer] = [];
+      const scene = {name:'diy-preview', frames:[clone]};
+      const preview = window.DeskbotFacePreview;
+      return preview ? preview.sceneToSvg(scene, 0) : '';
     }
   },
   methods:{
     clamp(v, min, max){
       const n = Number(v);
       return Math.max(min, Math.min(Number.isFinite(n) ? n : min, max));
+    },
+    emptyElements(){
+      return {mouth:[], eye_l:[], eye_r:[], nose:[], extra:[]};
+    },
+    ensureFrameElements(frame){
+      if(!frame.elements || typeof frame.elements !== 'object') frame.elements = this.emptyElements();
+      this.diyLayers.forEach((layer) => {
+        if(!Array.isArray(frame.elements[layer])) frame.elements[layer] = [];
+      });
+      return frame.elements;
+    },
+    ensureDiyDesign(){
+      if(!this.diyDesign){
+        this.diyDesign = this.normalizeProfessionalDesign({
+          name:'deskbot-current-face',
+          description:'VisemeSync DIY design',
+          phonemes:[],
+          emotions:(this.scenes && this.scenes.length ? this.scenes : [this.buildCustomScene()]).map((scene) => ({
+            name:scene.name,
+            title:scene.title || scene.name,
+            alias:scene.alias || [],
+            frames:this.copyJson(scene.frames || [], []),
+          })),
+        });
+        this.syncDiySourceText();
+        this.diyLastSnapshot = JSON.stringify(this.diyDesign || {});
+      }
+      return this.diyDesign;
+    },
+    syncDiyFromProfessional(design){
+      const source = design || this.professionalDesign || {
+        name:'deskbot-current-face',
+        description:'VisemeSync DIY design',
+        phonemes:[],
+        emotions:(this.scenes && this.scenes.length ? this.scenes : [this.buildCustomScene()]).map((scene) => ({
+          name:scene.name,
+          title:scene.title || scene.name,
+          alias:scene.alias || [],
+          frames:this.copyJson(scene.frames || [], []),
+        })),
+      };
+      this.diyDesign = this.normalizeProfessionalDesign(this.copyJson(source, source));
+      this.diySelectedIndex = 0;
+      this.diyFrameIndex = 0;
+      this.diySelectedPrimitiveIndex = -1;
+      this.syncDiySourceText();
+      this.diyLastSnapshot = JSON.stringify(this.diyDesign || {});
+      this.diyUndoStack = [];
+      this.diyRedoStack = [];
+    },
+    syncDiySourceText(){
+      if(this.diyDesign) this.diySourceText = JSON.stringify(this.diyDesign, null, 2);
+    },
+    touchDiy(){
+      this.ensureDiyDesign();
+      const current = JSON.stringify(this.diyDesign || {});
+      if(current !== this.diyLastSnapshot){
+        if(this.diyLastSnapshot) this.diyUndoStack.push(this.diyLastSnapshot);
+        if(this.diyUndoStack.length > 40) this.diyUndoStack.shift();
+        this.diyRedoStack = [];
+        this.diyLastSnapshot = current;
+      }
+      this.professionalDesign = this.normalizeProfessionalDesign(this.copyJson(this.diyDesign, {}));
+      this.syncDiySourceText();
+    },
+    restoreDiySnapshot(snapshot){
+      if(!snapshot) return;
+      try{
+        const parsed = JSON.parse(snapshot);
+        this.diyDesign = this.normalizeProfessionalDesign(parsed);
+        this.professionalDesign = this.normalizeProfessionalDesign(this.copyJson(this.diyDesign, {}));
+        this.diySelectedIndex = Math.max(0, Math.min(this.diySelectedIndex, this.diyItems.length - 1));
+        this.diyFrameIndex = Math.max(0, Math.min(this.diyFrameIndex, this.diyFrameCount - 1));
+        this.diySelectedPrimitiveIndex = -1;
+        this.diyLastSnapshot = JSON.stringify(this.diyDesign || {});
+        this.syncDiySourceText();
+      }catch(e){
+        this.msg = '历史记录恢复失败：' + (e && e.message ? e.message : e);
+      }
+    },
+    diyUndo(){
+      if(!this.diyUndoStack.length) return;
+      const current = JSON.stringify(this.diyDesign || {});
+      const previous = this.diyUndoStack.pop();
+      this.diyRedoStack.push(current);
+      this.restoreDiySnapshot(previous);
+    },
+    diyRedo(){
+      if(!this.diyRedoStack.length) return;
+      const current = JSON.stringify(this.diyDesign || {});
+      const next = this.diyRedoStack.pop();
+      this.diyUndoStack.push(current);
+      this.restoreDiySnapshot(next);
+    },
+    loadDiyFromCurrent(){
+      this.syncDiyFromProfessional({
+        name:'deskbot-current-face',
+        description:'Generated from current Deskbot 2C face scenes',
+        phonemes:(this.professionalDesign && Array.isArray(this.professionalDesign.phonemes)) ? this.professionalDesign.phonemes : [],
+        emotions:(this.scenes && this.scenes.length ? this.scenes : [this.buildCustomScene()]).map((scene) => ({
+          name:scene.name,
+          title:scene.title || scene.name,
+          alias:scene.alias || [],
+          frames:this.copyJson(scene.frames || [], []),
+        })),
+      });
+      this.msg = '已载入当前表情到 VisemeSync DIY';
+    },
+    setDiyKind(kind){
+      this.diyKind = kind;
+      this.diySelectedIndex = 0;
+      this.diyFrameIndex = 0;
+      this.diySelectedPrimitiveIndex = -1;
+      if(kind === 'source') this.syncDiySourceText();
+    },
+    diyLayerLabel(layer){
+      return {mouth:'嘴巴', eye_l:'左眼', eye_r:'右眼', nose:'鼻子', extra:'附加'}[layer] || layer;
+    },
+    defaultDiyExpression(){
+      const prefix = this.diyKind === 'phoneme' ? 'phoneme' : 'emotion';
+      const index = this.diyItems.length + 1;
+      return {
+        name: prefix + '_' + index,
+        title: this.diyKind === 'phoneme' ? '音素 ' + index : '表情 ' + index,
+        alias:[],
+        frames:[{ms:500, elements:this.emptyElements()}],
+      };
+    },
+    diyAddExpression(){
+      const design = this.ensureDiyDesign();
+      const rows = this.diyKind === 'phoneme' ? design.phonemes : design.emotions;
+      rows.push(this.defaultDiyExpression());
+      this.diySelectedIndex = rows.length - 1;
+      this.diyFrameIndex = 0;
+      this.diySelectedPrimitiveIndex = -1;
+      this.touchDiy();
+    },
+    diyDeleteExpression(){
+      const rows = this.diyItems;
+      if(rows.length <= 1){ this.msg = '至少保留一个表情'; return; }
+      rows.splice(this.diySelectedIndex, 1);
+      this.diySelectedIndex = Math.max(0, Math.min(this.diySelectedIndex, rows.length - 1));
+      this.diyFrameIndex = 0;
+      this.diySelectedPrimitiveIndex = -1;
+      this.touchDiy();
+    },
+    selectDiyExpression(index){
+      this.diySelectedIndex = Math.max(0, Math.min(Number(index) || 0, this.diyItems.length - 1));
+      this.diyFrameIndex = 0;
+      this.diySelectedPrimitiveIndex = -1;
+    },
+    setDiyAlias(value){
+      if(!this.activeDiyItem) return;
+      this.activeDiyItem.alias = this.aliasList(value);
+      this.touchDiy();
+    },
+    setDiyFrameMs(value){
+      const frame = this.activeDiyFrame;
+      frame.ms = this.clamp(value, 40, 5000);
+      this.touchDiy();
+    },
+    diyAddFrame(){
+      const item = this.activeDiyItem;
+      if(!item) return;
+      const base = this.activeDiyFrame || {ms:500, elements:this.emptyElements()};
+      item.frames.splice(this.diyFrameIndex + 1, 0, {
+        ms:this.clamp(base.ms || 500, 40, 5000),
+        elements:this.copyJson(base.elements || this.emptyElements(), this.emptyElements()),
+      });
+      this.diyFrameIndex += 1;
+      this.diySelectedPrimitiveIndex = -1;
+      this.touchDiy();
+    },
+    diyDuplicateFrame(){
+      this.diyAddFrame();
+    },
+    diyDeleteFrame(){
+      const item = this.activeDiyItem;
+      if(!item || !Array.isArray(item.frames)) return;
+      if(item.frames.length <= 1){ this.msg = '至少保留一帧'; return; }
+      item.frames.splice(this.diyFrameIndex, 1);
+      this.diyFrameIndex = Math.max(0, Math.min(this.diyFrameIndex, item.frames.length - 1));
+      this.diySelectedPrimitiveIndex = -1;
+      this.touchDiy();
+    },
+    diyPrevFrame(){
+      this.diyFrameIndex = (this.diyFrameIndex + this.diyFrameCount - 1) % this.diyFrameCount;
+      this.diySelectedPrimitiveIndex = -1;
+    },
+    diyNextFrame(){
+      this.diyFrameIndex = (this.diyFrameIndex + 1) % this.diyFrameCount;
+      this.diySelectedPrimitiveIndex = -1;
+    },
+    diyDefaultPrimitive(shape){
+      const color = this.diyColor || '#f4f4ef';
+      const base = {color};
+      if(shape === 'pixel') return {...base, shape:'pixel', x:140, y:120, w:4, h:4};
+      if(shape === 'line') return {...base, shape:'line', x1:114, y1:150, x2:170, y2:150, sw:3};
+      if(shape === 'circle') return {...base, shape:'circle', x:142, y:116, r:7};
+      if(shape === 'ellipse_fill') return {...base, shape:'ellipse_fill', x:142, y:104, rw:18, rh:10};
+      if(shape === 'round_rect') return {...base, shape:'round_rect', x:112, y:148, w:60, h:18, radius:9};
+      return {...base, shape:'rect', x:132, y:112, w:20, h:12};
+    },
+    diyAddPrimitive(shape){
+      const item = this.activeDiyItem || (this.diyAddExpression(), this.activeDiyItem);
+      if(!item) return;
+      const frame = this.activeDiyFrame;
+      const elements = this.ensureFrameElements(frame);
+      const rows = elements[this.diyLayer];
+      rows.push(this.diyDefaultPrimitive(shape));
+      this.diySelectedPrimitiveIndex = rows.length - 1;
+      this.touchDiy();
+    },
+    diyClonePrimitive(){
+      const p = this.selectedDiyPrimitive;
+      if(!p) return;
+      const rows = this.diyLayerPrimitives;
+      const clone = this.copyJson(p, {});
+      this.moveDiyPrimitiveBy(clone, 8, 8);
+      rows.splice(this.diySelectedPrimitiveIndex + 1, 0, clone);
+      this.diySelectedPrimitiveIndex += 1;
+      this.touchDiy();
+    },
+    diyDeletePrimitive(){
+      const rows = this.diyLayerPrimitives;
+      if(this.diySelectedPrimitiveIndex < 0 || this.diySelectedPrimitiveIndex >= rows.length) return;
+      rows.splice(this.diySelectedPrimitiveIndex, 1);
+      this.diySelectedPrimitiveIndex = -1;
+      this.touchDiy();
+    },
+    setDiyPrimitiveNumber(key, value){
+      const p = this.selectedDiyPrimitive;
+      if(!p) return;
+      p[key] = Math.round(Number(value) || 0);
+      this.touchDiy();
+    },
+    setSelectedDiyColor(){
+      const p = this.selectedDiyPrimitive;
+      if(p){
+        p.color = this.diyColor;
+        this.touchDiy();
+      }
+    },
+    diyShapeKind(p){
+      const shape = String((p && p.shape) || '').toLowerCase();
+      if(shape === 'pixel') return 'pixel';
+      if(shape === 'line') return 'line';
+      if(shape.indexOf('circle') >= 0) return 'circle';
+      if(shape.indexOf('ellipse') >= 0) return 'ellipse';
+      if(shape.indexOf('rect') >= 0) return 'rect';
+      return 'rect';
+    },
+    diyShapeRadius(p){
+      const shape = String((p && p.shape) || '').toLowerCase();
+      return shape.indexOf('round_rect') >= 0 ? (p.radius || 4) : 0;
+    },
+    diyPrimitiveColor(p){
+      return (p && (p.color || (typeof p.c === 'string' ? p.c : ''))) || this.diyColor || '#f4f4ef';
+    },
+    diyPrimitiveFill(p){
+      const shape = String((p && p.shape) || '').toLowerCase();
+      return shape.indexOf('outline') >= 0 || shape === 'line' ? 'none' : this.diyPrimitiveColor(p);
+    },
+    diyPrimitiveStroke(p){
+      const shape = String((p && p.shape) || '').toLowerCase();
+      return shape.indexOf('outline') >= 0 || shape === 'line' ? this.diyPrimitiveColor(p) : 'none';
+    },
+    svgPoint(evt){
+      const svg = evt.currentTarget && evt.currentTarget.tagName === 'svg'
+        ? evt.currentTarget
+        : (evt.currentTarget && evt.currentTarget.ownerSVGElement) || (evt.target && evt.target.ownerSVGElement);
+      if(!svg) return {x:0, y:0};
+      const pt = svg.createSVGPoint();
+      pt.x = evt.clientX;
+      pt.y = evt.clientY;
+      const out = pt.matrixTransform(svg.getScreenCTM().inverse());
+      return {x:Math.round(out.x), y:Math.round(out.y)};
+    },
+    startDiyPointer(evt, index){
+      if(index === undefined || index === null){
+        this.diySelectedPrimitiveIndex = -1;
+        return;
+      }
+      this.diySelectedPrimitiveIndex = Number(index);
+      const p = this.selectedDiyPrimitive;
+      if(!p) return;
+      this.diyColor = this.diyPrimitiveColor(p);
+      const point = this.svgPoint(evt);
+      this.diyDrag = {start:point, original:this.copyJson(p, {})};
+      if(evt.currentTarget && evt.currentTarget.setPointerCapture){
+        try{ evt.currentTarget.setPointerCapture(evt.pointerId); }catch(_){}
+      }
+      evt.preventDefault();
+    },
+    moveDiyPointer(evt){
+      if(!this.diyDrag || !this.selectedDiyPrimitive) return;
+      const point = this.svgPoint(evt);
+      const dx = point.x - this.diyDrag.start.x;
+      const dy = point.y - this.diyDrag.start.y;
+      const next = this.copyJson(this.diyDrag.original, {});
+      this.moveDiyPrimitiveBy(next, dx, dy);
+      Object.keys(this.selectedDiyPrimitive).forEach((key) => delete this.selectedDiyPrimitive[key]);
+      Object.assign(this.selectedDiyPrimitive, next);
+      evt.preventDefault();
+    },
+    endDiyPointer(){
+      if(this.diyDrag){
+        this.diyDrag = null;
+        this.touchDiy();
+      }
+    },
+    moveDiyPrimitiveBy(p, dx, dy){
+      const shape = this.diyShapeKind(p);
+      if(shape === 'line'){
+        p.x1 = Math.round((Number(p.x1) || 0) + dx);
+        p.y1 = Math.round((Number(p.y1) || 0) + dy);
+        p.x2 = Math.round((Number(p.x2) || 0) + dx);
+        p.y2 = Math.round((Number(p.y2) || 0) + dy);
+      }else{
+        p.x = Math.round((Number(p.x) || 0) + dx);
+        p.y = Math.round((Number(p.y) || 0) + dy);
+      }
+    },
+    handleDiyKey(evt){
+      if(!this.selectedDiyPrimitive) return;
+      const step = evt.shiftKey ? 8 : 1;
+      const moves = {ArrowLeft:[-step,0], ArrowRight:[step,0], ArrowUp:[0,-step], ArrowDown:[0,step]};
+      if(evt.key === 'Delete' || evt.key === 'Backspace'){
+        this.diyDeletePrimitive();
+        evt.preventDefault();
+        return;
+      }
+      if(!moves[evt.key]) return;
+      this.moveDiyPrimitiveBy(this.selectedDiyPrimitive, moves[evt.key][0], moves[evt.key][1]);
+      this.touchDiy();
+      evt.preventDefault();
+    },
+    diyFormatSource(){
+      try{
+        this.diySourceText = JSON.stringify(JSON.parse(this.diySourceText || '{}'), null, 2);
+      }catch(e){
+        this.msg = '源码 JSON 格式化失败：' + (e && e.message ? e.message : e);
+      }
+    },
+    async diyCopySource(){
+      this.syncDiySourceText();
+      try{
+        await navigator.clipboard.writeText(this.diySourceText);
+        this.msg = '已复制源码 JSON';
+      }catch(_){
+        this.msg = '当前浏览器不允许复制，可手动选择源码';
+      }
+    },
+    diyApplySource(){
+      try{
+        const parsed = JSON.parse(this.diySourceText || '{}');
+        this.syncDiyFromProfessional(parsed);
+        this.touchDiy();
+        this.msg = '源码 JSON 已应用到 DIY 编辑器';
+      }catch(e){
+        this.msg = '源码 JSON 应用失败：' + (e && e.message ? e.message : e);
+      }
+    },
+    diyExportJson(){
+      this.ensureDiyDesign();
+      this.syncDiySourceText();
+      const name = this.slugName((this.diyDesign && this.diyDesign.name) || 'visemesync-diy', 'visemesync-diy');
+      const blob = new Blob([this.diySourceText], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = name + '.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      this.msg = '已导出 VisemeSync DIY JSON';
+    },
+    diyApplyToProfessional(opts){
+      this.ensureDiyDesign();
+      const design = this.normalizeProfessionalDesign(this.copyJson(this.diyDesign, {}));
+      this.professionalDesign = design;
+      this.professionalFileName = 'visemesync-diy.json';
+      const imported = this.mergeProfessionalScenes(design);
+      if(!(opts && opts.silent)){
+        this.msg = '已加入当前表情：' + imported.length + ' 个情绪表情；保存表情后生效';
+      }
+      return design;
     },
     sceneFrameCount(scene){
       const preview = window.DeskbotFacePreview;
@@ -499,6 +1078,17 @@ createApp({
         }],
       };
     },
+    loadBrowseFallback(){
+      const scene = this.buildCustomScene();
+      this.scenes = [scene];
+      this.map = this.normalizeMap({idle: scene.name});
+      this.selected = 0;
+      this.mode = 'custom';
+      this.editingFace = false;
+      this.resetPreviewPlayback();
+      this.syncDiyFromProfessional();
+      this.msg = '';
+    },
     faceFromScene(scene){
       const preview = window.DeskbotFacePreview;
       const base = {...DEFAULT_CUSTOM_FACE};
@@ -578,6 +1168,7 @@ createApp({
       const design = this.normalizeProfessionalDesign(raw);
       this.professionalDesign = design;
       this.professionalFileName = fileName || '';
+      this.syncDiyFromProfessional(design);
       this.exprTab = 'professional';
       this.msg = '已载入专业设计：' + design.name;
       return design;
@@ -608,13 +1199,12 @@ createApp({
       this.msg = '已选择图片：' + this.imageExpressionFileName;
     },
     async generateImageExpression(){
-      if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }
       if(!this.imageExpressionFile){ this.msg = '请先选择一张图片'; return; }
       this.generatingImageExpression = true;
       this.startImageExpressionProgress('正在上传图片并生成 SVG', 12, 90);
       try{
         const form = new FormData();
-        form.append('device_id', this.deviceId);
+        if(this.deviceId) form.append('device_id', this.deviceId);
         form.append('prompt', String(this.imageExpressionPrompt || '').trim());
         form.append('image', this.imageExpressionFile);
         const res = await (await fetch('/api/face_design/generate-from-image', {method:'POST', body:form})).json();
@@ -639,7 +1229,7 @@ createApp({
       this.upsertScene(scene);
       this.mode = 'preset';
       this.resetPreviewPlayback();
-      if(!silent) this.msg = '已加入当前表情，点击保存表情后同步到设备配置';
+      if(!silent) this.msg = this.deviceId ? '已加入当前表情，点击保存表情后同步到设备配置' : '已加入当前表情，选择设备后可保存或预览到设备';
     },
     downloadImageExpressionSvg(){
       const svg = this.imageExpressionResult && this.imageExpressionResult.svg;
@@ -661,7 +1251,6 @@ createApp({
         this.msg = this.llmConfigMessage || '请先到「高级 · 模型配置」完成 AI 能力配置';
         return;
       }
-      if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }
       const prompt = String(this.professionalPrompt || '').trim();
       if(!prompt){ this.msg = '请先输入想要的表情风格'; return; }
       this.generatingProfessional = true;
@@ -669,7 +1258,7 @@ createApp({
         const res = await (await fetch('/api/face_design/generate', {
           method:'POST',
           headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({device_id:this.deviceId, prompt})
+          body: JSON.stringify(this.faceDesignGeneratePayload(prompt))
         })).json();
         if(!res.ok) throw new Error(res.error || 'AI 生成失败');
         this.setProfessionalDesign(res.design, 'ai-generated.json');
@@ -679,6 +1268,11 @@ createApp({
       }finally{
         this.generatingProfessional = false;
       }
+    },
+    faceDesignGeneratePayload(prompt){
+      const payload = {prompt};
+      if(this.deviceId) payload.device_id = this.deviceId;
+      return payload;
     },
     loadProfessionalFromCurrent(){
       const sourceScenes = (this.scenes && this.scenes.length) ? this.scenes : [this.buildCustomScene()];
@@ -771,7 +1365,7 @@ createApp({
     },
     async saveProfessionalDesign(){
       if(!this.professionalDesign){ this.msg = '请先导入或生成专业设计'; return; }
-      if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }
+      if(!this.deviceId){ this.msg = '保存表情需要先选择一台设备'; return; }
       this.savingProfessional = true;
       try{
         const design = this.normalizeProfessionalDesign(this.professionalDesign);
@@ -844,7 +1438,7 @@ createApp({
         const d = await (await fetch('/app/api/devices')).json();
         this.deviceId = d.current_device_id || '';
         this.noDevice = !this.deviceId;
-        if(!this.deviceId){ this.scenes = []; this.map = this.normalizeMap({}); this.mode = 'custom'; this.editingFace = false; this.resetPreviewPlayback(); return; }
+        if(!this.deviceId){ this.loadBrowseFallback(); return; }
         const q = '?device_id='+encodeURIComponent(this.deviceId);
         const r = await (await fetch('/api/face_expr_scenes'+q)).json();
         this.scenes = (r.config && r.config.length) ? r.config : [];
@@ -856,19 +1450,21 @@ createApp({
         const selectedScene = this.scenes[this.selected] || null;
         this.mode = selectedScene && selectedScene.name === 'custom_face' ? 'custom' : 'preset';
         this.editingFace = false;  // 初始显示保存的场景本身，与首页一致
+        this.syncDiyFromProfessional();
         this.resetPreviewPlayback();
       }catch(e){
         this.scenes = [];
         this.map = this.normalizeMap({});
         this.mode = 'custom';
         this.editingFace = false;
+        this.syncDiyFromProfessional();
         this.resetPreviewPlayback();
         this.msg = '表情数据加载失败：' + (e && e.message ? e.message : e);
       }
     },
     async save(opts){
       const options = opts || {};
-      if(!this.deviceId){ this.msg='没有当前设备，无法保存'; return null; }
+      if(!this.deviceId){ this.msg='保存表情需要先选择一台设备'; return null; }
       const selectedScene = this.mode === 'custom' ? this.upsertScene(this.buildCustomScene()) : this.scenes[this.selected];
       if(selectedScene && selectedScene.name && !options.preserveMap){
         this.map = Object.assign({}, this.map, { idle: selectedScene.name });
@@ -884,7 +1480,7 @@ createApp({
       return (r.ok && r2.ok && selectedScene) ? selectedScene : null;
     },
     async sendPreviewToDevice(){
-      if(!this.deviceId){ this.msg='请先在「我的设备」选择一台设备'; return; }
+      if(!this.deviceId){ this.msg='设备预览需要先选择一台设备'; return; }
       this.sending = true;
       try{
         const scene = await this.save({silent:true});

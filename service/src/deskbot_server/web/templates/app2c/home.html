@@ -12,33 +12,50 @@
       <h1>[[ greeting ]]，[[ owner ]]</h1>
       <p>专属于你的桌面机器人小歪现在很有精神。</p>
     </div>
-    <a class="btn ghost" href="{{ url_for('app2c.devices') }}">＋ 绑定设备</a>
+    <a v-if="!bound" class="btn ghost" href="{{ url_for('app2c.devices') }}">＋ 绑定设备</a>
   </div>
 
   <div class="homegrid">
     <!-- STAGE -->
-    <div class="stage">
-      <div class="brackets"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
-      <div class="stage-hd">
-        <span class="unit">UNIT · [[ deviceName ]]</span>
-        <span class="uid">[[ deviceId || '未绑定' ]]</span>
-      </div>
-      <div class="stage-mid">
-        <div class="face">
-          <div class="scanline"></div>
-          <svg width="240" height="200" viewBox="0 0 284 240" v-html="homeFaceSvg" aria-hidden="true"></svg>
+    <div class="leftcol">
+      <div class="stage">
+        <div class="brackets"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
+        <div class="stage-hd">
+          <span class="unit">UNIT · [[ deviceName ]]</span>
+          <span class="uid">[[ deviceId || '未绑定' ]]</span>
+        </div>
+        <div class="stage-mid">
+          <div class="face">
+            <div class="scanline"></div>
+            <svg width="240" height="200" viewBox="0 0 284 240" v-html="homeFaceSvg" aria-hidden="true"></svg>
+          </div>
+        </div>
+        <div class="readouts">
+          <a class="readout" href="{{ url_for('app2c.devices') }}"><span class="k">STATUS</span><span class="v"><span class="led" :style="bound ? null : 'background:#9a9a90'"></span>[[ bound ? '在线' : '未连接' ]]</span></a>
+          <a class="readout" href="{{ url_for('app2c.voice') }}"><span class="k">VOICE</span><span class="v">[[ voiceLabel ]]</span></a>
+          <a class="readout" href="{{ url_for('app2c.expr') }}"><span class="k">MOOD</span><span class="v">[[ faceLabel ]]</span></a>
+          <a class="readout" href="{{ url_for('app2c.memories') }}"><span class="k">MEMORY</span><span class="v">[[ memoryCount ]] 件</span></a>
         </div>
       </div>
-      <div class="readouts">
-        <a class="readout" href="{{ url_for('app2c.devices') }}"><span class="k">STATUS</span><span class="v"><span class="led" :style="bound ? null : 'background:#9a9a90'"></span>[[ bound ? '在线' : '未连接' ]]</span></a>
-        <a class="readout" href="{{ url_for('app2c.voice') }}"><span class="k">VOICE</span><span class="v">[[ voiceLabel ]]</span></a>
-        <a class="readout" href="{{ url_for('app2c.expr') }}"><span class="k">MOOD</span><span class="v">[[ faceLabel ]]</span></a>
-        <a class="readout" href="{{ url_for('app2c.memories') }}"><span class="k">MEMORY</span><span class="v">[[ memoryCount ]] 件</span></a>
-      </div>
+
+      <section class="home-camera-panel" aria-label="摄像头画面">
+        <div class="home-camera-head">
+          <div><span>CAMERA · LIVE</span><b>摄像头画面</b></div>
+          <a href="{{ url_for('app2c.lab') }}?tab=camera">打开实验台</a>
+        </div>
+        <div class="home-camera-frame">
+          <img v-if="camera.imageUrl" :src="camera.imageUrl" alt="摄像头实时画面">
+          <div v-else class="home-camera-empty">
+            <b>[[ camera.statusText ]]</b>
+            <small>[[ bound ? '等待设备上行 camera_view 画面' : '绑定并选择设备后显示实时画面' ]]</small>
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- RIGHT -->
     <div class="rightcol">
+      <!-- 主创作动作：任何状态都能进入 -->
       <div class="heroes">
         <a class="hero" href="{{ url_for('app2c.expr') }}">
           <div class="emoji"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg></div>
@@ -49,24 +66,52 @@
           <div><b>调声音</b><span>挑音色 · 试听</span></div>
         </a>
       </div>
-      <div class="gridcards">
-        <a class="mini" href="{{ url_for('app2c.memories') }}">
-          <div class="ic"><svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg><span class="num">[[ memoryCount ]]</span></div>
-          <b>它记得的事</b><small>[[ memoryCount ]] 条记忆</small>
+
+      <!-- 状态 A：还没配置好 → 上手清单（引导下一步，而非罗列全部入口） -->
+      <section v-if="setupIncomplete" class="home-setup" aria-label="上手清单">
+        <div class="home-setup-hd"><span>GET STARTED</span><b>让小歪活起来，还差几步</b></div>
+        <a class="setup-step" :class="{done: !llmMissing}" href="{{ url_for('app2c.advanced') }}?tab=llm">
+          <span class="step-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></span>
+          <span class="step-copy"><b>配置对话模型</b><small>火山方舟 API Key · 本地保存，不上云</small></span>
+          <span class="step-state">[[ llmMissing ? '去配置' : '已完成' ]]</span>
         </a>
-        <a class="mini" href="{{ url_for('app2c.reminders') }}">
-          <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num">[[ reminderCount ]]</span></div>
-          <b>提醒</b><small>[[ reminderCount ]] 个提醒</small>
+        <a class="setup-step" :class="{done: !ttsMissing}" href="{{ url_for('app2c.advanced') }}?tab=llm">
+          <span class="step-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></span>
+          <span class="step-copy"><b>选择声音能力</b><small>普通语音复用火山方舟 API Key；复刻才需额外凭证</small></span>
+          <span class="step-state">[[ ttsMissing ? '去配置' : '已完成' ]]</span>
         </a>
-        <a class="mini" href="{{ url_for('app2c.people') }}">
-          <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg><span class="num">[[ peopleCount ]]</span></div>
-          <b>认识的人</b><small>[[ peopleCount ]] 个人</small>
+        <a class="setup-step" :class="{done: bound}" href="{{ url_for('app2c.devices') }}">
+          <span class="step-check"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></span>
+          <span class="step-copy"><b>绑定你的小歪</b><small>绑定后表情、声音、记忆才会同步到设备</small></span>
+          <span class="step-state">[[ bound ? '已完成' : '去绑定' ]]</span>
         </a>
-        <a class="mini" href="{{ url_for('app2c.devices') }}">
-          <div class="ic"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg><span class="num">[[ deviceCount ]]</span></div>
-          <b>我的设备</b><small>[[ deviceCount ]] 台设备</small>
+      </section>
+
+      <!-- 状态 B：已配置 → 最近动态（展示内容，而非重复入口和空数字） -->
+      <section v-else class="home-recent" aria-label="最近动态">
+        <a class="recent-block" href="{{ url_for('app2c.memories') }}">
+          <div class="recent-hd"><span>MEMORY</span><b>它记得的事</b><i>[[ memoryCount ]]</i></div>
+          <ul v-if="recentMemories.length" class="recent-list">
+            <li v-for="m in recentMemories" :key="m.id">[[ m.text ]]</li>
+          </ul>
+          <p v-else class="recent-empty">还没有记忆，多和它聊聊，它会记住重要的事。</p>
         </a>
-      </div>
+        <a class="recent-block" href="{{ url_for('app2c.people') }}">
+          <div class="recent-hd"><span>FACES</span><b>认识的人</b><i>[[ peopleCount ]]</i></div>
+          <div v-if="recentPeople.length" class="avatar-row">
+            <span v-for="p in recentPeople" :key="p.person_id" class="avatar" :title="p.name || ('#'+p.person_id)">[[ (p.name||'?').slice(0,1) ]]</span>
+          </div>
+          <p v-else class="recent-empty">还没有认识的人，让它用摄像头看看你。</p>
+        </a>
+        <a class="recent-block" href="{{ url_for('app2c.reminders') }}">
+          <div class="recent-hd"><span>NEXT</span><b>下一个提醒</b><i>[[ reminderCount ]]</i></div>
+          <div v-if="nextReminder" class="recent-next">
+            <b>[[ nextReminder.description || nextReminder.title || '提醒' ]]</b>
+            <small>下次 [[ nextReminder.next_run_at || nextReminder.cron_expr || nextReminder.cron || '' ]]</small>
+          </div>
+          <p v-else class="recent-empty">还没有提醒，去设一个吧。</p>
+        </a>
+      </section>
     </div>
   </div>
 </div>
@@ -79,10 +124,17 @@ createApp({
   data(){ return {
     greeting:'你好', owner:{{ (nav_display_name or '主人')|tojson }},
     bound:false, deviceName:'未绑定', deviceId:'',
+    llmMissing:true, ttsMissing:true,
     voiceLabel:'未设置音色', emotionCount:0, memoryCount:0, reminderCount:0, peopleCount:0, deviceCount:0,
+    recentMemories:[], recentPeople:[], nextReminder:null,
     scenes:[], emotionMap:{}, faceLabel:'待机',
+    cameraViewWsBase: {{ camera_view_ws_base|tojson }},
+    debugToken:'',
+    camera:{ws:null,status:'idle',statusText:'选择设备后显示摄像头画面',imageUrl:'',frameBytes:0},
   }; },
   computed:{
+    // 未配置模型 或 未绑定设备 → 首页以上手清单为主，不展示日常动态
+    setupIncomplete(){ return this.llmMissing || !this.bound; },
     homeFaceSvg(){
       const preview = window.DeskbotFacePreview;
       if(!preview) return '';
@@ -91,13 +143,63 @@ createApp({
   },
   methods:{
     async j(u){ try{ return await (await fetch(u)).json(); }catch(e){ return {}; } },
+    async api(u){ const r=await fetch(u,{cache:'no-store'}); return await r.json(); },
+    async ensureDebugToken(){
+      if(this.debugToken) return this.debugToken;
+      const d = await this.api('/api/debug/ws_token');
+      this.debugToken = d.token || '';
+      return this.debugToken;
+    },
+    closeHomeCamera(){
+      if(this.camera.ws){ try{ this.camera.ws.close(); }catch(_e){} }
+      this.camera.ws = null;
+    },
+    async openHomeCamera(){
+      if(!this.bound || !this.deviceId || !this.cameraViewWsBase){
+        this.closeHomeCamera();
+        this.camera.status='idle';
+        this.camera.statusText='选择设备后显示摄像头画面';
+        return;
+      }
+      this.closeHomeCamera();
+      try{
+        const token = await this.ensureDebugToken();
+        const url = new URL(this.cameraViewWsBase);
+        url.searchParams.set('device_id', this.deviceId);
+        url.searchParams.set('debug_token', token);
+        this.camera.status='connecting';
+        this.camera.statusText='正在连接摄像头';
+        const ws = new WebSocket(url.toString());
+        ws.binaryType = 'blob';
+        ws.onopen = () => { this.camera.status='connected'; this.camera.statusText='等待摄像头画面'; };
+        ws.onclose = () => { this.camera.status='closed'; this.camera.statusText='摄像头连接已断开'; };
+        ws.onerror = () => { this.camera.status='error'; this.camera.statusText='摄像头连接失败'; };
+        ws.onmessage = (ev) => {
+          if(ev.data instanceof Blob){
+            if(this.camera.imageUrl) URL.revokeObjectURL(this.camera.imageUrl);
+            this.camera.frameBytes = ev.data.size;
+            this.camera.imageUrl = URL.createObjectURL(ev.data);
+            this.camera.status='streaming';
+            this.camera.statusText='实时画面';
+          }
+        };
+        this.camera.ws = ws;
+      }catch(_e){
+        this.camera.status='error';
+        this.camera.statusText='摄像头连接失败';
+      }
+    },
     setGreeting(){
       const h=new Date().getHours();
       this.greeting = h<6?'凌晨好' : h<9?'早上好' : h<12?'上午好' : h<14?'中午好' : h<18?'下午好' : '晚上好';
     },
     async load(){
+      // 配置状态：对话模型 + 声音能力（与顶部全局提示条同源判断）
+      const setup = await this.j('/api/setup/llm');
+      this.llmMissing = !!setup.needs_config;
       // 当前音色：火山引擎(豆包)返回 speaker id，再用音色清单解析成展示名称
       const cfg = await this.j('/api/doubao_tts/config');
+      this.ttsMissing = !(cfg.config && cfg.config.api_key_set);
       const sid = (cfg.config && cfg.config.speaker) || '';
       if(sid){
         const sp = await this.j('/api/doubao_tts/speakers');
@@ -117,9 +219,12 @@ createApp({
       this.faceLabel = '待机';
       // 以下统计依赖已选当前设备
       if(this.bound){
-        const mem = await this.j('/app/api/memories'); this.memoryCount = (mem.memories || []).length;
-        const rem = await this.j('/app/api/scheduled-tasks'); this.reminderCount = (rem.tasks || []).length;
-        const ppl = await this.j('/app/api/face-profiles'); this.peopleCount = (ppl.profiles || []).length;
+        const mem = await this.j('/app/api/memories'); const memList = mem.memories || [];
+        this.memoryCount = memList.length; this.recentMemories = memList.slice(0, 3);
+        const rem = await this.j('/app/api/scheduled-tasks'); const remList = rem.tasks || [];
+        this.reminderCount = remList.length; this.nextReminder = remList[0] || null;
+        const ppl = await this.j('/app/api/face-profiles'); const pplList = ppl.profiles || [];
+        this.peopleCount = pplList.length; this.recentPeople = pplList.slice(0, 6);
         const q = '?device_id=' + encodeURIComponent(this.deviceId);
         const scenes = await this.j('/api/face_expr_scenes' + q);
         this.scenes = scenes.config || [];
@@ -130,9 +235,11 @@ createApp({
         const face = preview ? preview.pickScene(this.scenes, this.emotionMap, 'idle') : null;
         this.faceLabel = face ? (face.title || face.name || '待机') : '待机';
       }
+      await this.openHomeCamera();
     },
   },
   mounted(){ this.setGreeting(); this.load(); },
+  beforeUnmount(){ this.closeHomeCamera(); if(this.camera.imageUrl) URL.revokeObjectURL(this.camera.imageUrl); },
 }).mount('#home');
 </script>
 {% endblock %}

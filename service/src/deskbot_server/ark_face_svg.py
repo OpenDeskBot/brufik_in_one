@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
+import io
 import json
 import os
 import re
@@ -36,6 +38,7 @@ ArkTransport = Callable[[str, dict[str, Any], str, int], dict[str, Any]]
 
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.I)
 _NAME_RE = re.compile(r"[^a-z0-9_]+", re.I)
+_VALID_SCENE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$", re.I)
 _SAFE_COLOR_RE = re.compile(
     r"^(none|currentColor|black|white|#[0-9a-fA-F]{3,8}|rgb\([0-9,\s.%-]+\)|rgba\([0-9,\s.%-]+\))$"
 )
@@ -117,7 +120,7 @@ def _resolve_thinking() -> dict[str, str] | None:
     return {"type": value}
 
 
-def _image_data_url(image_bytes: bytes, mime_type: str) -> str:
+def _validate_image_upload(image_bytes: bytes, mime_type: str) -> str:
     if not image_bytes:
         raise ValueError("请上传图片文件")
     if len(image_bytes) > MAX_IMAGE_BYTES:
@@ -125,15 +128,80 @@ def _image_data_url(image_bytes: bytes, mime_type: str) -> str:
     mime = str(mime_type or "").split(";", 1)[0].strip().lower()
     if mime not in ALLOWED_IMAGE_MIME_TYPES:
         raise ValueError("只支持 PNG、JPG、WebP 或 GIF 图片")
+    return mime
+
+
+def _image_data_url(image_bytes: bytes, mime_type: str) -> str:
+    mime = _validate_image_upload(image_bytes, mime_type)
     encoded = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{mime};base64,{encoded}"
+
+
+def _otsu_threshold(gray: Any) -> int:
+    histogram = gray.histogram()
+    total = sum(histogram)
+    if total <= 0:
+        return 160
+
+    sum_total = sum(level * count for level, count in enumerate(histogram))
+    sum_back = 0
+    weight_back = 0
+    best_threshold = 160
+    best_variance = -1.0
+    for level, count in enumerate(histogram):
+        weight_back += count
+        if weight_back <= 0:
+            continue
+        weight_fore = total - weight_back
+        if weight_fore <= 0:
+            break
+        sum_back += level * count
+        mean_back = sum_back / weight_back
+        mean_fore = (sum_total - sum_back) / weight_fore
+        variance = weight_back * weight_fore * (mean_back - mean_fore) ** 2
+        if variance > best_variance:
+            best_variance = variance
+            best_threshold = level
+    return max(40, min(220, int(best_threshold)))
+
+
+def _preprocess_image_for_face_svg(image_bytes: bytes, mime_type: str) -> tuple[bytes, str, dict[str, Any]]:
+    source_mime = _validate_image_upload(image_bytes, mime_type)
+    fallback_meta = {"applied": False, "mode": "original", "mime_type": source_mime}
+    try:
+        from PIL import Image, ImageOps  # type: ignore
+
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image = ImageOps.exif_transpose(image)
+            if getattr(image, "is_animated", False):
+                image.seek(0)
+            gray = ImageOps.grayscale(image.convert("RGB"))
+            gray = ImageOps.autocontrast(gray)
+            threshold = _otsu_threshold(gray)
+            black_white = gray.point(lambda pixel: 255 if pixel > threshold else 0, mode="L")
+            output = io.BytesIO()
+            black_white.save(output, format="PNG", optimize=True)
+            return (
+                output.getvalue(),
+                "image/png",
+                {
+                    "applied": True,
+                    "mode": "binary_bw",
+                    "mime_type": "image/png",
+                    "source_mime_type": source_mime,
+                    "threshold": threshold,
+                },
+            )
+    except Exception:
+        return image_bytes, source_mime, fallback_meta
 
 
 def _build_prompt(user_prompt: str) -> str:
     extra = str(user_prompt or "").strip()
     prompt = (
-        "你是 Deskbot 小歪的图片表情包转译器。请观察上传的表情包图片，"
-        "提取最核心的情绪和五官造型，生成适合 284x240 OLED 显示的矢量表情。"
+        "你是 Deskbot 小歪的图片表情包转译器。输入图会先被服务端转成高对比黑白图，"
+        "请定位并提取面部表情，只保留眉眼、眼神、鼻子、嘴型和脸颊这些表达情绪的五官造型，"
+        "忽略背景、文字、水印、边框、装饰、身体和手势，生成适合 284x240 OLED 显示的矢量表情。"
         "只输出 JSON，不要 Markdown，不要解释。"
         "JSON schema: {name, title, svg, scene}。"
         "svg 必须是单个 <svg viewBox=\"0 0 284 240\">，只使用 path/circle/ellipse/rect/line/polyline/polygon，"
@@ -144,7 +212,7 @@ def _build_prompt(user_prompt: str) -> str:
         "ellipse_fill, ellipse, circle, line, rect, round_rect, round_rect_outline。"
         "scene 图元必须使用 PB 坐标字段：圆/椭圆用 x/y/r 或 x/y/rw/rh，矩形用 x/y/w/h/radius，"
         "线用 x1/y1/x2/y2；不要在 scene 里使用 cx/cy/rx/ry/path/svg。"
-        "scene.name 用英文小写 snake_case，坐标范围基于 284x240。"
+        "scene.name 必须匹配 ^[a-z][a-z0-9_]*$，用英文小写 snake_case，坐标范围基于 284x240。"
     )
     if extra:
         prompt += f"\n用户补充要求：{extra}"
@@ -286,10 +354,21 @@ def sanitize_svg(svg: str) -> str:
     return ET.tostring(clean, encoding="unicode", short_empty_elements=True)
 
 
+def _hashed_scene_name(*parts: Any) -> str:
+    digest = hashlib.sha1()
+    for part in parts:
+        if isinstance(part, bytes):
+            digest.update(part)
+        else:
+            digest.update(str(part or "").encode("utf-8", "surrogatepass"))
+        digest.update(b"\0")
+    return f"image_expr_{digest.hexdigest()[:12]}"
+
+
 def _slug_name(value: str, fallback: str = "image_expression") -> str:
     raw = str(value or fallback).strip().lower()
     raw = _NAME_RE.sub("_", raw).strip("_")[:64]
-    if not raw or not re.match(r"^[a-z]", raw):
+    if not raw or not _VALID_SCENE_NAME_RE.match(raw):
         raw = fallback
     return raw
 
@@ -589,7 +668,8 @@ def generate_face_svg_from_image(
 ) -> dict[str, Any]:
     resolved_key = _resolve_api_key(api_key)
     resolved_model = _resolve_model(model)
-    image_url = _image_data_url(image_bytes, mime_type)
+    model_image_bytes, model_mime_type, preprocess_meta = _preprocess_image_for_face_svg(image_bytes, mime_type)
+    image_url = _image_data_url(model_image_bytes, model_mime_type)
     payload = _response_payload(resolved_model, image_url, prompt, max_output_tokens=max_output_tokens)
     call = transport or _post_ark_responses
     response = call(str(responses_url or ARK_RESPONSES_URL), payload, resolved_key, timeout)
@@ -597,7 +677,8 @@ def generate_face_svg_from_image(
     if not raw_text:
         raise RuntimeError("Ark Responses 没有返回文本内容")
     obj = _json_object_from_text(raw_text)
-    name = _slug_name(str(obj.get("name") or "image_expression"))
+    fallback_name = _hashed_scene_name(image_bytes, prompt, obj.get("name"), obj.get("title"), obj.get("svg"))
+    name = _slug_name(str(obj.get("name") or fallback_name), fallback=fallback_name)
     title = str(obj.get("title") or name).strip()[:80]
     svg = sanitize_svg(str(obj.get("svg") or ""))
     scene = _normalize_scene(obj.get("scene"), fallback_name=name, fallback_title=title)
@@ -610,4 +691,5 @@ def generate_face_svg_from_image(
         "raw": response,
         "model": resolved_model,
         "usage": response.get("usage") if isinstance(response.get("usage"), dict) else None,
+        "image_preprocess": preprocess_meta,
     }

@@ -133,6 +133,16 @@ def _require_device_id():
     return did, None
 
 
+def _optional_device_id():
+    did = _effective_device_id(required=False)
+    if not did:
+        return None, None
+    denied = _deny_foreign_device(did)
+    if denied:
+        return None, denied
+    return did, None
+
+
 @bp.get("/health")
 def health_ok():
     return ("ok", 200)
@@ -659,7 +669,7 @@ def llm_chat():
             jsonify(
                 {
                     "ok": False,
-                    "error": "LLM API Key 未配置（设备 LLM 管理或环境变量 LLM_API_KEY / ARK_API_KEY / VOLCENGINE_API_KEY / DASHSCOPE_API_KEY）",
+                    "error": "LLM API Key 未配置（设备 LLM 管理或环境变量 ARK_API_KEY / VOLCENGINE_API_KEY / DOUBAO_API_KEY / LLM_API_KEY）",
                 }
             ),
             400,
@@ -813,7 +823,7 @@ def _normalize_generated_design(raw: dict) -> dict:
 
 @bp.post("/api/face_design/generate")
 def api_face_design_generate():
-    device_id, err = _require_device_id()
+    device_id, err = _optional_device_id()
     if err:
         return err
     payload = request.get_json(silent=True) or {}
@@ -871,7 +881,7 @@ def api_face_design_generate():
             "model_display_name": meta.get("display_name"),
             "usage": meta.get("usage"),
             "elapsed_ms": elapsed_ms,
-            "device_id": device_id,
+            "device_id": device_id or "",
             "t": time.time(),
         }
     )

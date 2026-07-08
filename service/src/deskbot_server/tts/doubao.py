@@ -33,9 +33,16 @@ logger = logging.getLogger("deskbot-server")
 DEFAULT_WS_URL = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
 DEFAULT_RESOURCE_ID = "seed-tts-2.0"
 DEFAULT_MODEL = "seed-tts-2.0-expressive"
+DEFAULT_SPEAKER = "zh_female_vv_uranus_bigtts"
 DEFAULT_VOICE_CLONE_RESOURCE_ID = "seed-icl-2.0"
 DEFAULT_VOICE_CLONE_URL = "https://openspeech.bytedance.com/api/v3/tts/voice_clone"
 DEFAULT_VOICE_STATUS_URL = "https://openspeech.bytedance.com/api/v3/tts/get_voice"
+SHARED_VOLCENGINE_KEY_ENV_NAMES = (
+    "ARK_API_KEY",
+    "VOLCENGINE_API_KEY",
+    "DOUBAO_API_KEY",
+    "LLM_API_KEY",
+)
 
 
 @dataclass(frozen=True)
@@ -109,11 +116,22 @@ def resolve_optional_secret(incoming, fallback: str) -> str:
     return raw
 
 
+def _resolve_tts_api_key() -> str:
+    specific = (os.environ.get("DOUBAO_TTS_API_KEY") or "").strip()
+    if specific:
+        return specific
+    for name in SHARED_VOLCENGINE_KEY_ENV_NAMES:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def load_doubao_tts_config() -> DoubaoTtsConfig:
     load_dotenv()
     return DoubaoTtsConfig(
-        api_key=(os.environ.get("DOUBAO_TTS_API_KEY") or "").strip(),
-        speaker=(os.environ.get("DOUBAO_TTS_SPEAKER") or "").strip(),
+        api_key=_resolve_tts_api_key(),
+        speaker=(os.environ.get("DOUBAO_TTS_SPEAKER") or DEFAULT_SPEAKER).strip(),
         resource_id=(os.environ.get("DOUBAO_TTS_RESOURCE_ID") or DEFAULT_RESOURCE_ID).strip(),
         model=(os.environ.get("DOUBAO_TTS_MODEL") or DEFAULT_MODEL).strip(),
         ws_url=(os.environ.get("DOUBAO_TTS_WS_URL") or DEFAULT_WS_URL).strip(),
@@ -166,11 +184,11 @@ def _describe_ws_connect_error(exc: Exception) -> str:
         status = exc.response.status_code
         hint = ""
         if status == 401:
-            hint = "（鉴权失败：请核对 DOUBAO_TTS_API_KEY）"
+            hint = "（鉴权失败：请核对火山 API Key，可用 DOUBAO_TTS_API_KEY 或 ARK_API_KEY）"
         elif status == 403 and "not granted" in body:
             hint = "（资源未授权：请在控制台开通对应 Resource ID，例如 seed-tts-2.0）"
         elif status == 400 and "no token" in body:
-            hint = "（未提供 API Key：请配置 DOUBAO_TTS_API_KEY）"
+            hint = "（未提供 API Key：请配置火山 API Key）"
         detail = f"HTTP {status}"
         if body:
             detail += f": {body}"
@@ -224,7 +242,7 @@ class DoubaoTtsConnection:
         if not clean:
             raise ValueError("空文本")
         if not self._cfg.api_key:
-            raise ValueError("豆包 TTS 未配置 DOUBAO_TTS_API_KEY")
+            raise ValueError("豆包 TTS 未配置火山 API Key")
         if not self._cfg.speaker:
             raise ValueError("未设置 speaker（音色）")
 

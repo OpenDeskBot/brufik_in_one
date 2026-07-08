@@ -2,6 +2,7 @@
 {% if name == 'home' %}<svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
 {% elif name == 'expr' %}<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14c1 1.3 6 1.3 7 0"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg>
 {% elif name == 'voice' %}<svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/><path d="M19 6a8 8 0 010 12"/></svg>
+{% elif name == 'lab' %}<svg viewBox="0 0 24 24"><path d="M8 3v5l-4 8a4 4 0 003.6 5h8.8A4 4 0 0020 16l-4-8V3"/><path d="M9 3h6"/><path d="M7 14h10"/><path d="M10 17h4"/></svg>
 {% elif name == 'memory' %}<svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 011 1v16l-7-4-7 4V4a1 1 0 011-1z"/></svg>
 {% elif name == 'remind' %}<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
 {% elif name == 'people' %}<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
@@ -18,7 +19,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='theme_2c.css') }}?v=20260707-modelhierarchy">
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme_2c.css') }}?v=20260708-home-dashboard">
   {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -50,6 +51,7 @@
         <div class="lbl">核心玩法</div>
         <a href="{{ url_for('app2c.expr') }}" class="navlink {{ 'on' if active_nav=='expr' }}">{{ icon('expr') }}表情</a>
         <a href="{{ url_for('app2c.voice') }}" class="navlink {{ 'on' if active_nav=='voice' }}">{{ icon('voice') }}声音</a>
+        <a href="{{ url_for('app2c.lab') }}" class="navlink {{ 'on' if active_nav=='lab' }}">{{ icon('lab') }}实验台</a>
         <div class="lbl">日常</div>
         <a href="{{ url_for('app2c.memories') }}" class="navlink {{ 'on' if active_nav=='memory' }}">{{ icon('memory') }}它记得的事</a>
         <a href="{{ url_for('app2c.reminders') }}" class="navlink {{ 'on' if active_nav=='remind' }}">{{ icon('remind') }}提醒</a>
@@ -120,7 +122,7 @@
       if(!suppressModel && (llmMissing || ttsMissing)){
         var modelBody='对话、AI 表情设计、图片生成和声音都在这里统一配置。';
         if(llmMissing && !ttsMissing) modelBody='对话、AI 表情设计和图片生成需要先配置火山方舟模型。';
-        if(!llmMissing && ttsMissing) modelBody='试听、语音合成和声音复刻需要先配置 TTS Key。';
+        if(!llmMissing && ttsMissing) modelBody='试听和语音合成会复用火山方舟 API Key；声音复刻才需要额外凭证。';
         html.push(item(
           'model',
           '还没完成 AI 能力配置',

@@ -42,6 +42,7 @@ from deskbot_server.llm_config_store import (
     list_llm_models,
 )
 from deskbot_server.web.blueprints.app_bp import _flatten_usage_daily_rows
+from deskbot_server.web.helpers import camera_view_ws_base, device_pipeline_ws_base
 from deskbot_server.web.session_device import get_current_device_id
 
 # No url_prefix: 2C consumer routes live at root (/home, /voice, /my/*)
@@ -51,7 +52,11 @@ bp = Blueprint("app2c", __name__)
 @bp.get("/home")
 @login_required
 def home():
-    return render_template("app2c/home.html", active_nav="home")
+    return render_template(
+        "app2c/home.html",
+        active_nav="home",
+        camera_view_ws_base=camera_view_ws_base(),
+    )
 
 
 @bp.get("/voice")
@@ -64,6 +69,17 @@ def voice():
 @login_required
 def expr():
     return render_template("app2c/expr.html", active_nav="expr")
+
+
+@bp.get("/lab")
+@login_required
+def lab():
+    return render_template(
+        "app2c/lab.html",
+        active_nav="lab",
+        camera_view_ws_base=camera_view_ws_base(),
+        device_pipeline_ws_base=device_pipeline_ws_base(),
+    )
 
 
 @bp.get("/my/memories")
@@ -314,7 +330,7 @@ def _llm_config_message(*, device_selected: bool, api_key_set: bool, source: str
         return (
             "需要完成大模型配置：当前使用系统默认模型，但没有可用 API Key。"
             "请展开配置，填写 Ark 模型 ID 与 ARK_API_KEY，保存并设为当前；"
-            "也可以在环境变量里设置 LLM_API_KEY 或 ARK_API_KEY。"
+            "也可以在环境变量里设置 ARK_API_KEY / VOLCENGINE_API_KEY / LLM_API_KEY。"
         )
     return "需要完成大模型配置：请展开配置，填写模型 ID 与 ARK_API_KEY，保存并设为当前。"
 
@@ -488,9 +504,28 @@ def _owned_device_or_error():
         if isinstance(payload, dict):
             device_id = str(payload.get("device_id") or "").strip()
     if not device_id:
+        device_id = str(request.form.get("device_id") or "").strip()
+    if not device_id:
         device_id = (get_current_device_id() or "").strip()
     if not device_id:
         return None, (jsonify({"ok": False, "error": "请先选择设备"}), 400)
+    if not user_owns_device(current_user.id, device_id):
+        return None, (jsonify({"ok": False, "error": "设备不属于当前账号"}), 403)
+    return device_id, None
+
+
+def _optional_owned_device_or_error():
+    device_id = (request.args.get("device_id") or "").strip()
+    if not device_id and request.is_json:
+        payload = request.get_json(silent=True) or {}
+        if isinstance(payload, dict):
+            device_id = str(payload.get("device_id") or "").strip()
+    if not device_id:
+        device_id = str(request.form.get("device_id") or "").strip()
+    if not device_id:
+        device_id = (get_current_device_id() or "").strip()
+    if not device_id:
+        return "", None
     if not user_owns_device(current_user.id, device_id):
         return None, (jsonify({"ok": False, "error": "设备不属于当前账号"}), 403)
     return device_id, None
@@ -607,10 +642,31 @@ def face_mouth_by_phoneme_post():
     return jsonify({"ok": True, "device_id": device_id, "mouth_by_phoneme_groups": groups})
 
 
+@bp.post("/api/scene_playbook/export_plan")
+@login_required
+def scene_playbook_export_plan_post():
+    device_id, err = _owned_device_or_error()
+    if err:
+        return err
+    payload = request.get_json(silent=True) or {}
+    playbook = payload.get("playbook")
+    if not isinstance(playbook, dict):
+        return jsonify({"ok": False, "error": "missing playbook"}), 400
+    try:
+        from deskbot_server.scene_playbook_runner import playbook_debug_snapshot
+        from deskbot_server.scene_playbooks_store import normalize_playbook
+
+        pb = normalize_playbook(playbook)
+        snap = playbook_debug_snapshot(pb, device_id=device_id)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "device_id": device_id, **snap})
+
+
 @bp.post("/api/face_design/generate-from-image")
 @login_required
 def face_design_generate_from_image_post():
-    device_id, err = _owned_device_or_error()
+    device_id, err = _optional_owned_device_or_error()
     if err:
         return err
     upload = request.files.get("image") or request.files.get("file")

@@ -21,7 +21,17 @@ def temp_db(monkeypatch):
         yield db_path
 
 
-PAGES = ["/home", "/voice", "/expr", "/my/memories", "/my/reminders", "/my/people", "/my/devices", "/advanced"]
+PAGES = [
+    "/home",
+    "/voice",
+    "/expr",
+    "/lab",
+    "/my/memories",
+    "/my/reminders",
+    "/my/people",
+    "/my/devices",
+    "/advanced",
+]
 
 
 @pytest.mark.parametrize("path", PAGES)
@@ -62,8 +72,11 @@ def test_2c_advanced_json_apis(temp_db):
     payload = summary.get_json()
     assert payload["ok"] is True
     assert payload["current_device_id"] == "deskbot_adv"
-    assert payload["llm"]["needs_config"] is True
-    assert "大模型配置" in payload["llm"]["config_message"]
+    if payload["llm"]["system_default"]["api_key_set"]:
+        assert payload["llm"]["needs_config"] is False
+    else:
+        assert payload["llm"]["needs_config"] is True
+        assert "大模型配置" in payload["llm"]["config_message"]
 
     profile = client.patch("/api/advanced/profile", json={"display_name": "新名字"})
     assert profile.status_code == 200
@@ -79,10 +92,10 @@ def test_2c_advanced_json_apis(temp_db):
     model = client.post(
         "/app/api/llm-models?device_id=deskbot_adv",
         json={
-            "name": "Qwen",
-            "model_name": "qwen-flash",
-            "protocol": "openai",
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "name": "Doubao",
+            "model_name": "doubao-seed-2-1-pro-260628",
+            "protocol": "ark",
+            "base_url": "",
             "api_key": "sk-test",
         },
     )
@@ -96,6 +109,26 @@ def test_2c_advanced_json_apis(temp_db):
     assert configured["needs_config"] is False
     assert configured["active"]["api_key_set"] is True
     assert client.delete(f"/app/api/llm-models/{model_id}?device_id=deskbot_adv").status_code == 200
+
+
+def test_2c_tts_config_reuses_system_ark_key(temp_db, monkeypatch):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    for name in ("DOUBAO_TTS_API_KEY", "ARK_API_KEY", "VOLCENGINE_API_KEY", "DOUBAO_API_KEY", "LLM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ARK_API_KEY", "ark-shared-key")
+    create_user("tts-ark2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "tts-ark2c@example.com", "password": "password1234"})
+
+    resp = client.get("/api/doubao_tts/config")
+
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["ok"] is True
+    assert payload["config"]["api_key_set"] is True
 
 
 def test_2c_advanced_debug_is_inline_not_old_debug_links(temp_db):
@@ -119,6 +152,256 @@ def test_2c_advanced_debug_is_inline_not_old_debug_links(temp_db):
     assert "runDebugLlm" in html
     assert "runDebugTts" in html
     assert "runDebugSimulation" in html
+
+
+def test_2c_lab_surfaces_device_runtime_features(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("lab2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "lab2c@example.com", "password": "password1234"})
+
+    resp = client.get("/lab")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "设备实验台" in html
+    assert "舵机控制" in html
+    assert "摄像头" in html
+    assert "场景编排" in html
+    assert "PB 表情" in html
+    assert "ASR / 流水日志" in html
+    assert "/proxy/deskbot/api/servo_config" in html
+    assert "/proxy/deskbot/api/device_servo" in html
+    assert "/proxy/deskbot/api/device_tts" in html
+    assert "/proxy/deskbot/api/device_pb_scenes" in html
+    assert "/proxy/deskbot/api/device_pb_scene" in html
+    assert "/proxy/deskbot/api/device_face_catalog" in html
+    assert "/proxy/deskbot/api/device_face_play" in html
+    assert "/proxy/deskbot/api/device_pb_anim" in html
+    assert "/proxy/deskbot/api/device_pb_expr_scene" in html
+    assert "/proxy/deskbot/api/scene_playbooks" in html
+    assert "/proxy/deskbot/api/scene_playbook/run" in html
+    assert "/proxy/deskbot/api/asr_auto_reply" in html
+    assert "/proxy/deskbot/api/pb_idle_auto_dispatch" in html
+    assert "/proxy/deskbot/api/camera_servo_auto_mode" in html
+    assert "/proxy/deskbot/api/pipeline_recent" in html
+    assert "cameraViewWsBase" in html
+    assert "devicePipelineWsBase" in html
+
+
+def test_2c_lab_allows_browsing_before_device_selection(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("lab-browse2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "lab-browse2c@example.com", "password": "password1234"})
+
+    resp = client.get("/lab")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "async loadAll()" in html
+    assert "this.loadServoConfig({silent:true})" in html
+    assert "this.loadPbScenes({silent:true})" in html
+    assert "this.loadScenePlaybooks({silent:true})" in html
+    assert "this.loadCameraMode({silent:true})" in html
+    assert "requireDevice(options)" in html
+    assert "请先选择设备" in html
+
+
+def test_2c_nav_links_to_lab_page(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("lab-nav2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "lab-nav2c@example.com", "password": "password1234"})
+
+    resp = client.get("/home")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "实验台" in html
+    assert 'href="/lab"' in html
+
+
+def test_2c_expr_embeds_visemesync_diy_editor_features(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("expr-diy2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "expr-diy2c@example.com", "password": "password1234"})
+
+    resp = client.get("/expr")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "VisemeSync DIY" in html
+    assert "音素表情" in html
+    assert "情绪表情" in html
+    assert "源码 JSON" in html
+    assert "diy-canvas" in html
+    assert "diyAddPrimitive" in html
+    assert "diyUndo" in html
+    assert "diyRedo" in html
+    assert "diyAddFrame" in html
+    assert "diyDuplicateFrame" in html
+    assert "diyExportJson" in html
+    assert "diyApplyToProfessional" in html
+    assert "startDiyPointer" in html
+    assert "selectedDiyPrimitive" in html
+    assert "图元库" in html
+    assert "颜色" in html
+    assert "动画帧" in html
+
+
+def test_2c_expr_layout_collapses_to_balanced_workspace():
+    web_dir = Path(__file__).resolve().parents[1] / "src" / "deskbot_server" / "web"
+    css = (web_dir / "static" / "theme_2c.css").read_text(encoding="utf-8")
+
+    assert "grid-template-columns:minmax(330px,380px) minmax(0,1fr)" in css
+    assert ".expr-editor{max-width:none;min-width:0;width:100%}" in css
+    assert ".pro-metrics{grid-template-columns:repeat(4,minmax(0,1fr))" in css
+    assert ".diy-grid{grid-template-columns:minmax(180px,220px) minmax(320px,1fr) minmax(170px,200px)" in css
+    assert "@media(max-width:1280px)" in css
+    assert ".exprgrid{grid-template-columns:1fr}" in css
+    assert ".diy-grid{grid-template-columns:minmax(190px,240px) minmax(0,1fr)}" in css
+    assert ".diy-props-panel{grid-column:1/-1}" in css
+    assert "@media(max-width:900px)" in css
+    assert ".app{display:block}" in css
+    assert ".diy-grid{grid-template-columns:1fr}" in css
+
+
+def test_2c_home_heroes_are_the_two_creative_actions_without_duplicate_camera(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("lab-home2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "lab-home2c@example.com", "password": "password1234"})
+
+    resp = client.get("/home")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    # 首页两大主动作只剩「捏表情」与「调声音」，摄像头不再作为重复入口 hero 出现
+    assert "捏表情" in html
+    assert "调声音" in html
+    assert 'class="browse-shortcut camera-browse"' not in html
+    assert "摄像头浏览" not in html
+    # 摄像头仅保留在左侧 LIVE 面板里，通过「打开实验台」进入
+    assert 'href="/lab?tab=camera"' in html
+
+
+def test_2c_home_embeds_live_camera_view_under_stage(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("home-camera2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "home-camera2c@example.com", "password": "password1234"})
+
+    resp = client.get("/home")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'class="leftcol"' in html
+    assert 'class="home-camera-panel"' in html
+    assert 'class="home-camera-frame"' in html
+    assert "摄像头画面" in html
+    assert "cameraViewWsBase" in html
+    assert "openHomeCamera()" in html
+    assert "closeHomeCamera()" in html
+    assert "debug_token" in html
+
+
+def test_2c_home_is_state_aware_and_drops_duplicate_nav_panels(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("home-reminders2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "home-reminders2c@example.com", "password": "password1234"})
+
+    resp = client.get("/home")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    # 首页不再复刻侧边栏：移除快捷入口面板与数字 mini 卡
+    assert 'class="gridcards"' not in html
+    assert 'class="home-quick-panel"' not in html
+    assert "快捷入口" not in html
+    # 状态 A：未配置好时展示上手清单，引导下一步
+    assert 'class="home-setup"' in html
+    assert "让小歪活起来" in html
+    assert "配置对话模型" in html
+    assert "绑定你的小歪" in html
+    # 状态 B：配置完成后展示最近动态（内容而非数字）
+    assert 'class="home-recent"' in html
+    assert "setupIncomplete" in html
+    assert "recentMemories" in html
+
+
+def test_2c_lab_accepts_initial_tab_from_query(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("lab-query2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "lab-query2c@example.com", "password": "password1234"})
+
+    resp = client.get("/lab?tab=camera")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "initialLabTab()" in html
+    assert "URLSearchParams(window.location.search)" in html
+    assert "['servo','camera','scene','pb','logs']" in html
+
+
+def test_2c_scene_playbook_export_plan_is_available_to_regular_user(temp_db):
+    from deskbot_server.auth.device_service import bind_device
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("lab-export-admin2c@example.com", "password1234")
+    user = create_user("lab-export2c@example.com", "password1234")
+    bind_device(user.id, "deskbot_lab_export")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "lab-export2c@example.com", "password": "password1234"})
+    client.post("/app/api/devices/select", json={"device_id": "deskbot_lab_export"})
+
+    resp = client.post(
+        "/api/scene_playbook/export_plan",
+        json={
+            "device_id": "deskbot_lab_export",
+            "playbook": {
+                "name": "demo_export",
+                "title": "演示导出",
+                "chunks": [{"id": "c1", "text": "你好", "servo": {"preset": "center", "ms": 500}}],
+            },
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["ok"] is True
+    assert payload["device_id"] == "deskbot_lab_export"
+    assert payload["playbook"]["name"] == "demo_export"
+    assert "phases" in payload
 
 
 def test_2c_voice_page_links_to_model_config_and_keeps_player(temp_db):
@@ -224,7 +507,9 @@ def test_2c_theme_uses_bold_retro_tokens():
     assert "@media(max-width:600px)" in css
     assert "white-space:nowrap" in css
     assert ".topbar .tb-sub,.topbar .tb-clock{display:none}" in css
-    assert "?v=20260707-modelhierarchy" in base
+    assert ".heroes,.home-recent{grid-template-columns:1fr}" in css
+    assert ".home-camera-frame{position:relative;aspect-ratio:16/9" in css
+    assert "?v=20260708-home-dashboard" in base
     assert "?v=20260707-modelhierarchy" in auth_base
 
 
@@ -529,10 +814,36 @@ def test_2c_expr_preview_uses_home_fallback_until_user_edits(temp_db):
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert "preview.pickScene(this.scenes, this.map, 'idle')" in html
-    assert "if(!this.deviceId){ this.scenes = [];" in html
+    assert "loadBrowseFallback" in html
+    assert "if(!this.deviceId){ this.loadBrowseFallback(); return; }" in html
+    assert "if(!this.deviceId){ this.scenes = [];" not in html
     assert "this.scenes = (r.config && r.config.length) ? r.config : [];" in html
     assert "applyPreset(name)" in html
     assert "this.editingFace = true;" in html
+
+
+def test_2c_expr_allows_browsing_without_device_selection(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("expr-browse2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "expr-browse2c@example.com", "password": "password1234"})
+
+    resp = client.get("/expr")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'data-suppress-device="1"' in html
+    assert ':disabled="noDevice"' not in html
+    assert "绑定设备后可配置" not in html
+    assert "请先在「我的设备」选择一台设备，才能保存到设备配置。" not in html
+    assert "if(!this.deviceId){ this.msg = '请先在「我的设备」选择一台设备'; return; }" not in html
+    assert "if(this.deviceId) form.append('device_id', this.deviceId);" in html
+    assert "faceDesignGeneratePayload(prompt)" in html
+    assert "保存表情需要先选择一台设备" in html
+    assert "设备预览需要先选择一台设备" in html
 
 
 def test_2c_expr_page_exposes_professional_design_tab(temp_db):
@@ -811,6 +1122,36 @@ def test_face_design_generate_endpoint_uses_llm_and_returns_design(temp_db, monk
     assert "VisemeSync JSON" in joined
     assert "phonemes" in joined
     assert "emotions" in joined
+
+
+def test_face_design_generate_endpoint_allows_browsing_without_device(temp_db, monkeypatch):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    captured = {}
+
+    def fake_completion(messages, *, device_id=None, temperature=0.7, config=None, json_mode=True):
+        captured["device_id"] = device_id
+        return (
+            '{"name":"friendly","phonemes":[],"emotions":[{"name":"happy","title":"开心",'
+            '"frames":[{"ms":300,"elements":{"mouth":[]}}]}]}',
+            {"model": "openai/test", "source": "system", "display_name": "Test LLM", "usage": None},
+        )
+
+    monkeypatch.setattr("deskbot_server.llm.runtime.chat_completion", fake_completion)
+    create_user("face-ai-browse2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "face-ai-browse2c@example.com", "password": "password1234"})
+
+    resp = client.post("/api/face_design/generate", json={"prompt": "生成开心表情"})
+
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["ok"] is True
+    assert payload["device_id"] == ""
+    assert payload["design"]["emotions"][0]["name"] == "happy"
+    assert captured["device_id"] is None
 
 
 def test_2c_face_preview_helper_exposes_frame_reader():

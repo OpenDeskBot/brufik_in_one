@@ -163,12 +163,10 @@ def beijing_time_str() -> str:
 
 def resolve_llm_api_key() -> str:
     return (
-        os.environ.get("LLM_API_KEY")
-        or os.environ.get("ARK_API_KEY")
+        os.environ.get("ARK_API_KEY")
         or os.environ.get("VOLCENGINE_API_KEY")
         or os.environ.get("DOUBAO_API_KEY")
-        or os.environ.get("DASHSCOPE_API_KEY")
-        or os.environ.get("QWEN_API_KEY")
+        or os.environ.get("LLM_API_KEY")
         or ""
     )
 
