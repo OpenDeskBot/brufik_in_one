@@ -706,7 +706,7 @@ details.voice-advanced-fields:not([open]) .voice-advanced-grid{display:none}
   .exprgrid .face{width:min(300px,100%);height:210px}
   .expr-editor{max-width:none}
   .professional-design .design-loader,
-  .professional-design .diy-head{align-items:stretch;flex-wrap:wrap}
+  .diy-head{align-items:stretch;flex-wrap:wrap}
   .professional-design .design-actions{justify-content:flex-start}
   .diy-grid{grid-template-columns:minmax(190px,240px) minmax(0,1fr)}
   .diy-props-panel{grid-column:1/-1}

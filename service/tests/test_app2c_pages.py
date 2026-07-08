@@ -612,7 +612,7 @@ def test_2c_theme_uses_bold_retro_tokens():
     assert ".topbar .tb-sub,.topbar .tb-clock{display:none}" in css
     assert ".heroes,.home-recent{grid-template-columns:1fr}" in css
     assert ".home-media{display:grid" in css
-    assert "?v=20260708-home-media-triptych" in base
+    assert "?v=20260708-diy-into-face" in base
     assert "?v=20260707-modelhierarchy" in auth_base
 
 
@@ -893,9 +893,16 @@ def test_2c_expr_page_exposes_real_face_editor_controls(temp_db):
 
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert "捏脸参数" in html
-    assert 'v-model.number="customFace.eyeGap"' in html
-    assert 'v-model.number="customFace.mouthCurve"' in html
+    # 基础捏脸 tab 现在直接内嵌 VisemeSync DIY 像素编辑器（替换掉原滑块区）
+    assert "VisemeSync DIY / PIXEL" in html
+    assert 'class="diy-canvas"' in html
+    assert "diyAddPrimitive" in html
+    assert "捏脸参数" not in html
+    assert 'v-model.number="customFace.eyeGap"' not in html
+    # 大预览与 DIY 编辑器联动：捏脸 tab 下浏览当前正在编辑的表情
+    assert "this.exprTab === 'face' && this.activeDiyItem" in html
+    # 情绪→表情映射与预览/下发链路仍然保留
+    assert "情绪 → 表情 / MAP" in html
     assert "customPreviewSvg" in html
     assert "buildCustomScene" in html
     assert "faceFromScene" in html

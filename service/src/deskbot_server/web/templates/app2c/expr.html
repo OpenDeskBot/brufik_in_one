@@ -44,40 +44,124 @@
         <button type="button" :class="{on: exprTab==='professional'}" @click="exprTab='professional'" role="tab" :aria-selected="String(exprTab==='professional')">专业设计</button>
       </div>
       <section v-show="exprTab==='face'" class="expr-tabpane" role="tabpanel">
-        <div class="blocktitle top">捏脸参数 / FACE</div>
-        <div class="editor-grid">
-          <label class="slider-card">
-            <span>眼距</span><b>[[ customFace.eyeGap ]]</b>
-            <input type="range" min="64" max="132" step="2" v-model.number="customFace.eyeGap" @input="activateCustom">
-          </label>
-          <label class="slider-card">
-            <span>眼高</span><b>[[ customFace.eyeY ]]</b>
-            <input type="range" min="64" max="132" step="2" v-model.number="customFace.eyeY" @input="activateCustom">
-          </label>
-          <label class="slider-card">
-            <span>眼睛</span><b>[[ customFace.eyeSize ]]</b>
-            <input type="range" min="8" max="26" step="1" v-model.number="customFace.eyeSize" @input="activateCustom">
-          </label>
-          <label class="slider-card">
-            <span>眯眼</span><b>[[ customFace.eyeSquint ]]</b>
-            <input type="range" min="0" max="18" step="1" v-model.number="customFace.eyeSquint" @input="activateCustom">
-          </label>
-          <label class="slider-card">
-            <span>嘴宽</span><b>[[ customFace.mouthWidth ]]</b>
-            <input type="range" min="24" max="92" step="2" v-model.number="customFace.mouthWidth" @input="activateCustom">
-          </label>
-          <label class="slider-card">
-            <span>嘴高</span><b>[[ customFace.mouthY ]]</b>
-            <input type="range" min="126" max="184" step="2" v-model.number="customFace.mouthY" @input="activateCustom">
-          </label>
-          <label class="slider-card">
-            <span>嘴型</span><b>[[ customFace.mouthCurve ]]</b>
-            <input type="range" min="-18" max="18" step="1" v-model.number="customFace.mouthCurve" @input="activateCustom">
-          </label>
-          <label class="slider-card">
-            <span>脸颊</span><b>[[ customFace.blush ]]</b>
-            <input type="range" min="0" max="14" step="1" v-model.number="customFace.blush" @input="activateCustom">
-          </label>
+        <div class="viseme-diy" data-feature="visemesync-diy">
+          <div class="blocktitle top">VisemeSync DIY / PIXEL</div>
+          <div class="diy-head">
+            <div>
+              <b>VisemeSync DIY</b>
+              <small>[[ diyStats.name ]] · [[ diyStats.phonemes ]] 个音素表情 · [[ diyStats.emotions ]] 个情绪表情 · [[ diyStats.frames ]] 帧</small>
+            </div>
+            <div class="design-actions">
+              <button type="button" class="btn ghost" @click="diyUndo" :disabled="!diyUndoStack.length">撤销</button>
+              <button type="button" class="btn ghost" @click="diyRedo" :disabled="!diyRedoStack.length">重做</button>
+              <button type="button" class="btn ghost" @click="loadDiyFromCurrent">从当前载入</button>
+              <button type="button" class="btn ghost" @click="diyExportJson">导出 JSON</button>
+              <button type="button" class="btn primary" @click="diyApplyToProfessional">加入当前表情</button>
+            </div>
+          </div>
+          <div class="diy-grid">
+            <aside class="diy-list-panel">
+              <div class="diy-kind-tabs" role="tablist" aria-label="VisemeSync 编辑类型">
+                <button type="button" :class="{on:diyKind==='emotion'}" @click="setDiyKind('emotion')">情绪表情</button>
+                <button type="button" :class="{on:diyKind==='phoneme'}" @click="setDiyKind('phoneme')">音素表情</button>
+                <button type="button" :class="{on:diyKind==='source'}" @click="setDiyKind('source')">源码 JSON</button>
+              </div>
+              <template v-if="diyKind!=='source'">
+                <div class="diy-list-actions">
+                  <button type="button" class="btn ghost" @click="diyAddExpression">+ 表情</button>
+                  <button type="button" class="btn ghost" @click="diyDeleteExpression">删除</button>
+                </div>
+                <div class="diy-expression-list">
+                  <button type="button" class="diy-expression-row" :class="{sel:i===diySelectedIndex}" v-for="(item,i) in diyItems" :key="item.name + i" @click="selectDiyExpression(i)">
+                    <b>[[ item.title || item.name ]]</b>
+                    <small>[[ item.name ]] · [[ (item.alias || []).join(', ') || '-' ]]</small>
+                  </button>
+                </div>
+                <div class="diy-meta-form" v-if="activeDiyItem">
+                  <label>name<input class="tinput" v-model="activeDiyItem.name" @input="touchDiy"></label>
+                  <label>title<input class="tinput" v-model="activeDiyItem.title" @input="touchDiy"></label>
+                  <label>alias<input class="tinput" :value="(activeDiyItem.alias || []).join(', ')" @input="setDiyAlias($event.target.value)"></label>
+                </div>
+              </template>
+              <template v-else>
+                <div class="diy-source-actions">
+                  <button type="button" class="btn ghost" @click="diyFormatSource">格式化</button>
+                  <button type="button" class="btn ghost" @click="diyCopySource">复制</button>
+                  <button type="button" class="btn primary" @click="diyApplySource">应用源码</button>
+                </div>
+                <textarea class="tinput diy-source" v-model="diySourceText" spellcheck="false"></textarea>
+              </template>
+            </aside>
+            <section class="diy-canvas-panel">
+              <div class="diy-toolbar">
+                <label>当前图层
+                  <select v-model="diyLayer" @change="diySelectedPrimitiveIndex=-1">
+                    <option value="mouth">嘴巴</option>
+                    <option value="eye_l">左眼</option>
+                    <option value="eye_r">右眼</option>
+                    <option value="nose">鼻子</option>
+                    <option value="extra">附加</option>
+                  </select>
+                </label>
+                <label>颜色
+                  <input type="color" v-model="diyColor" @input="setSelectedDiyColor">
+                </label>
+                <label>帧时长
+                  <input class="tinput mini-input" type="number" min="40" max="5000" step="20" :value="activeDiyFrame.ms || 500" @input="setDiyFrameMs($event.target.value)">
+                </label>
+              </div>
+              <svg class="diy-canvas" viewBox="0 0 284 240" tabindex="0" @pointerdown="startDiyPointer($event)" @pointermove="moveDiyPointer" @pointerup="endDiyPointer" @pointercancel="endDiyPointer" @keydown="handleDiyKey">
+                <rect class="diy-canvas-bg" x="0" y="0" width="284" height="240"></rect>
+                <g class="diy-gridlines">
+                  <line v-for="x in diyGridXs" :key="'x'+x" :x1="x" y1="0" :x2="x" y2="240"></line>
+                  <line v-for="y in diyGridYs" :key="'y'+y" x1="0" :y1="y" x2="284" :y2="y"></line>
+                </g>
+                <g v-html="diyInactiveLayerSvg"></g>
+                <g>
+                  <template v-for="(p,i) in diyLayerPrimitives" :key="i">
+                    <rect v-if="diyShapeKind(p)==='pixel'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :x="p.x" :y="p.y" :width="p.w || 4" :height="p.h || 4" :fill="diyPrimitiveColor(p)" @pointerdown.stop="startDiyPointer($event,i)"></rect>
+                    <rect v-else-if="diyShapeKind(p)==='rect'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :x="p.x" :y="p.y" :width="p.w || 10" :height="p.h || 10" :rx="diyShapeRadius(p)" :fill="diyPrimitiveFill(p)" :stroke="diyPrimitiveStroke(p)" :stroke-width="p.sw || 2" @pointerdown.stop="startDiyPointer($event,i)"></rect>
+                    <ellipse v-else-if="diyShapeKind(p)==='ellipse'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :cx="p.x" :cy="p.y" :rx="p.rw || p.r || 6" :ry="p.rh || p.r || 6" :fill="diyPrimitiveFill(p)" :stroke="diyPrimitiveStroke(p)" :stroke-width="p.sw || 2" @pointerdown.stop="startDiyPointer($event,i)"></ellipse>
+                    <circle v-else-if="diyShapeKind(p)==='circle'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :cx="p.x" :cy="p.y" :r="p.r || 4" :fill="diyPrimitiveFill(p)" :stroke="diyPrimitiveStroke(p)" :stroke-width="p.sw || 2" @pointerdown.stop="startDiyPointer($event,i)"></circle>
+                    <line v-else-if="diyShapeKind(p)==='line'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :x1="p.x1" :y1="p.y1" :x2="p.x2" :y2="p.y2" :stroke="diyPrimitiveColor(p)" :stroke-width="p.sw || 3" stroke-linecap="round" @pointerdown.stop="startDiyPointer($event,i)"></line>
+                  </template>
+                </g>
+              </svg>
+              <div class="diy-shape-palette">
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('pixel')">像素块</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('rect')">矩形</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('round_rect')">圆角</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('ellipse_fill')">椭圆</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('circle')">圆点</button>
+                <button type="button" class="btn ghost" @click="diyAddPrimitive('line')">线条</button>
+              </div>
+              <div class="diy-framebar">
+                <button type="button" class="btn ghost" @click="diyPrevFrame">上一帧</button>
+                <button type="button" class="btn ghost" @click="diyAddFrame">+ 帧</button>
+                <button type="button" class="btn ghost" @click="diyDuplicateFrame">复制帧</button>
+                <button type="button" class="btn ghost" @click="diyDeleteFrame">删帧</button>
+                <button type="button" class="btn ghost" @click="diyNextFrame">下一帧</button>
+                <span>动画帧 [[ diyFrameIndex + 1 ]] / [[ diyFrameCount ]] · 总时长 [[ diyTotalMs ]]ms</span>
+              </div>
+            </section>
+            <aside class="diy-props-panel">
+              <h3>图元库</h3>
+              <div class="diy-layer-chips">
+                <button type="button" v-for="layer in diyLayers" :key="layer" :class="{on:diyLayer===layer}" @click="diyLayer=layer;diySelectedPrimitiveIndex=-1">[[ diyLayerLabel(layer) ]]</button>
+              </div>
+              <h3>颜色</h3>
+              <div class="diy-color-row">
+                <button type="button" v-for="c in diyPalette" :key="c" :style="{background:c}" :class="{on:diyColor===c}" @click="diyColor=c;setSelectedDiyColor()"></button>
+              </div>
+              <h3>图元属性</h3>
+              <div class="diy-props" v-if="selectedDiyPrimitive">
+                <label v-for="key in selectedDiyKeys" :key="key">[[ key ]]<input class="tinput" type="number" step="1" :value="selectedDiyPrimitive[key]" @input="setDiyPrimitiveNumber(key,$event.target.value)"></label>
+                <button type="button" class="btn ghost" @click="diyClonePrimitive">复制图元</button>
+                <button type="button" class="btn ghost" @click="diyDeletePrimitive">删除图元</button>
+              </div>
+              <p class="lead" v-else>选择一个图元后可编辑坐标。</p>
+            </aside>
+          </div>
         </div>
 
         <template v-if="scenes.length > 1">
@@ -211,125 +295,6 @@
             </tbody>
           </table>
         </div>
-        <div class="viseme-diy" data-feature="visemesync-diy">
-          <div class="blocktitle top">VisemeSync DIY / PIXEL</div>
-          <div class="diy-head">
-            <div>
-              <b>VisemeSync DIY</b>
-              <small>[[ diyStats.name ]] · [[ diyStats.phonemes ]] 个音素表情 · [[ diyStats.emotions ]] 个情绪表情 · [[ diyStats.frames ]] 帧</small>
-            </div>
-            <div class="design-actions">
-              <button type="button" class="btn ghost" @click="diyUndo" :disabled="!diyUndoStack.length">撤销</button>
-              <button type="button" class="btn ghost" @click="diyRedo" :disabled="!diyRedoStack.length">重做</button>
-              <button type="button" class="btn ghost" @click="loadDiyFromCurrent">从当前载入</button>
-              <button type="button" class="btn ghost" @click="diyExportJson">导出 JSON</button>
-              <button type="button" class="btn primary" @click="diyApplyToProfessional">加入当前表情</button>
-            </div>
-          </div>
-          <div class="diy-grid">
-            <aside class="diy-list-panel">
-              <div class="diy-kind-tabs" role="tablist" aria-label="VisemeSync 编辑类型">
-                <button type="button" :class="{on:diyKind==='emotion'}" @click="setDiyKind('emotion')">情绪表情</button>
-                <button type="button" :class="{on:diyKind==='phoneme'}" @click="setDiyKind('phoneme')">音素表情</button>
-                <button type="button" :class="{on:diyKind==='source'}" @click="setDiyKind('source')">源码 JSON</button>
-              </div>
-              <template v-if="diyKind!=='source'">
-                <div class="diy-list-actions">
-                  <button type="button" class="btn ghost" @click="diyAddExpression">+ 表情</button>
-                  <button type="button" class="btn ghost" @click="diyDeleteExpression">删除</button>
-                </div>
-                <div class="diy-expression-list">
-                  <button type="button" class="diy-expression-row" :class="{sel:i===diySelectedIndex}" v-for="(item,i) in diyItems" :key="item.name + i" @click="selectDiyExpression(i)">
-                    <b>[[ item.title || item.name ]]</b>
-                    <small>[[ item.name ]] · [[ (item.alias || []).join(', ') || '-' ]]</small>
-                  </button>
-                </div>
-                <div class="diy-meta-form" v-if="activeDiyItem">
-                  <label>name<input class="tinput" v-model="activeDiyItem.name" @input="touchDiy"></label>
-                  <label>title<input class="tinput" v-model="activeDiyItem.title" @input="touchDiy"></label>
-                  <label>alias<input class="tinput" :value="(activeDiyItem.alias || []).join(', ')" @input="setDiyAlias($event.target.value)"></label>
-                </div>
-              </template>
-              <template v-else>
-                <div class="diy-source-actions">
-                  <button type="button" class="btn ghost" @click="diyFormatSource">格式化</button>
-                  <button type="button" class="btn ghost" @click="diyCopySource">复制</button>
-                  <button type="button" class="btn primary" @click="diyApplySource">应用源码</button>
-                </div>
-                <textarea class="tinput diy-source" v-model="diySourceText" spellcheck="false"></textarea>
-              </template>
-            </aside>
-            <section class="diy-canvas-panel">
-              <div class="diy-toolbar">
-                <label>当前图层
-                  <select v-model="diyLayer" @change="diySelectedPrimitiveIndex=-1">
-                    <option value="mouth">嘴巴</option>
-                    <option value="eye_l">左眼</option>
-                    <option value="eye_r">右眼</option>
-                    <option value="nose">鼻子</option>
-                    <option value="extra">附加</option>
-                  </select>
-                </label>
-                <label>颜色
-                  <input type="color" v-model="diyColor" @input="setSelectedDiyColor">
-                </label>
-                <label>帧时长
-                  <input class="tinput mini-input" type="number" min="40" max="5000" step="20" :value="activeDiyFrame.ms || 500" @input="setDiyFrameMs($event.target.value)">
-                </label>
-              </div>
-              <svg class="diy-canvas" viewBox="0 0 284 240" tabindex="0" @pointerdown="startDiyPointer($event)" @pointermove="moveDiyPointer" @pointerup="endDiyPointer" @pointercancel="endDiyPointer" @keydown="handleDiyKey">
-                <rect class="diy-canvas-bg" x="0" y="0" width="284" height="240"></rect>
-                <g class="diy-gridlines">
-                  <line v-for="x in diyGridXs" :key="'x'+x" :x1="x" y1="0" :x2="x" y2="240"></line>
-                  <line v-for="y in diyGridYs" :key="'y'+y" x1="0" :y1="y" x2="284" :y2="y"></line>
-                </g>
-                <g v-html="diyInactiveLayerSvg"></g>
-                <g>
-                  <template v-for="(p,i) in diyLayerPrimitives" :key="i">
-                    <rect v-if="diyShapeKind(p)==='pixel'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :x="p.x" :y="p.y" :width="p.w || 4" :height="p.h || 4" :fill="diyPrimitiveColor(p)" @pointerdown.stop="startDiyPointer($event,i)"></rect>
-                    <rect v-else-if="diyShapeKind(p)==='rect'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :x="p.x" :y="p.y" :width="p.w || 10" :height="p.h || 10" :rx="diyShapeRadius(p)" :fill="diyPrimitiveFill(p)" :stroke="diyPrimitiveStroke(p)" :stroke-width="p.sw || 2" @pointerdown.stop="startDiyPointer($event,i)"></rect>
-                    <ellipse v-else-if="diyShapeKind(p)==='ellipse'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :cx="p.x" :cy="p.y" :rx="p.rw || p.r || 6" :ry="p.rh || p.r || 6" :fill="diyPrimitiveFill(p)" :stroke="diyPrimitiveStroke(p)" :stroke-width="p.sw || 2" @pointerdown.stop="startDiyPointer($event,i)"></ellipse>
-                    <circle v-else-if="diyShapeKind(p)==='circle'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :cx="p.x" :cy="p.y" :r="p.r || 4" :fill="diyPrimitiveFill(p)" :stroke="diyPrimitiveStroke(p)" :stroke-width="p.sw || 2" @pointerdown.stop="startDiyPointer($event,i)"></circle>
-                    <line v-else-if="diyShapeKind(p)==='line'" :class="['diy-primitive',{sel:i===diySelectedPrimitiveIndex}]" :x1="p.x1" :y1="p.y1" :x2="p.x2" :y2="p.y2" :stroke="diyPrimitiveColor(p)" :stroke-width="p.sw || 3" stroke-linecap="round" @pointerdown.stop="startDiyPointer($event,i)"></line>
-                  </template>
-                </g>
-              </svg>
-              <div class="diy-shape-palette">
-                <button type="button" class="btn ghost" @click="diyAddPrimitive('pixel')">像素块</button>
-                <button type="button" class="btn ghost" @click="diyAddPrimitive('rect')">矩形</button>
-                <button type="button" class="btn ghost" @click="diyAddPrimitive('round_rect')">圆角</button>
-                <button type="button" class="btn ghost" @click="diyAddPrimitive('ellipse_fill')">椭圆</button>
-                <button type="button" class="btn ghost" @click="diyAddPrimitive('circle')">圆点</button>
-                <button type="button" class="btn ghost" @click="diyAddPrimitive('line')">线条</button>
-              </div>
-              <div class="diy-framebar">
-                <button type="button" class="btn ghost" @click="diyPrevFrame">上一帧</button>
-                <button type="button" class="btn ghost" @click="diyAddFrame">+ 帧</button>
-                <button type="button" class="btn ghost" @click="diyDuplicateFrame">复制帧</button>
-                <button type="button" class="btn ghost" @click="diyDeleteFrame">删帧</button>
-                <button type="button" class="btn ghost" @click="diyNextFrame">下一帧</button>
-                <span>动画帧 [[ diyFrameIndex + 1 ]] / [[ diyFrameCount ]] · 总时长 [[ diyTotalMs ]]ms</span>
-              </div>
-            </section>
-            <aside class="diy-props-panel">
-              <h3>图元库</h3>
-              <div class="diy-layer-chips">
-                <button type="button" v-for="layer in diyLayers" :key="layer" :class="{on:diyLayer===layer}" @click="diyLayer=layer;diySelectedPrimitiveIndex=-1">[[ diyLayerLabel(layer) ]]</button>
-              </div>
-              <h3>颜色</h3>
-              <div class="diy-color-row">
-                <button type="button" v-for="c in diyPalette" :key="c" :style="{background:c}" :class="{on:diyColor===c}" @click="diyColor=c;setSelectedDiyColor()"></button>
-              </div>
-              <h3>图元属性</h3>
-              <div class="diy-props" v-if="selectedDiyPrimitive">
-                <label v-for="key in selectedDiyKeys" :key="key">[[ key ]]<input class="tinput" type="number" step="1" :value="selectedDiyPrimitive[key]" @input="setDiyPrimitiveNumber(key,$event.target.value)"></label>
-                <button type="button" class="btn ghost" @click="diyClonePrimitive">复制图元</button>
-                <button type="button" class="btn ghost" @click="diyDeletePrimitive">删除图元</button>
-              </div>
-              <p class="lead" v-else>选择一个图元后可编辑坐标。</p>
-            </aside>
-          </div>
-        </div>
       </section>
     </div>
   </div>
@@ -365,6 +330,11 @@ createApp({
   }; },
   computed:{
     previewScene(){
+      // 基础捏脸 tab 用 DIY 像素编辑器时，大预览直接浏览当前正在编辑的表情（含多帧动画），
+      // 编辑图元会实时反映到这块预览，切换左侧表情列表即可逐个浏览。
+      if(this.exprTab === 'face' && this.activeDiyItem){
+        return this.activeDiyItem;
+      }
       if(this.mode === 'custom'){
         // 未开始编辑时，直接显示已保存的 idle/自定义脸场景本身（与首页 sceneToSvg 完全一致）；
         // 一旦拖动滑块进入编辑，才切到 buildCustomScene（滑块合成脸）。
