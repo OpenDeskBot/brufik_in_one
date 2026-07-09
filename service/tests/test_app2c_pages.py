@@ -150,6 +150,24 @@ def test_2c_advanced_guides_users_to_volcengine_key_pages(temp_db):
     assert "不要把火山方舟 ARK_API_KEY 填到豆包语音 API Key" in html
 
 
+def test_2c_expr_curved_custom_mouth_hides_layout_box(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("expr-mouth2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "expr-mouth2c@example.com", "password": "password1234"})
+
+    resp = client.get("/expr")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "Math.abs(curve) > 2" in html
+    assert "color:'#000000'" in html
+    assert "mouth.push({shape:'line'" in html
+
+
 def test_2c_advanced_debug_is_inline_not_old_debug_links(temp_db):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
@@ -275,7 +293,7 @@ def test_2c_nav_links_to_lab_page(temp_db):
     assert 'href="/lab"' in html
 
 
-def test_2c_expr_embeds_visemesync_diy_editor_features(temp_db):
+def test_2c_expr_basic_face_uses_controls_without_second_canvas(temp_db):
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
@@ -288,23 +306,17 @@ def test_2c_expr_embeds_visemesync_diy_editor_features(temp_db):
 
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert "VisemeSync DIY" in html
-    assert "音素表情" in html
-    assert "情绪表情" in html
-    assert "源码 JSON" in html
-    assert "diy-canvas" in html
-    assert "diyAddPrimitive" in html
-    assert "diyUndo" in html
-    assert "diyRedo" in html
+    assert "捏脸参数" in html
+    assert 'v-model.number="customFace.eyeGap"' in html
+    assert 'v-model.number="customFace.mouthCurve"' in html
+    assert "activateCustom" in html
+    assert "VisemeSync DIY / PIXEL" not in html
+    assert 'class="diy-canvas"' not in html
+    assert 'class="diy-canvas-panel"' not in html
+    assert "图元库" not in html
     assert "diyAddFrame" in html
     assert "diyDuplicateFrame" in html
-    assert "diyExportJson" in html
-    assert "diyApplyToProfessional" in html
-    assert "startDiyPointer" in html
-    assert "selectedDiyPrimitive" in html
-    assert "图元库" in html
-    assert "颜色" in html
-    assert "动画帧" in html
+    assert "动画帧 [[ diyFrameIndex + 1 ]]" not in html
 
 
 def test_2c_expr_layout_collapses_to_balanced_workspace():
@@ -612,7 +624,7 @@ def test_2c_theme_uses_bold_retro_tokens():
     assert ".topbar .tb-sub,.topbar .tb-clock{display:none}" in css
     assert ".heroes,.home-recent{grid-template-columns:1fr}" in css
     assert ".home-media{display:grid" in css
-    assert "?v=20260708-diy-into-face" in base
+    assert "?v=20260709-expr-home-preview" in base
     assert "?v=20260707-modelhierarchy" in auth_base
 
 
@@ -893,14 +905,21 @@ def test_2c_expr_page_exposes_real_face_editor_controls(temp_db):
 
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    # 基础捏脸 tab 现在直接内嵌 VisemeSync DIY 像素编辑器（替换掉原滑块区）
-    assert "VisemeSync DIY / PIXEL" in html
-    assert 'class="diy-canvas"' in html
-    assert "diyAddPrimitive" in html
-    assert "捏脸参数" not in html
-    assert 'v-model.number="customFace.eyeGap"' not in html
-    # 大预览与 DIY 编辑器联动：捏脸 tab 下浏览当前正在编辑的表情
-    assert "this.exprTab === 'face' && this.activeDiyItem" in html
+    # 基础捏脸 tab 只提供参数控件，避免右侧再出现一块表情浏览画布
+    assert "捏脸参数" in html
+    assert 'v-model.number="customFace.eyeGap"' in html
+    assert "VisemeSync DIY / PIXEL" not in html
+    assert 'class="diy-canvas"' not in html
+    # 左侧大预览保留在统一位置，但表情数据源必须和首页当前表情一致
+    assert ':class="{\'editor-only\': exprTab===\'face\'}"' not in html
+    assert 'v-show="exprTab!==\'face\'"' not in html
+    assert "homePreviewScene()" in html
+    assert "preview.pickScene(this.scenes, this.map, 'idle')" in html
+    assert "this.exprTab === 'image' && this.generatedPreviewScene" not in html
+    assert "this.exprTab === 'face' && this.activeDiyItem" not in html
+    assert "this.exprTab === 'professional' && this.professionalDesign" not in html
+    assert "this.map = Object.assign({}, this.map, {idle: scene.name});" in html
+    assert 'class="generated-svg-preview"' not in html
     # 情绪→表情映射与预览/下发链路仍然保留
     assert "情绪 → 表情 / MAP" in html
     assert "customPreviewSvg" in html
@@ -908,6 +927,117 @@ def test_2c_expr_page_exposes_real_face_editor_controls(temp_db):
     assert "faceFromScene" in html
     assert "sendPreviewToDevice" in html
     assert "/api/device_pb_expr_scene" in html
+
+
+def test_2c_expr_keeps_svg_library_features_global_above_left_preview(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("expr-svg-library2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "expr-svg-library2c@example.com", "password": "password1234"})
+
+    resp = client.get("/expr")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "SVG 库" in html
+    assert "保存表情 / SVG" in html
+    assert 'class="expr-left-column"' in html
+    assert 'class="expr-global-svg-library"' in html
+    global_library = html.index('class="expr-global-svg-library"')
+    left_preview = html.index('class="stage expr-stage"')
+    right_editor = html.index('class="expr-editor"')
+    assert global_library < left_preview < right_editor
+    library_markup = html[global_library:left_preview]
+    assert "saveCurrentExpressionToLibrary" in library_markup
+    assert "downloadCurrentExpressionSvg" in library_markup
+    assert "savedVectorLibrary" in library_markup
+    assert 'class="saved-vector-preview"' in library_markup
+    assert "savedVectorItemSvg(item)" in library_markup
+    assert "@click=\"setExprTab('saveSvg')\"" not in html
+    assert "exprTab==='saveSvg'" not in html
+    assert "saveCurrentExpressionToLibrary" in html
+    assert "savedVectorLibrary" in html
+    assert "savedVectorItemSvg" in html
+    assert "downloadSavedExpression" in html
+    assert "importCustomVectorFile" in html
+    assert "clearCustomVectorShapes" in html
+    assert "face-editor-svg" in html
+    assert "startFaceShapeDrag" in html
+    assert "moveFaceShape" in html
+    assert "customVectors" in html
+    assert 'shape:"svg_path"' in html
+    assert "generated-svg-preview" not in html
+    assert "diy-canvas" not in html
+
+    static = client.get("/static/face_preview_2c.js").get_data(as_text=True)
+    assert "shape === \"svg_path\"" in static
+    assert "rotateTransform" in static
+
+
+def test_2c_expr_basic_sliders_still_drive_face_geometry(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("expr-basic-sliders2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "expr-basic-sliders2c@example.com", "password": "password1234"})
+
+    resp = client.get("/expr")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "reflowEyesFromBasicControls" in html
+    assert '@input="activateBasicCustom"' in html
+    assert "this.reflowEyesFromBasicControls(this.customFace);" in html
+
+
+def test_2c_expr_basic_face_does_not_generate_default_yellow_dots(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("expr-no-yellow-dots2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "expr-no-yellow-dots2c@example.com", "password": "password1234"})
+
+    resp = client.get("/expr")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "腮红" not in html
+    assert "blush:5" not in html
+    assert "blush:1" not in html
+    assert "eyes.eyeLeftX - 28" not in html
+    assert "eyes.eyeRightX + 28" not in html
+    assert "nose:[{shape:'circle_fill'" not in html
+
+
+def test_2c_expr_basic_tab_keeps_left_drag_editor_visible(temp_db):
+    from deskbot_server.auth.service import create_user
+    from deskbot_server.web.app import create_app
+
+    create_user("expr-left-drag2c@example.com", "password1234")
+    app = create_app()
+    client = app.test_client()
+    client.post("/login", data={"email": "expr-left-drag2c@example.com", "password": "password1234"})
+
+    resp = client.get("/expr")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "@click=\"setExprTab('face')\"" in html
+    assert "isFaceEditorEditable()" in html
+    assert ":class=\"{editable: isFaceEditorEditable, dragging: !!shapeDrag}\"" in html
+    assert "v-if=\"isFaceEditorEditable\"" in html
+    assert "ensureCustomEditingForFaceTab" in html
+    assert ".face-editor-svg.editable .face-editor-handle{opacity:.85}" in html
+    assert ".face-editor-svg.editable .face-editor-hit{opacity:.35}" in html
+    assert 'class="diy-canvas"' not in html
+    assert 'class="generated-svg-preview"' not in html
 
 
 def test_2c_expr_preview_uses_home_fallback_until_user_edits(temp_db):
@@ -926,7 +1056,10 @@ def test_2c_expr_preview_uses_home_fallback_until_user_edits(temp_db):
     assert "preview.pickScene(this.scenes, this.map, 'idle')" in html
     assert "loadBrowseFallback" in html
     assert "if(!this.deviceId){ this.loadBrowseFallback(); return; }" in html
-    assert "if(!this.deviceId){ this.scenes = [];" not in html
+    assert "Generated from current Deskbot 2C face scenes" in html
+    assert "const scene = this.buildCustomScene();" not in html
+    assert "this.scenes = [];" in html
+    assert "this.map = this.normalizeMap({});" in html
     assert "this.scenes = (r.config && r.config.length) ? r.config : [];" in html
     assert "applyPreset(name)" in html
     assert "this.editingFace = true;" in html
@@ -987,10 +1120,12 @@ def test_2c_expr_page_exposes_professional_design_tab(temp_db):
     assert "imageExpressionProgress" in html
     assert "imageExpressionProgressLabel" in html
     assert "previewFrameIndex" in html
-    assert "generatedPreviewSvg" in html
     assert "togglePreviewPlayback" in html
-    assert "prevGeneratedFrame" in html
-    assert "[[ generatedFrameLabel ]]" in html
+    assert "homePreviewScene()" in html
+    assert "[[ previewFrameLabel ]]" in html
+    assert "[[ generatedFrameLabel ]]" not in html
+    assert 'class="generated-result-card"' in html
+    assert 'class="generated-svg-preview"' not in html
     assert html.index("图片生成 / ARK SEED") < html.index("专业设计 / VISEMESYNC")
     assert "preserveMap:true" in html
     assert "/api/face_mouth_by_phoneme" in html
