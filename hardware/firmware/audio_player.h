@@ -56,8 +56,8 @@ size_t calculate_mean(const int16_t *data, size_t length);
  * 失败时同样会释放，避免泄漏。*/
 bool audio_play_wav_owned(uint8_t* heap_ptr, size_t len, float volume_ratio, uint32_t caps_for_heap_caps_free);
 
-/* 启动 I2S 播放任务（setup 阶段在 setup_audio + mic_capture 之后调用一次）。 */
-void audio_play_task_setup();
+/* 启动 I2S 播放任务（setup 阶段在 setup_audio + task_setup_mic_capture 之后调用一次）。 */
+void task_setup_audio_play();
 
 /* 流式 PCM16：调用方持续 push，小块会按顺序播放。
  * - 默认固定 16k/mono（与系统 SAMPLE_RATE 一致），因此不需要 begin/end。

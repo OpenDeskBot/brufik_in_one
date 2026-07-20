@@ -24,7 +24,7 @@ camera_face:
     calib_height: 240
     alpha: 1.0
 debug:
-  asr_auto_reply: false
+  asr_auto_reply: true
   pb_idle_auto_dispatch: true
   camera_servo_auto_mode: ''
 server:

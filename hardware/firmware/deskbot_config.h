@@ -81,13 +81,13 @@ static inline bool deskbot_api_key_configured(void) {
 #define DESKBOT_DRAW_H DESKBOT_PB_COORD_H
 
 /* 舵机 PWM：丝印 D6=GPIO43，D7=GPIO44（芯片默认 UART0，Bootloader 日志易致误动作）
- * 左右(X) → D7/44 小舵机；上下(Y) → D6/43 大舵机
+ * 左右(X) → D9/8 小舵机；上下(Y) → D3/4 大舵机
  * 保护：custom bootloader + servo_early_init constructor + setup claim LOW */
 #ifndef DESKBOT_ROM_X_PIN
-#define DESKBOT_ROM_X_PIN 44
+#define DESKBOT_ROM_X_PIN 8
 #endif
 #ifndef DESKBOT_ROM_Y_PIN
-#define DESKBOT_ROM_Y_PIN 43
+#define DESKBOT_ROM_Y_PIN 4
 #endif
 
 #ifndef DESKBOT_AUDIO_PLAY_VOLUME

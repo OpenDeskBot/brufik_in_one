@@ -61,20 +61,34 @@ void setup_audio() {
     digitalWrite(MAX98357_SD, HIGH);
   }
 
+  bool mic_ok = true;
+  bool spk_ok = true;
+
   esp_err_t err = i2s_driver_install(I2S_NUM_0, &i2sIn_config, 0, NULL);
   if (err != ESP_OK) {
-    log_error("[MIC] I2S PDM install FAILED err=%d — mic will not work", (int)err);
-  }
-  i2s_set_pin(I2S_NUM_0, &i2sIn_pin_config);
+    log_error("[AUDIO] mic I2S0 PDM install failed err=%d", (int)err);
+    mic_ok = false;
+  } else {
+    i2s_set_pin(I2S_NUM_0, &i2sIn_pin_config);
 #if SOC_I2S_SUPPORTS_PDM_RX
-  i2s_set_pdm_rx_down_sample(I2S_NUM_0, I2S_PDM_DSR_8S);
+    i2s_set_pdm_rx_down_sample(I2S_NUM_0, I2S_PDM_DSR_8S);
 #endif
-  i2s_set_clk(I2S_NUM_0, SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
+    i2s_set_clk(I2S_NUM_0, SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
+  }
 
-  i2s_driver_install(I2S_NUM_1, &i2sOut_config, 0, NULL);
-  i2s_set_pin(I2S_NUM_1, &i2sOut_pin_config);
+  err = i2s_driver_install(I2S_NUM_1, &i2sOut_config, 0, NULL);
+  if (err != ESP_OK) {
+    log_error("[AUDIO] speaker I2S1 install failed err=%d", (int)err);
+    spk_ok = false;
+  } else {
+    i2s_set_pin(I2S_NUM_1, &i2sOut_pin_config);
+  }
 
-  log_info("Audio ready: PDM mic CLK=%d DATA=%d, MAX98357 DIN=%d play_vol=%.2f",
+  if (!mic_ok || !spk_ok) {
+    log_error("[AUDIO] setup incomplete mic_ok=%d spk_ok=%d", mic_ok, spk_ok);
+    return;
+  }
+  log_info("[AUDIO] ready PDM mic CLK=%d DATA=%d, MAX98357 DIN=%d play_vol=%.2f",
            (int)PDM_MIC_CLK, (int)PDM_MIC_DATA, (int)MAX98357_DIN,
            (double)DESKBOT_AUDIO_PLAY_VOLUME);
 }
@@ -780,7 +794,7 @@ void audio_play_reset() {
   }
 }
 
-void audio_play_task_setup() {
+void task_setup_audio_play() {
   ensure_audio_play_task();
 }
 

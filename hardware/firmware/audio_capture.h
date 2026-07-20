@@ -24,7 +24,8 @@ struct MicCaptureFrame {
   int16_t pcm[kMicCaptureFrameSamples];
 };
 
-void mic_capture_setup();
+/** 启动 mic_cap 任务（须在 setup_audio 装好 I2S0 之后）。 */
+void task_setup_mic_capture();
 void mic_capture_flush_queue();
 
 /* 读取连续 mono int16 PCM，阻塞直到凑满 length 个采样或永远不返回（ticks=portMAX_DELAY）。

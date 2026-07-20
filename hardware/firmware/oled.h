@@ -46,7 +46,7 @@ enum OledScene : uint8_t {
   OLED_SCENE_RESET,
 };
 
-void display_task_setup();
+void task_setup_display();
 
 /** 提交 pb anim[] JSON；播放时长由数组内各段 ms 之和决定（与 chunk_ms 无关）。
  *  anim[k].bg、c 为 RGB565（十进制或 0x 语义同 uint16）；缺省 bg=黑、图元 c=65535（白）。

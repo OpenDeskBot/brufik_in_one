@@ -4,7 +4,7 @@
 set -euo pipefail
 
 MODULE_ROOT="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$MODULE_ROOT"
+REPO_ROOT="$(cd "$MODULE_ROOT/.." && pwd)"
 FW_DIR="${OPEN_DESK_ROM_FW_DIR:-$MODULE_ROOT}"
 PIO_ENV="${OPEN_DESK_ROM_PIO_ENV:-seeed_xiao_esp32s3}"
 LOG_FILE="${OPEN_DESK_ROM_LOG:-$MODULE_ROOT/app.log}"
@@ -14,7 +14,7 @@ SERIAL_PORTS=()
 collect_serial_ports() {
   SERIAL_PORTS=()
   local p
-  for p in /dev/ttyACM* /dev/ttyUSB*; do
+  for p in /dev/ttyACM* /dev/ttyUSB* /dev/tty.usbmodem*; do
     [[ -e "$p" ]] || continue
     SERIAL_PORTS+=("$p")
   done
@@ -69,7 +69,7 @@ usage() {
   log       串口监视（Ctrl+C 结束，写入 ${LOG_FILE}）
   all       烧录 + 监视（改固件后常用）
 
-当前串口（/dev/ttyACM* /dev/ttyUSB*）:
+当前串口（/dev/ttyACM* /dev/ttyUSB* /dev/tty.usbmodem*）:
 $(list_serial_ports)
 
 复制即用（默认串口 ${port}）:

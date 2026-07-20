@@ -4,10 +4,10 @@ bool start_chat = false;
 
 void setup_FFat() {
   if (!FFat.begin(true)) {
-    log_warn("FFat unavailable (check partition deskbot_rom_8MB.csv); servo center not persisted");
+    log_error("[FFAT] begin failed (check partition deskbot_rom_8MB.csv); FS unavailable");
     return;
   }
-  log_info("FATFS is Ready.");
+  log_info("[FFAT] ready");
 }
 
 String get_mac_address() {

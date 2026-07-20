@@ -104,7 +104,7 @@ void camera_ws_set_fps(uint32_t fps) {
   Serial.printf("[camera_ws] set fps=%u interval=%ums\r\n", (unsigned)fps, (unsigned)s_cap_interval_ms);
 }
 
-void camera_ws_init(void) {
+void task_setup_camera_capture(void) {
   s_mutex = xSemaphoreCreateMutex();
   if (!s_mutex) {
     Serial.println("[camera_ws] mutex create failed");

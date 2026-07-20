@@ -136,6 +136,10 @@ static constexpr int16_t kOledTextServerLineDy = 14;
 
 void setup_oled() {
   oled.setupPanel();
+  if (oled.width() <= 0 || oled.height() <= 0) {
+    log_error("[LCD] setup_oled panel size invalid w=%d h=%d", (int)oled.width(),
+              (int)oled.height());
+  }
 
   s_canvas = new PsramCanvas16(DESKBOT_DRAW_W, DESKBOT_DRAW_H);
   if (s_canvas && s_canvas->getBuffer()) {
@@ -144,7 +148,7 @@ void setup_oled() {
              DESKBOT_DRAW_W, DESKBOT_DRAW_H,
              (float)(DESKBOT_DRAW_W * DESKBOT_DRAW_H * 2) / 1024.f);
   } else {
-    log_warn("[LCD] PSRAM canvas alloc failed, direct-write mode");
+    log_error("[LCD] PSRAM canvas alloc failed, fallback direct-write (anim may tear)");
     delete s_canvas;
     s_canvas = nullptr;
     s_draw_gfx = &oled;
@@ -152,7 +156,7 @@ void setup_oled() {
 
   oled.fillScreen(DESKBOT_LCD_COLOR_BLACK);
   oled_canvas_text_reset();
-  log_info("LCD ready ST7789 %dx%d off=%d,%d SPI mosi=%d sck=%d cs=%d dc=%d",
+  log_info("[LCD] ready ST7789 %dx%d off=%d,%d SPI mosi=%d sck=%d cs=%d dc=%d",
            (int)oled.width(), (int)oled.height(), DESKBOT_LCD_COL_OFFSET,
            DESKBOT_LCD_ROW_OFFSET, DESKBOT_LCD_MOSI, DESKBOT_LCD_SCK, DESKBOT_LCD_CS,
            DESKBOT_LCD_DC);
@@ -997,7 +1001,7 @@ void ensure_render_task() {
 
 }  // namespace
 
-void display_task_setup() {
+void task_setup_display() {
   ensure_render_task();
 }
 

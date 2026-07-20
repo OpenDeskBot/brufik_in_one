@@ -37,8 +37,8 @@ public:
   /** ws_uplink RX 队列 → 原 onWebSocketEvent（须在主上下文调用）。 */
   void dispatchWebSocketEvent(WStype_t type, uint8_t* payload, size_t length);
 
-  /** ws_uplink 任务；setup 阶段调用一次。 */
-  bool initWsUplink();
+  /** 启动 ws_uplink 任务；setup 阶段调用一次。 */
+  bool task_setup_ws_uplink();
 
   /** WiFi 断线：立即标记 WS 需重连，避免对 unreachable 主机空转 connect。 */
   void onLinkDown(const char* why = "wifi lost");

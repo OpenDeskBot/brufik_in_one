@@ -355,7 +355,7 @@ void AsrChatClient::pbOnSequenceComplete() {
 
 AsrChatClient::AsrChatClient() {}
 
-bool AsrChatClient::initWsUplink() {
+bool AsrChatClient::task_setup_ws_uplink() {
   return ws_uplink_init(&ws_, this);
 }
 

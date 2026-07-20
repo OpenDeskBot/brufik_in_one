@@ -44,9 +44,12 @@ constexpr uint8_t HEAD_SERVO_REL = 1;
 constexpr uint8_t HEAD_SERVO_HOLD = 2;
 
 // Functions
-/** 初始化中位/限位日志；不 attach，须在 setup_camera 之前调用。 */
+/**
+ * 相机 init 之前调用：GPIO 位bang 中位脉宽预归中（不 attach）。
+ * 须在 setup_camera 之前；永久 attach 仍由 head_servo_boot_attach 完成。
+ */
 void setup_head();
-/** 摄像头 init 之后调用：双轴 attach → 统一回中 (X_CENTER/Y_CENTER)，启动 motor_task。 */
+/** 摄像头 init 之后调用：双轴永久 attach → 回中 (X_CENTER/Y_CENTER)，启动 motor_task。 */
 void head_servo_boot_attach();
 void adjust_x_center(int offset);
 void adjust_y_center(int offset);

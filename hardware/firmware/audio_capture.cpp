@@ -51,7 +51,7 @@ void mic_capture_task(void* /*arg*/) {
 
 }  // namespace
 
-void mic_capture_setup() {
+void task_setup_mic_capture() {
   if (s_mic_q && s_mic_task && s_consumer_mutex) {
     return;
   }

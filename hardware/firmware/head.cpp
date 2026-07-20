@@ -2,11 +2,15 @@
 
 #include <ESP32Servo.h>
 #include <cstring>
+#include <driver/gpio.h>
+#include <soc/gpio_periph.h>
+#include <soc/io_mux_reg.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "servo_early_init.h"
 
 int X_CENTER = 90;
 int Y_CENTER = 90;
@@ -24,8 +28,8 @@ static bool s_servo_timers_ready = false;
 
 static void head_sync_logical_pos(int x, int y);
 
-/** 把全部 4 个 LEDC 定时器标记为已占用，迫使 servo.attach() 走 MCPWM 路径。
- *  必须在 setup_camera()（已占用 timer 0 作为 XCLK）之后调用。 */
+/** 把全部 4 个 LEDC 定时器标记为已占用，迫使 servo.attach() 走 MCPWM（避让 camera XCLK 的 LEDC timer0）。
+ *  可在 setup_camera 之前调用（仅改 ESP32Servo 库记账；相机仍直接配 LEDC 硬件）。 */
 static void head_servo_claim_mcpwm_once() {
   if (s_servo_timers_ready) {
     return;
@@ -41,7 +45,7 @@ static void head_servo_claim_mcpwm_once() {
 static bool head_servo_attach_axis(Servo& servo, int pin, int deg, const char* label) {
   const int ch = servo.attach(pin);
   if (ch == 0) {
-    log_warn("[SERVO] attach %s pin=%d failed (ch=0)", label, pin);
+    log_error("[SERVO] attach %s pin=%d failed (ch=0)", label, pin);
     return false;
   }
   servo.write(deg);
@@ -53,7 +57,7 @@ static bool head_servo_attach_axis(Servo& servo, int pin, int deg, const char* l
 static bool head_servo_attach_axis_defer_write(Servo& servo, int pin, const char* label) {
   const int ch = servo.attach(pin);
   if (ch == 0) {
-    log_warn("[SERVO] attach %s pin=%d failed (ch=0)", label, pin);
+    log_error("[SERVO] attach %s pin=%d failed (ch=0)", label, pin);
     return false;
   }
   log_info("[SERVO] attach %s pin=%d ok ch=%d", label, pin, ch);
@@ -314,7 +318,7 @@ void adjust_y_center(int offset) {
 
 void head_servo_boot_attach() {
   if (!head_servo_boot_attach_pins()) {
-    log_warn("[SERVO] boot: attach failed, motor_task starts without servo");
+    log_error("[SERVO] boot: attach failed, motor_task starts without servo");
     ensure_motor_task();
     return;
   }
@@ -331,9 +335,73 @@ void head_servo_boot_attach() {
   log_info("[SERVO] boot center (%d,%d)", X_CENTER, Y_CENTER);
 }
 
+/**
+ * 角度 → 脉宽（µs）。约定 0°=1000 / 90°=1500 / 180°=2000，与常见模拟舵机一致。
+ */
+static int head_deg_to_pulse_us(int deg) {
+  deg = constrain(deg, 0, 180);
+  return 1000 + (deg * 1000) / 180;
+}
+
+/**
+ * GPIO 位bang 单轴中位脉冲串（不经过 Servo.attach）。
+ *
+ * 帧周期拉长到 period_ms（默认 60）只能降低指令刷新率，不能限制舵机转速：
+ * 内部闭环在收到中位脉宽后仍会全速追位。两轴串行，降低同时堵转力矩。
+ * 永久 PWM 仍由后续 head_servo_boot_attach 负责。
+ */
+static void head_gpio_soft_center_axis(int pin, int pulse_us, uint16_t period_ms, int pulses,
+                                       const char* label) {
+  const gpio_num_t gpio = (gpio_num_t)pin;
+  PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[pin], PIN_FUNC_GPIO);
+  gpio_config_t cfg = {};
+  cfg.pin_bit_mask  = 1ULL << pin;
+  cfg.mode          = GPIO_MODE_OUTPUT;
+  cfg.pull_up_en    = GPIO_PULLUP_DISABLE;
+  cfg.pull_down_en  = GPIO_PULLDOWN_ENABLE;
+  cfg.intr_type     = GPIO_INTR_DISABLE;
+  gpio_config(&cfg);
+  gpio_set_level(gpio, 0);
+
+  /* 低电平段：帧周期 − 脉宽；period_ms 按「上升沿间隔」理解。 */
+  const uint32_t low_us =
+      (period_ms * 1000u > (uint32_t)pulse_us) ? (period_ms * 1000u - (uint32_t)pulse_us) : 0;
+
+  log_info("[HEAD] gpio-center %s pin=%d pulse=%dus period=%ums n=%d", label, pin, pulse_us,
+           (unsigned)period_ms, pulses);
+
+  for (int i = 0; i < pulses; i++) {
+    gpio_set_level(gpio, 1);
+    delayMicroseconds(pulse_us);
+    gpio_set_level(gpio, 0);
+    if (low_us >= 1000) {
+      delay(low_us / 1000);
+      delayMicroseconds(low_us % 1000);
+    } else if (low_us > 0) {
+      delayMicroseconds(low_us);
+    }
+  }
+  gpio_set_level(gpio, 0);
+}
+
 void setup_head() {
-  log_info("[HEAD] ready center=(%d,%d) lim X[%d,%d] Y[%d,%d]",
-           X_CENTER, Y_CENTER, X_MIN_LIMIT, X_MAX_LIMIT, Y_MIN_LIMIT, Y_MAX_LIMIT);
+  /* 60ms/帧 ≈16.7Hz；每轴约 12 帧 ≈720ms，给机械到位留余量。 */
+  static constexpr uint16_t kCenterPeriodMs = 60;
+  static constexpr int      kCenterPulses   = 12;
+
+  const int x_us = head_deg_to_pulse_us(constrain(X_CENTER, X_MIN_LIMIT, X_MAX_LIMIT));
+  const int y_us = head_deg_to_pulse_us(constrain(Y_CENTER, Y_MIN_LIMIT, Y_MAX_LIMIT));
+
+  log_info("[HEAD] gpio-center begin center=(%d,%d) us=(%d,%d) period=%ums pulses=%d/axis",
+           X_CENTER, Y_CENTER, x_us, y_us, (unsigned)kCenterPeriodMs, kCenterPulses);
+
+  head_gpio_soft_center_axis(Y_PIN, y_us, kCenterPeriodMs, kCenterPulses, "Y");
+  head_gpio_soft_center_axis(X_PIN, x_us, kCenterPeriodMs, kCenterPulses, "X");
+  deskbot_servo_pins_claim_low();
+
+  s_logical_x = X_CENTER;
+  s_logical_y = Y_CENTER;
+  log_info("[HEAD] gpio-center done (pins LOW, await camera then permanent attach)");
 }
 
 /* ---- 运动接口 ---- */

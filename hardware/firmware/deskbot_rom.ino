@@ -1,9 +1,9 @@
 // Deskbot — XIAO ESP32S3 Sense：摄像头 + asr_chat(pb) + 音频 + LCD + 舵机
-#include "esp_camera.h"
 #include <WiFi.h>
 #include "oled_display.h"
-#include "img_converters.h"
 #include "camera_ws.h"
+#include "camera_init.h"
+#include "camera_http.h"
 #include "deskbot_config.h"
 #include "wifi_provision.h"
 #include "common.h"
@@ -15,10 +15,6 @@
 #include "head.h"
 #include "cmd.h"
 #include "task_trace.h"
-
-#include "camera_pins.h"
-
-void startCameraServer();
 
 AsrChatClient asrChatClient;
 
@@ -36,63 +32,6 @@ static void on_wifi_link_up() {
 
 static void deskbot_network_poll() {
   wifi_provision_maintain();
-}
-
-static bool setup_camera() {
-  camera_config_t config;
-  config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer = LEDC_TIMER_0;
-  config.pin_d0 = Y2_GPIO_NUM;
-  config.pin_d1 = Y3_GPIO_NUM;
-  config.pin_d2 = Y4_GPIO_NUM;
-  config.pin_d3 = Y5_GPIO_NUM;
-  config.pin_d4 = Y6_GPIO_NUM;
-  config.pin_d5 = Y7_GPIO_NUM;
-  config.pin_d6 = Y8_GPIO_NUM;
-  config.pin_d7 = Y9_GPIO_NUM;
-  config.pin_xclk = XCLK_GPIO_NUM;
-  config.pin_pclk = PCLK_GPIO_NUM;
-  config.pin_vsync = VSYNC_GPIO_NUM;
-  config.pin_href = HREF_GPIO_NUM;
-  config.pin_sscb_sda = SIOD_GPIO_NUM;
-  config.pin_sscb_scl = SIOC_GPIO_NUM;
-  config.pin_pwdn = PWDN_GPIO_NUM;
-  config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_UXGA;
-  config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-  config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
-
-  if (psramFound()) {
-    config.jpeg_quality = 10;
-    config.fb_count = 2;
-    config.grab_mode = CAMERA_GRAB_LATEST;
-  } else {
-    config.frame_size = FRAMESIZE_SVGA;
-    config.fb_location = CAMERA_FB_IN_DRAM;
-  }
-
-  esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) {
-    log_error("Camera init failed 0x%x", err);
-    return false;
-  }
-
-  sensor_t *s = esp_camera_sensor_get();
-  if (s->id.PID == OV3660_PID) {
-    s->set_vflip(s, 1);
-    s->set_brightness(s, 1);
-    s->set_saturation(s, -2);
-  }
-  if (config.pixel_format == PIXFORMAT_JPEG) {
-    s->set_framesize(s, FRAMESIZE_QVGA);
-    /* 略降画质 (~4–5KB JPEG)，减轻 WS TEXT base64 单帧 TCP 压力。 */
-    s->set_quality(s, 18);
-  }
-  return true;
 }
 
 void websocket_loop() {
@@ -114,8 +53,12 @@ void setup() {
   setup_FFat();
   setup_led();
 
-  /* 归中用 LEDC timer2（在 camera 占 timer0 之前）；attach 在 camera 之后。 */
+  /* 预归中（GPIO 位bang 中位脉宽，不 attach）；永久 attach 在 camera 之后。 */
   setup_head();
+
+  /* 音频用 I2S，与 camera LEDC / WiFi 无冲突；提前到联网前，配网阻塞时麦任务已在跑。 */
+  setup_audio();
+  task_setup_mic_capture();
 
   static bool s_camera_ok = false;
   s_camera_ok = setup_camera();
@@ -132,13 +75,11 @@ void setup() {
   }
   wifi_provision_set_link_handlers(on_wifi_link_down, on_wifi_link_up);
 
-  setup_audio();
-  mic_capture_setup();
-  audio_play_task_setup();
-  if (!asrChatClient.initWsUplink()) {
+  task_setup_audio_play();
+  if (!asrChatClient.task_setup_ws_uplink()) {
     log_error("[BOOT] ws_uplink task start failed");
   }
-  display_task_setup();
+  task_setup_display();
 
   log_info("[BOOT] firmware=%s %s %s", VERSION, __DATE__, __TIME__);
   log_info("[BOOT] device_id=%s ws=%s:%u api_key=%s", get_device_id(), DESKBOT_WS_HOST,
@@ -146,7 +87,7 @@ void setup() {
   log_info("PSRAM size=%u free=%u", (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFreePsram());
 
   if (s_camera_ok) {
-    camera_ws_init();
+    task_setup_camera_capture();
     startCameraServer();
   } else {
     log_warn("[BOOT] Skipping camera server / vision tasks (no camera)");

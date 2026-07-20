@@ -187,7 +187,8 @@ platform_install_cpu_torch() {
     pip_extra+=(--extra-index-url "$PIP_INDEX_URL")
   fi
 
-  if platform_is_windows; then
+  if platform_is_windows || [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; then
+    # macOS 无 CUDA，普通 torch 即 CPU-only；Windows 同理
     "$py" -m pip install torch==2.2.2 torchaudio==2.2.2 \
       --index-url https://download.pytorch.org/whl/cpu \
       "${pip_extra[@]}" || {
