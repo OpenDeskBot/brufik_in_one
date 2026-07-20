@@ -8,8 +8,8 @@
  * 若 SSID 留空 → 热点 Deskbot_Rom，http://192.168.4.1/ 配网；NVS 已存凭证优先。
  * WS host 留空 → 禁用 WebSocket 上行。
  */
-#define WIFI_DEFAULT_SSID "deskbot_wifi"
-#define WIFI_DEFAULT_PASSWORD "hello2026"
+#define WIFI_DEFAULT_SSID "Micband"
+#define WIFI_DEFAULT_PASSWORD "Xiaomi@2025"
 
 #define DESKBOT_WS_HOST "10.221.64.74"
 #define DESKBOT_WS_PORT 9000
@@ -27,7 +27,7 @@
 
 /** 1 = 经独立 /camera_uplink 上传 camera_frame；0 = 暂停。 */
 #ifndef DESKBOT_CAMERA_UPLINK_ENABLED
-#define DESKBOT_CAMERA_UPLINK_ENABLED 1
+#define DESKBOT_CAMERA_UPLINK_ENABLED 0
 #endif
 
 static inline bool deskbot_camera_uplink_enabled(void) {

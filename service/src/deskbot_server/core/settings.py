@@ -71,7 +71,7 @@ class AsrSettings:
 @dataclass(frozen=True)
 class LlmSettings:
     base_url: str = ""
-    model_name: str = "qwen-flash"
+    model_name: str = ""
     system_prompt: str = ""
 
 
@@ -230,7 +230,7 @@ class AppSettings:
             ),
             llm=LlmSettings(
                 base_url=str(llm.get("base_url", "")),
-                model_name=str(llm.get("model_name", "qwen-flash")),
+                model_name=str(llm.get("model_name", "")),
                 system_prompt=str(llm.get("system_prompt", "")),
             ),
             tts=TtsSettings(

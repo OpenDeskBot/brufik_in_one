@@ -1,5 +1,6 @@
 #include "camera_uplink_client.h"
 
+#include "asr_chat_client.h"
 #include "camera_ws.h"
 #include "common.h"
 #include "deskbot_config.h"
@@ -85,23 +86,18 @@ static bool cam_tx_enqueue_copy(const uint8_t* jpeg, size_t jpeg_len, uint32_t s
   return true;
 }
 
-static bool send_jpeg_chunked(const uint8_t* data, size_t len) {
+static bool send_jpeg_frame(const uint8_t* data, size_t len) {
   if (!data || len == 0) {
     return false;
   }
-  static constexpr size_t kChunk = 512;
-  size_t off = 0;
-  while (off < len) {
-    const size_t n = (len - off > kChunk) ? kChunk : (len - off);
-    s_cam_ws.loop();
-    if (!s_cam_ws.sendBIN(data + off, n)) {
-      return false;
-    }
-    off += n;
-    if (off < len) {
-      taskYIELD();
-    }
+  /* QVGA JPEG ~7KB：整帧一次 sendBIN，避免多段 WS 帧在等 ACK 时 write 超时。 */
+  s_cam_ws.loop();
+  asr_chat_cooperative_pump();
+  if (!s_cam_ws.sendBIN(data, len)) {
+    return false;
   }
+  s_cam_ws.loop();
+  asr_chat_cooperative_pump();
   return true;
 }
 
@@ -112,6 +108,10 @@ static bool cam_tx_queue_busy(void) {
   return s_cam_tx_active || uxQueueMessagesWaiting(s_cam_tx_q) > 0;
 }
 
+static bool defer_camera_network(void) {
+  return asr_chat_voice_uplink_busy();
+}
+
 }  // namespace
 
 void camera_uplink_write_pump(void) {
@@ -119,9 +119,13 @@ void camera_uplink_write_pump(void) {
   cameraUplinkClient.drainTx();
 }
 
+void camera_uplink_pump_only(void) {
+  s_cam_ws.loop();
+}
+
 bool CameraUplinkClient::isCapturePaused() const {
-  return deskbot_uplink_speaker_audible() || audio_play_speaker_busy() || tx_active_ ||
-         cam_tx_queue_busy();
+  return defer_camera_network() || deskbot_uplink_speaker_audible() ||
+         audio_play_speaker_busy() || tx_active_ || cam_tx_queue_busy();
 }
 
 void CameraUplinkClient::registerHandlers() {
@@ -138,6 +142,8 @@ void CameraUplinkClient::registerHandlers() {
     if (type == WStype_DISCONNECTED) {
       ready_ = false;
       needs_reconnect_ = true;
+      connect_in_progress_ = false;
+      connect_started_ms_ = 0;
       s_connected_at_ms = 0;
       discardTxQueue();
       return;
@@ -170,6 +176,9 @@ void CameraUplinkClient::discardTxQueue() {
 }
 
 void CameraUplinkClient::drainTx() {
+  if (defer_camera_network()) {
+    return;
+  }
   if (!s_cam_ws.isConnected() || !ready_ || needs_reconnect_) {
     return;
   }
@@ -194,7 +203,7 @@ void CameraUplinkClient::drainTx() {
   }
 
   const unsigned long t0 = millis();
-  const bool ok = send_jpeg_chunked(s_cam_tx_active_item.data, s_cam_tx_active_item.len);
+  const bool ok = send_jpeg_frame(s_cam_tx_active_item.data, s_cam_tx_active_item.len);
   const unsigned long send_ms = millis() - t0;
   bool success = ok;
   if (!ok) {
@@ -205,6 +214,8 @@ void CameraUplinkClient::drainTx() {
       s_cam_ws.disconnect();
       ready_ = false;
       needs_reconnect_ = true;
+      connect_in_progress_ = false;
+      connect_started_ms_ = 0;
     }
   } else if (send_ms > 800UL) {
     log_warn("[CAM_WS] sendBIN slow ms=%lu bytes=%u",
@@ -232,6 +243,8 @@ void CameraUplinkClient::onLinkDown(const char* why) {
   (void)why;
   ready_ = false;
   needs_reconnect_ = true;
+  connect_in_progress_ = false;
+  connect_started_ms_ = 0;
   discardTxQueue();
   s_cam_ws.disconnect();
 }
@@ -240,13 +253,18 @@ void CameraUplinkClient::onLinkUp() {
   reconnect_backoff_ms_ = 2000;
   last_reconnect_attempt_ms_ = 0;
   needs_reconnect_ = true;
+  connect_in_progress_ = false;
+  connect_started_ms_ = 0;
 }
 
 bool CameraUplinkClient::connect() {
   if (WiFi.status() != WL_CONNECTED || !deskbot_camera_uplink_enabled()) {
+    connect_in_progress_ = false;
+    connect_started_ms_ = 0;
     return false;
   }
   if (s_cam_ws.isConnected() && ready_ && !needs_reconnect_) {
+    connect_in_progress_ = false;
     return true;
   }
   if (!deskbot_api_key_configured() || DESKBOT_WS_HOST[0] == '\0') {
@@ -256,57 +274,70 @@ bool CameraUplinkClient::connect() {
   registerHandlers();
   cam_tx_queue_init();
 
-  s_cam_ws.disconnect();
-  pumpWsStackMs(&s_cam_ws, 200);
-  ready_ = false;
-  s_connected_at_ms = 0;
-  discardTxQueue();
+  if (!connect_in_progress_) {
+    s_cam_ws.disconnect();
+    pumpWsStackMs(&s_cam_ws, 100);
+    ready_ = false;
+    s_connected_at_ms = 0;
+    discardTxQueue();
 
-  char path[80];
-  snprintf(path, sizeof(path), "%s?device_id=%s", DESKBOT_CAMERA_WS_PATH, get_device_id());
-  char auth_header[96];
-  snprintf(auth_header, sizeof(auth_header), "X-API-Key: %s", DESKBOT_API_KEY);
-  s_cam_ws.setExtraHeaders(auth_header);
-  log_warn("[CAM_WS] connecting ws://%s:%u%s", DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT, path);
+    char path[80];
+    snprintf(path, sizeof(path), "%s?device_id=%s", DESKBOT_CAMERA_WS_PATH, get_device_id());
+    char auth_header[96];
+    snprintf(auth_header, sizeof(auth_header), "X-API-Key: %s", DESKBOT_API_KEY);
+    s_cam_ws.setExtraHeaders(auth_header);
+    log_warn("[CAM_WS] connecting ws://%s:%u%s", DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT, path);
 
-  s_cam_ws.setReconnectInterval(500);
-  s_cam_ws.begin(DESKBOT_WS_HOST, DESKBOT_WS_PORT, path);
-
-  const unsigned long connect_deadline = millis() + (unsigned long)DESKBOT_WS_CONNECT_TIMEOUT_MS;
-  while ((long)(millis() - connect_deadline) < 0) {
-    pump();
-    if (s_cam_ws.isConnected()) {
-      break;
-    }
-    taskYIELD();
+    s_cam_ws.setReconnectInterval(500);
+    s_cam_ws.begin(DESKBOT_WS_HOST, DESKBOT_WS_PORT, path);
+    connect_in_progress_ = true;
+    connect_started_ms_ = millis();
+    return false;
   }
 
-  if (!s_cam_ws.isConnected()) {
+  pump();
+  const unsigned long elapsed = millis() - connect_started_ms_;
+  if (s_cam_ws.isConnected()) {
+    if (!ready_ && s_connected_at_ms != 0 && (millis() - s_connected_at_ms) > 3000UL) {
+      log_warn("[CAM_WS] no ready JSON, continue anyway");
+      ready_ = true;
+    }
+    if (ready_) {
+      s_cam_ws.setReconnectInterval(7UL * 24UL * 3600UL * 1000UL);
+      needs_reconnect_ = false;
+      connect_in_progress_ = false;
+      log_warn("[CAM_WS] connected ws://%s:%u%s", DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT,
+               DESKBOT_CAMERA_WS_PATH);
+      return true;
+    }
+    if (elapsed > (unsigned long)DESKBOT_WS_CONNECT_TIMEOUT_MS) {
+      log_warn("[CAM_WS] ready timeout after connect");
+      ready_ = true;
+      s_cam_ws.setReconnectInterval(7UL * 24UL * 3600UL * 1000UL);
+      needs_reconnect_ = false;
+      connect_in_progress_ = false;
+      return true;
+    }
+    return false;
+  }
+
+  if (elapsed > (unsigned long)DESKBOT_WS_CONNECT_TIMEOUT_MS) {
     log_warn("[CAM_WS] connect timeout (TCP/WS handshake)");
     s_cam_ws.setReconnectInterval(7UL * 24UL * 3600UL * 1000UL);
     s_cam_ws.disconnect();
     needs_reconnect_ = true;
+    connect_in_progress_ = false;
+    connect_started_ms_ = 0;
     return false;
   }
-
-  const unsigned long ready_start = millis();
-  while (!ready_ && (millis() - ready_start) < 3000UL) {
-    pump();
-    taskYIELD();
-  }
-  if (!ready_) {
-    log_warn("[CAM_WS] no ready JSON, continue anyway");
-    ready_ = true;
-  }
-
-  s_cam_ws.setReconnectInterval(7UL * 24UL * 3600UL * 1000UL);
-  needs_reconnect_ = false;
-  log_warn("[CAM_WS] connected ws://%s:%u%s", DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT, path);
-  return true;
+  return false;
 }
 
 void CameraUplinkClient::maintainConnection() {
   if (WiFi.status() != WL_CONNECTED || !deskbot_camera_uplink_enabled()) {
+    return;
+  }
+  if (defer_camera_network()) {
     return;
   }
   if (s_cam_ws.isConnected()) {
@@ -318,10 +349,15 @@ void CameraUplinkClient::maintainConnection() {
       log_warn("[CAM_WS] connected pending ready timeout, proceed");
       ready_ = true;
       needs_reconnect_ = false;
+      connect_in_progress_ = false;
     }
     return;
   }
   const unsigned long now = millis();
+  if (connect_in_progress_) {
+    (void)connect();
+    return;
+  }
   if (last_reconnect_attempt_ms_ != 0 &&
       (now - last_reconnect_attempt_ms_) < reconnect_backoff_ms_) {
     return;
@@ -329,10 +365,12 @@ void CameraUplinkClient::maintainConnection() {
   last_reconnect_attempt_ms_ = now;
   if (connect()) {
     reconnect_backoff_ms_ = 2000;
-  } else if (reconnect_backoff_ms_ < 30000UL) {
-    reconnect_backoff_ms_ *= 2;
-    if (reconnect_backoff_ms_ > 30000UL) {
-      reconnect_backoff_ms_ = 30000UL;
+  } else if (!connect_in_progress_) {
+    if (reconnect_backoff_ms_ < 30000UL) {
+      reconnect_backoff_ms_ *= 2;
+      if (reconnect_backoff_ms_ > 30000UL) {
+        reconnect_backoff_ms_ = 30000UL;
+      }
     }
   }
 }
@@ -372,7 +410,10 @@ bool CameraUplinkClient::tryUploadFrame() {
 }
 
 bool CameraUplinkClient::tryUploadFrameIfDue() {
-  const unsigned long interval = (unsigned long)DESKBOT_CAMERA_UPLINK_INTERVAL_MS;
+  unsigned long interval = (unsigned long)DESKBOT_CAMERA_UPLINK_INTERVAL_MS;
+  if (deskbot_uplink_capture_allowed()) {
+    interval = (unsigned long)DESKBOT_CAMERA_UPLINK_INTERVAL_DURING_LISTEN_MS;
+  }
   if (last_capture_ms_ != 0 && (millis() - last_capture_ms_) < interval) {
     return false;
   }
@@ -386,6 +427,9 @@ void CameraUplinkClient::serviceLoop() {
   registerHandlers();
   cam_tx_queue_init();
   pump();
+  if (defer_camera_network()) {
+    return;
+  }
   maintainConnection();
   drainTx();
   if (canUpload()) {

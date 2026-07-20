@@ -30,9 +30,14 @@ public:
   bool isMicTailSuppressed() const;
   /** VAD 已触发、本轮语音上行窗口内（含已发/待发 Opus）。 */
   bool isVadGateOpen() const;
+  /** 录音环或 Opus 上行活跃：相机 WS 应让路，避免双连接抢 TCP 发送缓冲。 */
+  bool isVoiceUplinkBusy() const;
 
   /** 主循环泵 WS/pb（相机上行见 camera_uplink_client）。 */
   void serviceLoop(bool allow_camera);
+
+  /** 相机 JPEG 等长阻塞发送期间调用：泵 WS、刷新 pb_ack。 */
+  void cooperativePump();
 
   /** ws_uplink RX 队列 → 原 onWebSocketEvent（须在主上下文调用）。 */
   void dispatchWebSocketEvent(WStype_t type, uint8_t* payload, size_t length);
@@ -267,5 +272,9 @@ private:
   /* audio.next_bin_len：pb_ack 仅在 loop() 发送；舵机 async 不再阻塞 ack（与音频解耦）。 */
   bool pbDispatchChunkPreamble(uint32_t chunk_idx);
 };
+
+/** 相机 JPEG 分块发送等长阻塞操作期间调用，泵 asr_chat WS 并刷新 pb_ack。 */
+void asr_chat_cooperative_pump(void);
+bool asr_chat_voice_uplink_busy(void);
 
 #endif

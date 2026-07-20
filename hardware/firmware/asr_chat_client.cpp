@@ -154,6 +154,18 @@ static bool pb_doc_is_servo_only_gesture(const JsonDocument& doc) {
 
 extern AsrChatClient asrChatClient;
 
+void asr_chat_cooperative_pump(void) {
+  asrChatClient.cooperativePump();
+}
+
+bool asr_chat_voice_uplink_busy(void) {
+  return asrChatClient.isVoiceUplinkBusy();
+}
+
+void AsrChatClient::cooperativePump() {
+  loopLite();
+}
+
 bool deskbot_vision_uplink_paused(void) {
   return cameraUplinkClient.isCapturePaused();
 }
@@ -1499,6 +1511,10 @@ bool AsrChatClient::isVisionUplinkPaused() const {
 
 bool AsrChatClient::isCameraUplinkPaused() const {
   return cameraUplinkClient.isCapturePaused();
+}
+
+bool AsrChatClient::isVoiceUplinkBusy() const {
+  return in_voice_record_loop_ || voice_uplink_active_;
 }
 
 bool AsrChatClient::isSpeaking() const {

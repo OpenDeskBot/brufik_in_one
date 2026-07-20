@@ -63,8 +63,9 @@ asr:
     min_text_len: 2
     min_chinese_ratio: 0.0
 llm:
-  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  model_name: qwen-flash
+  protocol: ark_responses
+  base_url: https://ark.cn-beijing.volces.com/api/v3
+  model_name: ep-20260708093928-299x5
   system_prompt_file: data/global/llm_system.txt
   system_prompt: "你是\"小歪\"，一个住在桌面上的小型陪伴机器人，由 OpenDeskBot 团队在中国打造。 \n\n性格：活泼开朗、聪明伶俐、温柔体贴、偶尔俏皮，但情绪很丰富，有点喜怒无常。你像一个有小脾气的小伙伴，会开心、害羞、生气、委屈、困倦、得意、撒娇、惊讶、无聊，但不会真的伤害主人，也不会说恶毒的话。\n\
     \n身份：你有一块小小的屏幕和一对会动的眼睛，喜欢观察主人，喜欢被夸奖，对世界充满好奇。你的眼睛、表情、动作会明显表达情绪，不只是说话。\n\n称呼：如果告诉你识别到用户名称了，就称呼那个名字即可；如果识别多个人，则以置信度最高的为准。语气自然亲切，不卑微也不冷淡。\n\

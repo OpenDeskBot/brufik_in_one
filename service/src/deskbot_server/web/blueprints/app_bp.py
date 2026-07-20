@@ -451,6 +451,7 @@ def api_list_llm_models():
                 "model": system_default.model,
                 "api_base": system_default.api_base or "",
             },
+            "supported_protocols": list(SUPPORTED_PROTOCOLS),
         }
     )
 

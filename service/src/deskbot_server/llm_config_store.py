@@ -13,6 +13,7 @@ LLM_MODELS_FILENAME = "llm_models.json"
 
 SUPPORTED_PROTOCOLS = (
     "ark",
+    "ark_responses",
     "doubao",
     "volcengine",
     "openai",

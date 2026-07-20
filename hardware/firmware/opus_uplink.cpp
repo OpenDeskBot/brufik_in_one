@@ -105,7 +105,7 @@ static bool ensure_encode_task(void) {
   }
   const uint32_t stack_words = kEncodeTaskStackBytes / sizeof(StackType_t);
   const BaseType_t created = xTaskCreatePinnedToCore(
-      encode_task_main, "opus_enc", stack_words, nullptr, 5, &s_task, 1);
+      encode_task_main, "opus_enc", stack_words, nullptr, 5, &s_task, 0);
   if (created != pdPASS || s_task == nullptr) {
     log_error("[OPUS] encode task create failed stack_words=%u free_int=%u free_psram=%u",
               (unsigned)stack_words, (unsigned)ESP.getFreeHeap(),

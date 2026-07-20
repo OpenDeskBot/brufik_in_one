@@ -114,7 +114,7 @@ ensure_deskbot_env() {
   if [[ ! -f "$ROOT/.env" && -f "$ROOT/.env.example" ]]; then
     cp "$ROOT/.env.example" "$ROOT/.env"
     echo "[setup] 已从 .env.example 创建 .env"
-    echo "[setup] 请编辑 .env 并填写 LLM_API_KEY（必填）"
+    echo "[setup] 请编辑 .env 并填写 ARK_API_KEY（火山方舟，必填）"
   fi
 
   if [[ -f "$ROOT/.env" ]]; then
@@ -122,8 +122,8 @@ ensure_deskbot_env() {
     set -a && source "$ROOT/.env" && set +a
   fi
 
-  if [[ -z "${LLM_API_KEY:-}${DASHSCOPE_API_KEY:-}${QWEN_API_KEY:-}" ]]; then
-    echo "[warn] 未设置 LLM_API_KEY（或 DASHSCOPE_API_KEY / QWEN_API_KEY），语音对话将无法调用大模型。" >&2
+  if [[ -z "${ARK_API_KEY:-}${LLM_API_KEY:-}${VOLCENGINE_API_KEY:-}${DASHSCOPE_API_KEY:-}${QWEN_API_KEY:-}" ]]; then
+    echo "[warn] 未设置 ARK_API_KEY（或 LLM_API_KEY / DASHSCOPE_API_KEY），语音对话将无法调用大模型。" >&2
     echo "[warn] 请编辑 .env 后重启。" >&2
   fi
 }

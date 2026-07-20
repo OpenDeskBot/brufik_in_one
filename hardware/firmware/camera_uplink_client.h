@@ -37,10 +37,15 @@ class CameraUplinkClient {
   unsigned long backoff_until_ms_ = 0;
   bool tx_active_ = false;
   bool handlers_registered_ = false;
+  bool connect_in_progress_ = false;
+  unsigned long connect_started_ms_ = 0;
 };
 
 extern CameraUplinkClient cameraUplinkClient;
 
 void camera_uplink_write_pump(void);
+
+/** 仅 pump 相机 WS 事件循环，不 drain TX（供 asr_chat 上行重试时交叉泵 TCP）。 */
+void camera_uplink_pump_only(void);
 
 #endif

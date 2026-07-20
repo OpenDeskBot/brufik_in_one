@@ -135,6 +135,7 @@ bool ws_uplink_send(const char* json, const uint8_t* bin, size_t bin_len,
     if (s_client) {
       ws_uplink_drain_rx(s_client);
     }
+    camera_uplink_pump_only();
     if (!s_ws->sendTXT(json)) {
       vTaskDelay(pdMS_TO_TICKS(2));
       taskYIELD();
@@ -150,6 +151,7 @@ bool ws_uplink_send(const char* json, const uint8_t* bin, size_t bin_len,
     if (s_client) {
       ws_uplink_drain_rx(s_client);
     }
+    camera_uplink_pump_only();
     if (s_ws->sendBIN(bin, bin_len)) {
       return true;
     }

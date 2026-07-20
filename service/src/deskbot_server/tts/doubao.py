@@ -126,6 +126,30 @@ def _resolve_tts_api_key() -> str:
 
 def load_doubao_tts_config() -> DoubaoTtsConfig:
     load_dotenv()
+    speaker = (os.environ.get("DOUBAO_TTS_SPEAKER") or "").strip()
+    resource_id = (os.environ.get("DOUBAO_TTS_RESOURCE_ID") or DEFAULT_RESOURCE_ID).strip()
+    model = (os.environ.get("DOUBAO_TTS_MODEL") or DEFAULT_MODEL).strip()
+    from deskbot_server.tts.speakers import find_doubao_tts_speaker_preset, suggest_resource_id
+
+    expected_rid = suggest_resource_id(speaker)
+    preset = find_doubao_tts_speaker_preset(speaker)
+    if preset and preset.resource_id:
+        expected_rid = preset.resource_id.strip()
+    if expected_rid and resource_id != expected_rid:
+        logger.info(
+            "DOUBAO_TTS_RESOURCE_ID=%s 与 speaker=%s 不匹配，自动改用 %s",
+            resource_id,
+            speaker,
+            expected_rid,
+        )
+        resource_id = expected_rid
+    if resource_id == "seed-tts-1.0" and model.startswith("seed-tts-2"):
+        logger.info(
+            "speaker=%s 使用 seed-tts-1.0，忽略 2.0 model=%s",
+            speaker,
+            model,
+        )
+        model = ""
     return DoubaoTtsConfig(
         api_key=_resolve_tts_api_key(),
         speaker=(os.environ.get("DOUBAO_TTS_SPEAKER") or DEFAULT_SPEAKER).strip(),

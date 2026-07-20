@@ -28,7 +28,7 @@ DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DEFAULT_TIMEOUT_SECONDS = 60
 LLM_FIRST_TOKEN_TIMEOUT_SECONDS = 5.0
 
-VOLCENGINE_PROTOCOLS = {"ark", "volcengine", "doubao"}
+VOLCENGINE_PROTOCOLS = {"ark", "ark_responses", "volcengine", "doubao"}
 OPENAI_COMPAT_PROTOCOLS = {
     "openai",
     "ark",
@@ -37,7 +37,10 @@ OPENAI_COMPAT_PROTOCOLS = {
     "dashscope",
     "qwen",
 }
-LEGACY_MODEL_PREFIXES = OPENAI_COMPAT_PROTOCOLS | {"azure", "anthropic", "gemini", "ollama"}
+ARK_RESPONSES_PROTOCOLS = {"ark_responses"}
+LEGACY_MODEL_PREFIXES = (
+    OPENAI_COMPAT_PROTOCOLS | ARK_RESPONSES_PROTOCOLS | {"azure", "anthropic", "gemini", "ollama"}
+)
 
 
 @dataclass(frozen=True)
@@ -62,9 +65,28 @@ def _normalized_protocol(protocol: str | None) -> str:
     p = str(protocol or "openai").strip().lower() or "openai"
     if p == "byteark":
         return "ark"
+    if p in {"ark-responses", "arkresponses"}:
+        return "ark_responses"
     if p == "volcano":
         return "volcengine"
     return p
+
+
+def _uses_ark_responses_api(protocol: str) -> bool:
+    return _normalized_protocol(protocol) in ARK_RESPONSES_PROTOCOLS
+
+
+def resolve_first_token_timeout(protocol: str) -> float:
+    raw = str(os.environ.get("LLM_FIRST_TOKEN_TIMEOUT") or "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    # ark_responses 在联网/工具阶段可能长时间无 output_text.delta；首字超时误杀，交给总超时。
+    if _uses_ark_responses_api(protocol):
+        return 0.0
+    return LLM_FIRST_TOKEN_TIMEOUT_SECONDS
 
 
 def _default_base_url(protocol: str, *, api_key_source: str | None = None) -> str | None:
@@ -106,8 +128,8 @@ def resolve_system_llm_config() -> ResolvedLlmConfig:
     )
     protocol = _normalized_protocol(
         os.environ.get("LLM_PROTOCOL")
-        or ("ark" if api_key_source in {"ARK_API_KEY", "VOLCENGINE_API_KEY", "DOUBAO_API_KEY"} else None)
         or llm_cfg.get("protocol")
+        or ("ark" if api_key_source in {"ARK_API_KEY", "VOLCENGINE_API_KEY", "DOUBAO_API_KEY"} else None)
         or "openai"
     )
     model_name = str(
@@ -115,7 +137,7 @@ def resolve_system_llm_config() -> ResolvedLlmConfig:
         or os.environ.get("ARK_MODEL")
         or os.environ.get("VOLCENGINE_LLM_MODEL")
         or llm_cfg.get("model_name")
-        or "qwen-flash"
+        or ""
     ).strip()
     base_url = _first_env(
         "LLM_BASE_URL",
@@ -180,9 +202,50 @@ def _completion_url(api_base: str | None, protocol: str) -> str:
     if not base:
         raise ValueError("LLM Base URL 未配置。请填写 Base URL 或选择火山方舟/Ark 协议。")
     base = base.rstrip("/")
+    if _uses_ark_responses_api(protocol):
+        if base.endswith("/responses"):
+            return base
+        return f"{base}/responses"
     if base.endswith("/chat/completions"):
         return base
     return f"{base}/chat/completions"
+
+
+def _messages_to_ark_input(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """OpenAI ``messages`` → 火山方舟 Responses API ``input``。"""
+    out: list[dict[str, Any]] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role") or "user").strip() or "user"
+        content = msg.get("content")
+        if isinstance(content, list):
+            parts: list[dict[str, Any]] = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("type") or "").strip()
+                if item_type in {"input_text", "output_text", "text"}:
+                    text = item.get("text") or item.get("content")
+                    if isinstance(text, str) and text:
+                        parts.append({"type": "input_text", "text": text})
+                elif item_type == "input_image" and isinstance(item.get("image_url"), str):
+                    parts.append({"type": "input_image", "image_url": item["image_url"]})
+            if parts:
+                out.append({"role": role, "content": parts})
+            continue
+        text = _stringify_content(content).strip()
+        if not text:
+            continue
+        out.append(
+            {
+                "role": role,
+                "content": [{"type": "input_text", "text": text}],
+            }
+        )
+    if not out:
+        raise ValueError("LLM 请求缺少有效 input")
+    return out
 
 
 def _validate_api_key(cfg: ResolvedLlmConfig) -> None:
@@ -202,7 +265,18 @@ def _build_completion_payload(
     json_mode: bool,
     stream: bool,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
+    if _uses_ark_responses_api(cfg.protocol):
+        payload: dict[str, Any] = {
+            "model": build_chat_model(cfg.protocol, cfg.model),
+            "input": _messages_to_ark_input(messages),
+            "stream": stream,
+            "thinking": {"type": "disabled"},
+        }
+        if json_mode:
+            payload["text"] = {"format": {"type": "json_object"}}
+        return payload
+
+    payload = {
         "model": build_chat_model(cfg.protocol, cfg.model),
         "messages": messages,
         "temperature": temperature,
@@ -213,7 +287,10 @@ def _build_completion_payload(
     return payload
 
 
-def _usage_from_response(response: Any) -> dict[str, Any] | None:
+def _usage_from_response(response: Any, *, protocol: str = "openai") -> dict[str, Any] | None:
+    if isinstance(response, dict) and _uses_ark_responses_api(protocol):
+        return _usage_from_ark_response(response)
+
     if isinstance(response, dict):
         usage = response.get("usage")
         if not isinstance(usage, dict):
@@ -253,8 +330,10 @@ def _stringify_content(content: Any) -> str:
     return "" if content is None else str(content)
 
 
-def _content_from_response(response: Any) -> str:
+def _content_from_response(response: Any, *, protocol: str = "openai") -> str:
     if isinstance(response, dict):
+        if _uses_ark_responses_api(protocol):
+            return _content_from_ark_response(response)
         choices = response.get("choices")
         if not isinstance(choices, list) or not choices:
             return ""
@@ -275,7 +354,48 @@ def _content_from_response(response: Any) -> str:
         return ""
 
 
-def _delta_content_from_sse_event(data: dict[str, Any]) -> str:
+def _content_from_ark_response(response: dict[str, Any]) -> str:
+    output = response.get("output")
+    if not isinstance(output, list):
+        return ""
+    parts: list[str] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "") != "message":
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("type") or "") == "output_text":
+                text = block.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+    return "".join(parts).strip()
+
+
+def _usage_from_ark_response(response: dict[str, Any]) -> dict[str, Any] | None:
+    usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    return {
+        "prompt_tokens": usage.get("input_tokens"),
+        "completion_tokens": usage.get("output_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+    }
+
+
+def _delta_content_from_sse_event(data: dict[str, Any], *, protocol: str = "openai") -> str:
+    if _uses_ark_responses_api(protocol):
+        event_type = str(data.get("type") or "")
+        if event_type == "response.output_text.delta":
+            delta = data.get("delta")
+            return delta if isinstance(delta, str) else ""
+        return ""
+
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
         return ""
@@ -360,11 +480,17 @@ def _request_chat_completion_stream(
     try:
         with resp:
             for event in _iter_sse_json_events(resp):
-                piece = _delta_content_from_sse_event(event)
+                piece = _delta_content_from_sse_event(event, protocol=cfg.protocol)
                 if piece:
                     parts.append(piece)
                     if on_delta is not None:
                         on_delta(piece)
+                if _uses_ark_responses_api(cfg.protocol):
+                    if str(event.get("type") or "") == "response.completed":
+                        response_obj = event.get("response")
+                        if isinstance(response_obj, dict):
+                            usage = _usage_from_ark_response(response_obj)
+                    continue
                 event_usage = event.get("usage")
                 if isinstance(event_usage, dict):
                     usage = {
@@ -439,10 +565,12 @@ async def chat_acompletion(
     json_mode: bool = True,
     stream: bool = False,
     on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
-    first_token_timeout: float = LLM_FIRST_TOKEN_TIMEOUT_SECONDS,
+    first_token_timeout: float | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Call an OpenAI-compatible Chat Completions endpoint."""
     cfg = config or resolve_llm_config(device_id)
+    if first_token_timeout is None:
+        first_token_timeout = resolve_first_token_timeout(cfg.protocol)
     use_stream = bool(stream or on_tts_ready)
     usage_dict: Optional[dict[str, Any]] = None
     tts_extractor: JsonTtsStreamExtractor | None = None
@@ -531,8 +659,8 @@ async def chat_acompletion(
             json_mode=json_mode,
             stream=False,
         )
-        content = _content_from_response(response)
-        usage_dict = _usage_from_response(response)
+        content = _content_from_response(response, protocol=cfg.protocol)
+        usage_dict = _usage_from_response(response, protocol=cfg.protocol)
 
     meta = {
         "model": build_chat_model(cfg.protocol, cfg.model),
