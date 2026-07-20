@@ -23,6 +23,12 @@ void log_task_tick();
 /** 串口 task 命令：打印当前任务快照。 */
 void log_task_dump();
 
+/**
+ * 启动 CPU 统计：双核 tick hook 采样 + 每 5s 打印各任务 CPU 占比。
+ * （Arduino-ESP32 2.x 预编译库无 vTaskGetRunTimeStats，用等价采样实现。）
+ */
+void task_setup_cpu_runtime_stats();
+
 class LogTaskScope {
  public:
   LogTaskScope(const char* task, const char* detail = nullptr);

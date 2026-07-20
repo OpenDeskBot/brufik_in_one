@@ -6,7 +6,7 @@
 #include <esp_wifi.h>
 #include "common.h"
 #include "deskbot_config.h"
-#include "oled.h"
+#include "display.h"
 
 namespace {
 
@@ -23,7 +23,7 @@ struct WifiCredential {
   String password;
 };
 
-static void oled_show_wifi_connected();
+static void display_show_wifi_connected();
 bool try_connect_credential(const char* source_label, int max_attempts);
 int load_saved_wifi_list(WifiCredential* out, int max_out);
 int build_visible_saved_candidates(const WifiCredential* saved, int saved_count,
@@ -78,7 +78,7 @@ static void notify_wifi_link_up() {
   s_wifi_quick_reconnect_active = false;
   s_wifi_reconnect_backoff_ms = 3000;
   apply_wifi_runtime_keepalive();
-  oled_show_wifi_connected();
+  display_show_wifi_connected();
   if (!s_wifi_was_up && s_link_up_handler != nullptr) {
     s_link_up_handler();
   }
@@ -218,28 +218,28 @@ static bool scan_target_ssid_visible() {
   return found;
 }
 
-static void oled_wifi_ssid_line(char* out, size_t out_len) {
+static void display_wifi_ssid_line(char* out, size_t out_len) {
   snprintf(out, out_len, "SSID:%.20s", ssid.c_str());
 }
 
-static void oled_show_wifi_connecting() {
+static void display_show_wifi_connecting() {
   char line1[48];
   char line2[40];
   char line3[28];
   char ssid_line[28];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   snprintf(line3, sizeof(line3), "WiFi 连接中...");
-  oled_wifi_ssid_line(ssid_line, sizeof(ssid_line));
-  oled_boot_show4(line1, line2, line3, ssid_line);
+  display_wifi_ssid_line(ssid_line, sizeof(ssid_line));
+  display_boot_show4(line1, line2, line3, ssid_line);
 }
 
 /** 根据扫描与 WiFi.status() 在屏幕上展示失败原因。 */
-static void oled_show_wifi_fail(wl_status_t st, bool ssid_in_scan, const char* next_hint) {
+static void display_show_wifi_fail(wl_status_t st, bool ssid_in_scan, const char* next_hint) {
   char line1[48];
   char line2[40];
   char line3[28];
   char line4[40];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   const char* detail;
   if (st == WL_CONNECT_FAILED) {
     detail = "密码错误";
@@ -254,18 +254,18 @@ static void oled_show_wifi_fail(wl_status_t st, bool ssid_in_scan, const char* n
   } else {
     line4[0] = '\0';
   }
-  oled_boot_show4(line1, line2, line3, line4[0] != '\0' ? line4 : nullptr);
+  display_boot_show4(line1, line2, line3, line4[0] != '\0' ? line4 : nullptr);
 }
 
-static void oled_show_wifi_connected() {
+static void display_show_wifi_connected() {
   char line1[48];
   char line2[40];
   char line3[40];
   char line4[40];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   snprintf(line3, sizeof(line3), "WiFi:%.18s", WiFi.SSID().c_str());
   snprintf(line4, sizeof(line4), "IP:%s", WiFi.localIP().toString().c_str());
-  oled_boot_show4(line1, line2, line3, line4);
+  display_boot_show4(line1, line2, line3, line4);
 }
 
 String json_escape(const String& raw) {
@@ -734,10 +734,10 @@ void setup_http_server() {
   char line2[40];
   char line3[40];
   char line4[40];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   snprintf(line3, sizeof(line3), "连接热点 %s", kApSsid);
   snprintf(line4, sizeof(line4), "浏览器打开 http://%s", ip.toString().c_str());
-  oled_boot_show4(line1, line2, line3, line4);
+  display_boot_show4(line1, line2, line3, line4);
 }
 
 void config_wifi() {
@@ -769,9 +769,9 @@ bool start_wifi_sta(const char* source_label, bool* out_ssid_in_scan) {
   if (out_ssid_in_scan != nullptr) {
     *out_ssid_in_scan = ssid_in_scan;
   }
-  oled_show_wifi_connecting();
+  display_show_wifi_connecting();
   if (!ssid_in_scan) {
-    oled_show_wifi_fail(WL_NO_SSID_AVAIL, false, "重试中...");
+    display_show_wifi_fail(WL_NO_SSID_AVAIL, false, "重试中...");
   }
   WiFi.begin(ssid.c_str(), password.c_str());
   WiFi.setSleep(false);
@@ -785,8 +785,8 @@ bool start_wifi_sta(const char* source_label, bool* out_ssid_in_scan) {
 bool try_connect_credential(const char* source_label, int max_attempts) {
   bool ssid_in_scan = false;
   wl_status_t last_status = WL_IDLE_STATUS;
-  wl_status_t last_oled_fail_status = WL_IDLE_STATUS;
-  bool last_oled_ssid_missing = false;
+  wl_status_t last_display_fail_status = WL_IDLE_STATUS;
+  bool last_display_ssid_missing = false;
 
   start_wifi_sta(source_label, &ssid_in_scan);
 
@@ -807,20 +807,20 @@ bool try_connect_credential(const char* source_label, int max_attempts) {
       return true;
     }
 
-    if (st == WL_CONNECT_FAILED && last_oled_fail_status != WL_CONNECT_FAILED) {
-      oled_show_wifi_fail(st, ssid_in_scan, "检查密码");
-      last_oled_fail_status = WL_CONNECT_FAILED;
-    } else if (st == WL_NO_SSID_AVAIL && last_oled_fail_status != WL_NO_SSID_AVAIL) {
-      oled_show_wifi_fail(st, ssid_in_scan, "检查路由器");
-      last_oled_fail_status = WL_NO_SSID_AVAIL;
-    } else if (!ssid_in_scan && !last_oled_ssid_missing) {
-      oled_show_wifi_fail(WL_NO_SSID_AVAIL, false, "检查 SSID");
-      last_oled_ssid_missing = true;
+    if (st == WL_CONNECT_FAILED && last_display_fail_status != WL_CONNECT_FAILED) {
+      display_show_wifi_fail(st, ssid_in_scan, "检查密码");
+      last_display_fail_status = WL_CONNECT_FAILED;
+    } else if (st == WL_NO_SSID_AVAIL && last_display_fail_status != WL_NO_SSID_AVAIL) {
+      display_show_wifi_fail(st, ssid_in_scan, "检查路由器");
+      last_display_fail_status = WL_NO_SSID_AVAIL;
+    } else if (!ssid_in_scan && !last_display_ssid_missing) {
+      display_show_wifi_fail(WL_NO_SSID_AVAIL, false, "检查 SSID");
+      last_display_ssid_missing = true;
     }
   }
 
   Serial.println("");
-  oled_show_wifi_fail(last_status, ssid_in_scan, nullptr);
+  display_show_wifi_fail(last_status, ssid_in_scan, nullptr);
   WiFi.disconnect(true, true);
   delay(200);
   return false;
@@ -852,7 +852,7 @@ bool wifi_provision_connect() {
                       WiFi.RSSI());
         apply_wifi_runtime_keepalive();
         s_wifi_was_up = true;
-        oled_show_wifi_connected();
+        display_show_wifi_connected();
         return true;
       }
     }
@@ -866,7 +866,7 @@ bool wifi_provision_connect() {
                       WiFi.RSSI());
         apply_wifi_runtime_keepalive();
         s_wifi_was_up = true;
-        oled_show_wifi_connected();
+        display_show_wifi_connected();
         return true;
       }
     } else if (saved_count == 0) {
@@ -884,7 +884,7 @@ bool wifi_provision_connect() {
                 WiFi.RSSI());
   apply_wifi_runtime_keepalive();
   s_wifi_was_up = true;
-  oled_show_wifi_connected();
+  display_show_wifi_connected();
   return true;
 }
 

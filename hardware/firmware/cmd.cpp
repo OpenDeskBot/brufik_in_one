@@ -43,7 +43,7 @@ void handle_cmd(String cmd) {
 
 /* 调用约定：
  * - head_* 命令同步：head.cpp::motor_task 内部斜坡推进在独立任务，head_move 等通过 sync semaphore 等待完成。
- * - 表情/OLED 动画由 asr_chat 下行 pb 矢量帧驱动，不再支持本地 eye_* / play_animation 等命令。
+ * - 表情/显示动画由 asr_chat 下行 pb 矢量帧驱动，不再支持本地 eye_* / play_animation 等命令。
  * - "delay" 命令保留为调试用，原地阻塞 1s。
  */
 void executeCommand(String cmd) {

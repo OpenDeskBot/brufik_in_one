@@ -1,14 +1,13 @@
 #include "asr_chat_client.h"
-#include "camera_uplink_client.h"
 
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include "camera_ws.h"
+#include "camera.h"
 #include "cmd.h"
-#include "oled.h"
+#include "display.h"
 #include "audio_capture.h"
 #include "esp_heap_caps.h"
 #include "head.h"
@@ -164,10 +163,6 @@ bool asr_chat_voice_uplink_busy(void) {
 
 void AsrChatClient::cooperativePump() {
   loopLite();
-}
-
-bool deskbot_vision_uplink_paused(void) {
-  return cameraUplinkClient.isCapturePaused();
 }
 
 namespace {
@@ -340,12 +335,12 @@ void AsrChatClient::pbSeqTrackPop() {
 
 void AsrChatClient::pbDrainWorkersForNewSequence(bool drain_motor) {
   if (!drain_motor) {
-    /* 手势 pb_single：只停音频/OLED，不动 motor 队列。 */
+    /* 手势 pb_single：只停音频/显示，不动 motor 队列。 */
     audio_play_reset();
-    oled_render_reset();
+    display_render_reset();
   } else {
     audio_play_reset();
-    oled_render_reset();
+    display_render_reset();
     head_clear_motor_pending();
   }
   pbReset(/*stop_audio=*/false);
@@ -508,7 +503,7 @@ void AsrChatClient::pbSubmitAnimIfAny() {
   if ((!pb_pending_anim_buf_ || pb_pending_anim_len_ == 0) && pb_asset_count_ == 0) {
     return;
   }
-  oled_render_submit_pb_vector_json_owned(pb_pending_anim_buf_, pb_pending_anim_len_, pb_asset_bufs_,
+  display_render_submit_pb_vector_json_owned(pb_pending_anim_buf_, pb_pending_anim_len_, pb_asset_bufs_,
                                           pb_asset_lens_, pb_asset_count_);
   pb_pending_anim_buf_ = nullptr;
   pb_pending_anim_len_ = 0;
@@ -767,7 +762,7 @@ void AsrChatClient::pbFinishChunkBins(uint32_t pending_idx_snap, bool closing_pb
 }
 
 bool AsrChatClient::pbDispatchChunkPreamble(uint32_t chunk_idx) {
-  /* 音频 / OLED / 舵机异步入队；anim/servo 时长仅看各自 ms[]，与 chunk_ms（PCM）无关。 */
+  /* 音频 / 显示 / 舵机异步入队；anim/servo 时长仅看各自 ms[]，与 chunk_ms（PCM）无关。 */
   pbSubmitAnimIfAny();
   return pbApplyServoArrayIfAny(chunk_idx);
 }
@@ -1023,7 +1018,7 @@ bool AsrChatClient::pbParseAndStage(const JsonDocument& doc) {
   if (doc["cam_fps"].is<int>()) {
     const int fps = doc["cam_fps"].as<int>();
     if (fps > 0) {
-      camera_ws_set_fps((uint32_t)fps);
+      camera_set_fps((uint32_t)fps);
     }
   }
 
@@ -1451,6 +1446,7 @@ void AsrChatClient::loopLite() {
 }
 
 void AsrChatClient::serviceLoop(bool allow_camera) {
+  (void)allow_camera;
   if (audio_play_is_on_play_task()) {
     return;
   }
@@ -1506,11 +1502,11 @@ void AsrChatClient::loop() {
 }
 
 bool AsrChatClient::isVisionUplinkPaused() const {
-  return cameraUplinkClient.isCapturePaused();
+  return isVoiceUplinkBusy() || deskbot_uplink_speaker_audible() || audio_play_speaker_busy();
 }
 
 bool AsrChatClient::isCameraUplinkPaused() const {
-  return cameraUplinkClient.isCapturePaused();
+  return isVoiceUplinkBusy() || deskbot_uplink_speaker_audible() || audio_play_speaker_busy();
 }
 
 bool AsrChatClient::isVoiceUplinkBusy() const {
@@ -1761,7 +1757,6 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       capture_was_allowed_ = false;
       handle_cmd();
       loopLite();
-      cameraUplinkClient.serviceLoop();
       round_scope.pump("listen");
       taskYIELD();
       continue;
@@ -1836,7 +1831,6 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       continue;
     }
     samples_sent += kFrameSamples20ms;
-    cameraUplinkClient.serviceLoop();
     round_scope.pump("uplink");
     taskYIELD();
   }
@@ -1880,7 +1874,6 @@ bool AsrChatClient::runVoiceRound(uint16_t max_record_seconds) {
       taskYIELD();
     }
   }
-  cameraUplinkClient.serviceLoop();
   log_warn("[ASR_CHAT] round=%u end", (unsigned)round_id_);
   return true;
 }

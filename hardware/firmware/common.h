@@ -7,7 +7,7 @@
 #include <FFat.h>
 #include "logger.h"
 #include "led.h"
-#include "oled.h"
+#include "display.h"
 
 #define VERSION "0.0.5"
 #define PRODUCT_NAME "Deskbot"

@@ -2,8 +2,19 @@
 
 #include "logger.h"
 
+#include <esp_freertos_hooks.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
+#include <freertos/task.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifndef DESKBOT_CPU_STATS_INTERVAL_MS
+#define DESKBOT_CPU_STATS_INTERVAL_MS 5000
+#endif
+#ifndef DESKBOT_CPU_STATS_MAX_TASKS
+#define DESKBOT_CPU_STATS_MAX_TASKS 48
+#endif
 
 namespace {
 
@@ -42,6 +53,113 @@ void log_alive_if_due() {
            s.task, s.phase, (unsigned long)elapsed_ms(s.task_start_ms),
            (unsigned long)elapsed_ms(s.phase_start_ms),
            s.detail[0] ? " detail=" : "", s.detail[0] ? s.detail : "");
+}
+
+/*
+ * Arduino-ESP32 2.x 预编译 FreeRTOS 未打开 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS，
+ * vTaskGetRunTimeStats 无法链接。用双核 tick hook 采样（1kHz/核）得到等价 CPU 占比。
+ */
+struct CpuHit {
+  TaskHandle_t handle = nullptr;
+  uint32_t hits = 0;
+};
+
+CpuHit s_cpu_hits[DESKBOT_CPU_STATS_MAX_TASKS];
+size_t s_cpu_hit_count = 0;
+uint32_t s_cpu_total_samples = 0;
+uint32_t s_cpu_overflow = 0;
+portMUX_TYPE s_cpu_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void IRAM_ATTR cpu_tick_hook() {
+  TaskHandle_t h = xTaskGetCurrentTaskHandle();
+  portENTER_CRITICAL_ISR(&s_cpu_mux);
+  s_cpu_total_samples++;
+  for (size_t i = 0; i < s_cpu_hit_count; ++i) {
+    if (s_cpu_hits[i].handle == h) {
+      s_cpu_hits[i].hits++;
+      portEXIT_CRITICAL_ISR(&s_cpu_mux);
+      return;
+    }
+  }
+  if (s_cpu_hit_count < DESKBOT_CPU_STATS_MAX_TASKS) {
+    s_cpu_hits[s_cpu_hit_count].handle = h;
+    s_cpu_hits[s_cpu_hit_count].hits = 1;
+    s_cpu_hit_count++;
+  } else {
+    s_cpu_overflow++;
+  }
+  portEXIT_CRITICAL_ISR(&s_cpu_mux);
+}
+
+void dump_cpu_runtime_stats() {
+  CpuHit snap[DESKBOT_CPU_STATS_MAX_TASKS];
+  size_t n = 0;
+  uint32_t total = 0;
+  uint32_t overflow = 0;
+
+  portENTER_CRITICAL(&s_cpu_mux);
+  n = s_cpu_hit_count;
+  if (n > DESKBOT_CPU_STATS_MAX_TASKS) {
+    n = DESKBOT_CPU_STATS_MAX_TASKS;
+  }
+  memcpy(snap, s_cpu_hits, n * sizeof(CpuHit));
+  total = s_cpu_total_samples;
+  overflow = s_cpu_overflow;
+  s_cpu_hit_count = 0;
+  s_cpu_total_samples = 0;
+  s_cpu_overflow = 0;
+  memset(s_cpu_hits, 0, sizeof(s_cpu_hits));
+  portEXIT_CRITICAL(&s_cpu_mux);
+
+  /* 按 hits 降序，便于扫一眼看热点任务。 */
+  for (size_t i = 1; i < n; ++i) {
+    CpuHit key = snap[i];
+    size_t j = i;
+    while (j > 0 && snap[j - 1].hits < key.hits) {
+      snap[j] = snap[j - 1];
+      --j;
+    }
+    snap[j] = key;
+  }
+
+  /* % 相对单核满载：双核各 1kHz tick，窗口内 per_core ≈ interval_ms。 */
+  const uint32_t per_core =
+      (portNUM_PROCESSORS > 0) ? (total / (uint32_t)portNUM_PROCESSORS) : total;
+
+  log_warn("[CPU] ===== task CPU stats (tick-sample, last %ums) =====",
+           (unsigned)DESKBOT_CPU_STATS_INTERVAL_MS);
+  log_warn("[CPU] %-16s %10s %6s", "Task", "AbsTime", "%CPU");
+  for (size_t i = 0; i < n; ++i) {
+    if (snap[i].handle == nullptr || snap[i].hits == 0) {
+      continue;
+    }
+    const char* name = pcTaskGetName(snap[i].handle);
+    if (name == nullptr || name[0] == '\0') {
+      name = "?";
+    }
+    uint32_t pct = 0;
+    if (per_core > 0) {
+      pct = (snap[i].hits * 100u) / per_core;
+    }
+    if (pct == 0 && snap[i].hits > 0) {
+      log_warn("[CPU] %-16s %10u   <1%%", name, (unsigned)snap[i].hits);
+    } else {
+      log_warn("[CPU] %-16s %10u %5u%%", name, (unsigned)snap[i].hits, (unsigned)pct);
+    }
+  }
+  if (overflow > 0) {
+    log_warn("[CPU] (overflow samples=%u, raise DESKBOT_CPU_STATS_MAX_TASKS)",
+             (unsigned)overflow);
+  }
+  log_warn("[CPU] total_samples=%u cores=%d ===== end =====", (unsigned)total,
+           (int)portNUM_PROCESSORS);
+}
+
+void cpu_runtime_stats_task(void* /*arg*/) {
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(DESKBOT_CPU_STATS_INTERVAL_MS));
+    dump_cpu_runtime_stats();
+  }
 }
 
 }  // namespace
@@ -138,3 +256,21 @@ void log_task_dump() {
 LogTaskScope::LogTaskScope(const char* task, const char* detail) { log_task_begin(task, detail); }
 
 LogTaskScope::~LogTaskScope() { log_task_end(nullptr); }
+
+void task_setup_cpu_runtime_stats() {
+  esp_err_t e0 = esp_register_freertos_tick_hook_for_cpu(cpu_tick_hook, 0);
+  esp_err_t e1 = esp_register_freertos_tick_hook_for_cpu(cpu_tick_hook, 1);
+  if (e0 != ESP_OK || e1 != ESP_OK) {
+    log_error("[CPU] tick hook register failed e0=%d e1=%d", (int)e0, (int)e1);
+    return;
+  }
+
+  const BaseType_t ok = xTaskCreatePinnedToCore(
+      cpu_runtime_stats_task, "cpu_stats", 4 * 1024, nullptr, 1, nullptr, tskNO_AFFINITY);
+  if (ok != pdPASS) {
+    log_error("[CPU] failed to start cpu_stats task");
+    return;
+  }
+  log_info("[CPU] cpu_stats started (tick-sample, interval=%ums)",
+           (unsigned)DESKBOT_CPU_STATS_INTERVAL_MS);
+}

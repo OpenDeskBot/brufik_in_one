@@ -33,7 +33,7 @@ public:
   /** 录音环或 Opus 上行活跃：相机 WS 应让路，避免双连接抢 TCP 发送缓冲。 */
   bool isVoiceUplinkBusy() const;
 
-  /** 主循环泵 WS/pb（相机上行见 camera_uplink_client）。 */
+  /** 主循环泵 WS/pb（相机上行见独立 camera 任务）。 */
   void serviceLoop(bool allow_camera);
 
   /** 相机 JPEG 等长阻塞发送期间调用：泵 WS、刷新 pb_ack。 */

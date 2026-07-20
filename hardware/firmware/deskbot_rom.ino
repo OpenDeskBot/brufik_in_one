@@ -1,17 +1,14 @@
-// Deskbot — XIAO ESP32S3 Sense：摄像头 + asr_chat(pb) + 音频 + LCD + 舵机
+// Deskbot — XIAO ESP32S3 Sense：摄像头 + asr_chat(pb) + 音频 + 显示屏 + 舵机
 #include <WiFi.h>
-#include "oled_display.h"
-#include "camera_ws.h"
-#include "camera_init.h"
-#include "camera_http.h"
+#include "display_panel.h"
+#include "camera.h"
 #include "deskbot_config.h"
 #include "wifi_provision.h"
 #include "common.h"
-#include "oled.h"
+#include "display.h"
 #include "audio_player.h"
 #include "audio_capture.h"
 #include "asr_chat_client.h"
-#include "camera_uplink_client.h"
 #include "head.h"
 #include "cmd.h"
 #include "task_trace.h"
@@ -22,12 +19,10 @@ unsigned long loop_start_time = 0;
 
 static void on_wifi_link_down() {
   asrChatClient.onLinkDown("wifi lost");
-  cameraUplinkClient.onLinkDown("wifi lost");
 }
 
 static void on_wifi_link_up() {
   asrChatClient.onLinkUp();
-  cameraUplinkClient.onLinkUp();
 }
 
 static void deskbot_network_poll() {
@@ -49,7 +44,7 @@ void setup() {
   log_info("Initializing Deskbot...");
   log_info("[BOOT] device_id=%s", get_device_id());
 
-  setup_oled();
+  setup_display();
   setup_FFat();
   setup_led();
 
@@ -63,14 +58,14 @@ void setup() {
   static bool s_camera_ok = false;
   s_camera_ok = setup_camera();
   head_servo_boot_attach();
-  deskbot_lcd_backlight_on();
+  display_backlight_on();
   if (!s_camera_ok) {
     log_warn("[BOOT] Camera absent or failed — continuing without camera");
-    oled_boot_show("无摄像头", "继续启动...");
+    display_boot_show("无摄像头", "继续启动...");
   }
   if (!wifi_provision_connect()) {
     log_error("WiFi connect failed");
-    oled_boot_show("WiFi 连接失败", "请重启或配网");
+    display_boot_show("WiFi 连接失败", "请重启或配网");
     return;
   }
   wifi_provision_set_link_handlers(on_wifi_link_down, on_wifi_link_up);
@@ -80,6 +75,7 @@ void setup() {
     log_error("[BOOT] ws_uplink task start failed");
   }
   task_setup_display();
+  task_setup_cpu_runtime_stats();
 
   log_info("[BOOT] firmware=%s %s %s", VERSION, __DATE__, __TIME__);
   log_info("[BOOT] device_id=%s ws=%s:%u api_key=%s", get_device_id(), DESKBOT_WS_HOST,
@@ -87,13 +83,12 @@ void setup() {
   log_info("PSRAM size=%u free=%u", (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFreePsram());
 
   if (s_camera_ok) {
-    task_setup_camera_capture();
-    startCameraServer();
+    task_setup_camera();
   } else {
-    log_warn("[BOOT] Skipping camera server / vision tasks (no camera)");
+    log_warn("[BOOT] Skipping camera uplink task (no camera)");
   }
 
-  oled_boot_show_ready();
+  display_boot_show_ready();
   log_info("%s is Ready. http://%s", PRODUCT_NAME, WiFi.localIP().toString().c_str());
   log_warn("[BOOT] ready device=%s ws=%s:%u wifi_ip=%s",
            get_device_id(), DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT,
@@ -126,7 +121,6 @@ void loop() {
         break;
       }
 
-      cameraUplinkClient.serviceLoop();
       asrChatClient.serviceLoop(/*allow_camera=*/false);
 
       if (!asrChatClient.runVoiceRound(RECORD_TIME)) {

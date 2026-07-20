@@ -1,5 +1,5 @@
-#include "oled.h"
-#include "oled_utf8_text.h"
+#include "display.h"
+#include "display_text.h"
 
 #include <WiFi.h>
 
@@ -13,7 +13,7 @@
 #include <cstring>
 #include "esp_heap_caps.h"
 
-DeskbotLcd oled(DESKBOT_LCD_CS, DESKBOT_LCD_DC, -1);
+DeskbotDisplay g_display(DESKBOT_DISPLAY_CS, DESKBOT_DISPLAY_DC, -1);
 
 /* ── PSRAM 帧缓冲 ──
  * PB 矢量动画先在 PSRAM 里绘制（速度快，0 SPI 流量），完成后整帧 DMA 推送。
@@ -29,7 +29,7 @@ public:
 };
 
 static PsramCanvas16* s_canvas   = nullptr;
-static Adafruit_GFX*  s_draw_gfx = &oled;   /* 渲染目标：canvas 或直写 oled */
+static Adafruit_GFX*  s_draw_gfx = &g_display;   /* 渲染目标：canvas 或直写面板 */
 
 bool deskbot_mic_uplink_active(void) { return false; }
 
@@ -38,7 +38,7 @@ void deskbot_mic_uplink_set_active(bool active) { (void)active; }
 /** canvas 整帧单次 SPI 推送（横屏 canvas 在 x=CANVAS_X0 对齐）。 */
 static inline void pb_canvas_push() {
   if (s_canvas && s_canvas->getBuffer()) {
-    oled.drawRGBBitmap(DESKBOT_LCD_CANVAS_X0, 0, s_canvas->getBuffer(),
+    g_display.drawRGBBitmap(DESKBOT_DISPLAY_CANVAS_X0, 0, s_canvas->getBuffer(),
                        DESKBOT_PB_COORD_W, DESKBOT_PB_COORD_H);
   }
 }
@@ -46,33 +46,33 @@ static inline void pb_canvas_push() {
 /* canvas 文字叠写：首次调用先刷黑背景，后续调用直接在上面叠加 */
 static bool s_canvas_text_bg = false;
 
-static void oled_canvas_text_reset() {
+static void display_canvas_text_reset() {
   s_canvas_text_bg = false;
 }
 
-void oled_boot_screen_reset() { oled_canvas_text_reset(); }
+void display_boot_screen_reset() { display_canvas_text_reset(); }
 
-static constexpr uint8_t kOledBootTextSize = DESKBOT_OLED_BOOT_TEXT_SIZE;
+static constexpr uint8_t kDisplayBootTextSize = DESKBOT_DISPLAY_BOOT_TEXT_SIZE;
 
-void oled_boot_header_lines(char* line1, size_t line1_len, char* line2, size_t line2_len) {
+void display_boot_header_lines(char* line1, size_t line1_len, char* line2, size_t line2_len) {
   snprintf(line1, line1_len, "%s v%s", PRODUCT_NAME, VERSION);
   snprintf(line2, line2_len, "device_id: %s", get_device_id());
 }
 
-static void oled_boot_draw_lines(const char* line1, const char* line2, const char* line3,
+static void display_boot_draw_lines(const char* line1, const char* line2, const char* line3,
                                  const char* line4 = nullptr) {
-  oled_boot_screen_reset();
-  const int16_t x0 = DESKBOT_OLED_BOOT_SX;
-  const int16_t y0 = DESKBOT_OLED_BOOT_SY0;
-  const int16_t dy = oled_utf8_text_line_height(kOledBootTextSize);
+  display_boot_screen_reset();
+  const int16_t x0 = DESKBOT_DISPLAY_BOOT_SX;
+  const int16_t y0 = DESKBOT_DISPLAY_BOOT_SY0;
+  const int16_t dy = display_text_line_height(kDisplayBootTextSize);
 
   Adafruit_GFX* target = (s_canvas && s_canvas->getBuffer()) ? static_cast<Adafruit_GFX*>(s_canvas)
-                                                             : static_cast<Adafruit_GFX*>(&oled);
+                                                             : static_cast<Adafruit_GFX*>(&g_display);
   if (s_canvas && s_canvas->getBuffer()) {
-    s_canvas->fillScreen(DESKBOT_LCD_COLOR_BLACK);
+    s_canvas->fillScreen(DESKBOT_DISPLAY_COLOR_BLACK);
     s_canvas_text_bg = true;
   } else {
-    oled.fillScreen(DESKBOT_LCD_COLOR_BLACK);
+    g_display.fillScreen(DESKBOT_DISPLAY_COLOR_BLACK);
   }
 
   int16_t row = 0;
@@ -80,7 +80,7 @@ static void oled_boot_draw_lines(const char* line1, const char* line2, const cha
     if (!text || text[0] == '\0') {
       return;
     }
-    oled_utf8_text_draw(target, x0, y0 + row * dy, text, kOledBootTextSize, DESKBOT_LCD_COLOR_WHITE);
+    display_text_draw(target, x0, y0 + row * dy, text, kDisplayBootTextSize, DESKBOT_DISPLAY_COLOR_WHITE);
     row++;
   };
   draw_row(line1);
@@ -91,125 +91,125 @@ static void oled_boot_draw_lines(const char* line1, const char* line2, const cha
   if (s_canvas && s_canvas->getBuffer()) {
     pb_canvas_push();
   }
-  oled_display_timed();
+  display_flush_timed();
 }
 
-void oled_boot_show3(const char* line1, const char* line2, const char* line3) {
-  oled_boot_draw_lines(line1, line2, line3, nullptr);
+void display_boot_show3(const char* line1, const char* line2, const char* line3) {
+  display_boot_draw_lines(line1, line2, line3, nullptr);
 }
 
-void oled_boot_show4(const char* line1, const char* line2, const char* line3, const char* line4) {
-  oled_boot_draw_lines(line1, line2, line3, line4);
+void display_boot_show4(const char* line1, const char* line2, const char* line3, const char* line4) {
+  display_boot_draw_lines(line1, line2, line3, line4);
 }
 
-void oled_boot_show(const char* status_line3, const char* status_line4) {
+void display_boot_show(const char* status_line3, const char* status_line4) {
   char line1[48];
   char line2[40];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
-  oled_boot_draw_lines(line1, line2, status_line3, status_line4);
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_draw_lines(line1, line2, status_line3, status_line4);
 }
 
-void oled_boot_show_ready() {
+void display_boot_show_ready() {
   char line1[48];
   char line2[40];
   char line3[48];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   snprintf(line3, sizeof(line3), "WiFi:%.16s %s", WiFi.SSID().c_str(),
            WiFi.localIP().toString().c_str());
-  oled_boot_draw_lines(line1, line2, line3, "请试试问我: 现在几点了?");
+  display_boot_draw_lines(line1, line2, line3, "请试试问我: 现在几点了?");
 }
 
-static void oled_canvas_ensure_black() {
+static void display_canvas_ensure_black() {
   if (s_canvas && s_canvas->getBuffer() && !s_canvas_text_bg) {
-    s_canvas->fillScreen(DESKBOT_LCD_COLOR_BLACK);
+    s_canvas->fillScreen(DESKBOT_DISPLAY_COLOR_BLACK);
     s_canvas_text_bg = true;
   }
 }
 
-void oled_clear_display_timed() { oled.fillScreen(DESKBOT_LCD_COLOR_BLACK); }
+void display_clear_timed() { g_display.fillScreen(DESKBOT_DISPLAY_COLOR_BLACK); }
 
-void oled_display_timed() { /* TFT 直写显存，无需 display() */ }
+void display_flush_timed() { /* TFT 直写显存，无需 display() */ }
 
-static int16_t s_oled_text_sx = 8;
-static int16_t s_oled_text_sy = 8;
-static constexpr int16_t kOledTextServerLineDy = 14;
+static int16_t s_display_text_sx = 8;
+static int16_t s_display_text_sy = 8;
+static constexpr int16_t kDisplayTextServerLineDy = 14;
 
-void setup_oled() {
-  oled.setupPanel();
-  if (oled.width() <= 0 || oled.height() <= 0) {
-    log_error("[LCD] setup_oled panel size invalid w=%d h=%d", (int)oled.width(),
-              (int)oled.height());
+void setup_display() {
+  g_display.setupPanel();
+  if (g_display.width() <= 0 || g_display.height() <= 0) {
+    log_error("[DISPLAY] setup_display panel size invalid w=%d h=%d", (int)g_display.width(),
+              (int)g_display.height());
   }
 
   s_canvas = new PsramCanvas16(DESKBOT_DRAW_W, DESKBOT_DRAW_H);
   if (s_canvas && s_canvas->getBuffer()) {
     s_draw_gfx = s_canvas;
-    log_info("[LCD] PSRAM canvas %dx%d ok (%.0f KB)",
+    log_info("[DISPLAY] PSRAM canvas %dx%d ok (%.0f KB)",
              DESKBOT_DRAW_W, DESKBOT_DRAW_H,
              (float)(DESKBOT_DRAW_W * DESKBOT_DRAW_H * 2) / 1024.f);
   } else {
-    log_error("[LCD] PSRAM canvas alloc failed, fallback direct-write (anim may tear)");
+    log_error("[DISPLAY] PSRAM canvas alloc failed, fallback direct-write (anim may tear)");
     delete s_canvas;
     s_canvas = nullptr;
-    s_draw_gfx = &oled;
+    s_draw_gfx = &g_display;
   }
 
-  oled.fillScreen(DESKBOT_LCD_COLOR_BLACK);
-  oled_canvas_text_reset();
-  log_info("[LCD] ready ST7789 %dx%d off=%d,%d SPI mosi=%d sck=%d cs=%d dc=%d",
-           (int)oled.width(), (int)oled.height(), DESKBOT_LCD_COL_OFFSET,
-           DESKBOT_LCD_ROW_OFFSET, DESKBOT_LCD_MOSI, DESKBOT_LCD_SCK, DESKBOT_LCD_CS,
-           DESKBOT_LCD_DC);
-  oled.setTextSize(kOledBootTextSize);
-  oled.setTextColor(DESKBOT_LCD_COLOR_WHITE, DESKBOT_LCD_COLOR_BLACK);
-  oled_boot_show("初始化中...", nullptr);
+  g_display.fillScreen(DESKBOT_DISPLAY_COLOR_BLACK);
+  display_canvas_text_reset();
+  log_info("[DISPLAY] ready ST7789 %dx%d off=%d,%d SPI mosi=%d sck=%d cs=%d dc=%d",
+           (int)g_display.width(), (int)g_display.height(), DESKBOT_DISPLAY_COL_OFFSET,
+           DESKBOT_DISPLAY_ROW_OFFSET, DESKBOT_DISPLAY_MOSI, DESKBOT_DISPLAY_SCK, DESKBOT_DISPLAY_CS,
+           DESKBOT_DISPLAY_DC);
+  g_display.setTextSize(kDisplayBootTextSize);
+  g_display.setTextColor(DESKBOT_DISPLAY_COLOR_WHITE, DESKBOT_DISPLAY_COLOR_BLACK);
+  display_boot_show("初始化中...", nullptr);
 }
 
-/* oled_print/println：boot 阶段 banner；ROTATION=3 时用服务端 280×240 坐标 */
-void oled_text_layout_reset(int16_t sx, int16_t sy) {
-  s_oled_text_sx = sx;
-  s_oled_text_sy = sy;
+/* display_print/println：boot 阶段 banner；ROTATION=3 时用服务端 280×240 坐标 */
+void display_text_layout_reset(int16_t sx, int16_t sy) {
+  s_display_text_sx = sx;
+  s_display_text_sy = sy;
 }
 
-void oled_println_server(int16_t sx, int16_t sy, String text, int delay_time) {
+void display_println_server(int16_t sx, int16_t sy, String text, int delay_time) {
   /* 禁止直写 SPI 逐字：会引起顶栏渐变花屏。
    * 改在 canvas 上画完再整帧推送（单次 setAddrWindow + 大块写）。 */
   if (s_canvas && s_canvas->getBuffer()) {
-    oled_canvas_ensure_black();
-    oled_utf8_text_draw(s_canvas, sx, sy, text.c_str(), 2, DESKBOT_LCD_COLOR_WHITE);
+    display_canvas_ensure_black();
+    display_text_draw(s_canvas, sx, sy, text.c_str(), 2, DESKBOT_DISPLAY_COLOR_WHITE);
     pb_canvas_push();
-    oled_display_timed();
+    display_flush_timed();
     vTaskDelay(pdMS_TO_TICKS(delay_time));
     return;
   }
 
   /* 无 canvas 时降级直写 */
-  oled.setCursor(sx, sy);
-  oled.println(text);
-  oled_display_timed();
+  g_display.setCursor(sx, sy);
+  g_display.println(text);
+  display_flush_timed();
   vTaskDelay(pdMS_TO_TICKS(delay_time));
 }
 
-void oled_print(String text, int delay_time) {
-  oled.setCursor(s_oled_text_sx, s_oled_text_sy);
-  oled.print(text);
-  oled_display_timed();
+void display_print(String text, int delay_time) {
+  g_display.setCursor(s_display_text_sx, s_display_text_sy);
+  g_display.print(text);
+  display_flush_timed();
   vTaskDelay(pdMS_TO_TICKS(delay_time));
 }
 
-void oled_println(String text, int delay_time) {
-  oled_println_server(s_oled_text_sx, s_oled_text_sy, text, delay_time);
-  s_oled_text_sy += kOledTextServerLineDy;
+void display_println(String text, int delay_time) {
+  display_println_server(s_display_text_sx, s_display_text_sy, text, delay_time);
+  s_display_text_sy += kDisplayTextServerLineDy;
 }
 
 namespace {
 
 /* pb 矢量帧：同层同下标且 shape 一致时在 anim[k].ms 内按 t 插值；否则画本帧。 */
-static constexpr uint32_t kPbOledDisplayBudgetMs = 13;
+static constexpr uint32_t kPbDisplayBudgetMs = 13;
 static constexpr uint8_t  kPbMaxPrimsPerLayer   = 16;
 /** text 图元：服务端预换行后下发；单行 UTF-8 按字节截断（约 42 个汉字）。 */
 static constexpr size_t kPbMaxTextChars = 128;
-static constexpr uint8_t kOledMaxPbAssets = 8;
+static constexpr uint8_t kDisplayMaxPbAssets = 8;
 static constexpr uint16_t kPbDefaultPrimColor = 65535u;
 
 /* pb 图元：与服务端 anim[] 实际下发的 shape 对齐。 */
@@ -258,7 +258,7 @@ static StoredLayer s_prev_eye_r{};
 static StoredLayer s_prev_extra{};
 static bool        s_have_prev = false;
 
-/** pb 矢量解析用的「当前帧」图层；放静态区避免 oled_render 任务栈过大。仅渲染任务串行访问。 */
+/** pb 矢量解析用的「当前帧」图层；放静态区避免 display_render 任务栈过大。仅渲染任务串行访问。 */
 static StoredLayer s_pb_curr_bg{};
 static StoredLayer s_pb_curr_nose{};
 static StoredLayer s_pb_curr_mouth{};
@@ -266,11 +266,11 @@ static StoredLayer s_pb_curr_eye_l{};
 static StoredLayer s_pb_curr_eye_r{};
 static StoredLayer s_pb_curr_extra{};
 
-struct OledPbAssetBlob {
+struct DisplayPbAssetBlob {
   uint8_t* data = nullptr;
   size_t   len  = 0;
 };
-static OledPbAssetBlob s_render_assets[kOledMaxPbAssets]{};
+static DisplayPbAssetBlob s_render_assets[kDisplayMaxPbAssets]{};
 static uint8_t         s_render_asset_count = 0;
 
 struct JpegBlitCtx {
@@ -284,7 +284,7 @@ struct JpegBlitCtx {
   int           iw;
   int           ih;
 };
-/** JPEG 解码器放静态区：JPEGDEC 解码 284×240 时栈帧较大，避免 oled_render 栈溢出。 */
+/** JPEG 解码器放静态区：JPEGDEC 解码 284×240 时栈帧较大，避免 display_render 栈溢出。 */
 static JPEGDEC     s_jpeg_dec;
 static JpegBlitCtx s_jpeg_blit_ctx{};
 
@@ -298,7 +298,7 @@ static void pb_vector_interp_reset() {
   memset(&s_prev_extra, 0, sizeof(s_prev_extra));
 }
 
-static void oled_free_render_assets() {
+static void display_free_render_assets() {
   for (uint8_t i = 0; i < s_render_asset_count; i++) {
     if (s_render_assets[i].data) {
       heap_caps_free(s_render_assets[i].data);
@@ -520,20 +520,20 @@ static int pb_jpeg_draw_cb(JPEGDRAW* pDraw) {
 
 static void draw_jpeg_asset(const StoredPrim& p) {
   if (p.asset_index >= s_render_asset_count) {
-    log_warn("[OLED] image asset=%u missing (have %u)", (unsigned)p.asset_index,
+    log_warn("[DISPLAY] image asset=%u missing (have %u)", (unsigned)p.asset_index,
              (unsigned)s_render_asset_count);
     return;
   }
-  const OledPbAssetBlob& blob = s_render_assets[p.asset_index];
+  const DisplayPbAssetBlob& blob = s_render_assets[p.asset_index];
   if (!blob.data || blob.len < 4) {
     return;
   }
   if (!s_canvas || !s_canvas->getBuffer() || s_draw_gfx != s_canvas) {
-    log_warn("[OLED] JPEG skip: need PSRAM canvas target");
+    log_warn("[DISPLAY] JPEG skip: need PSRAM canvas target");
     return;
   }
   if (s_jpeg_dec.openRAM(blob.data, (int)blob.len, pb_jpeg_draw_cb) != 1) {
-    log_warn("[OLED] JPEG openRAM failed asset=%u len=%u", (unsigned)p.asset_index, (unsigned)blob.len);
+    log_warn("[DISPLAY] JPEG openRAM failed asset=%u len=%u", (unsigned)p.asset_index, (unsigned)blob.len);
     return;
   }
   s_jpeg_blit_ctx.canvas_buf = s_canvas->getBuffer();
@@ -608,7 +608,7 @@ static void draw_prim(const StoredPrim& p) {
         if (sz > 3) {
           sz = 3;
         }
-        oled_utf8_text_draw(s_draw_gfx, p.x, p.y, p.text, sz, col);
+        display_text_draw(s_draw_gfx, p.x, p.y, p.text, sz, col);
       }
       break;
     case PbShape::Image:
@@ -719,7 +719,7 @@ static void draw_prim_lerp(const StoredPrim* prev, const StoredPrim& curr, float
       if (sz > 3) {
         sz = 3;
       }
-      oled_utf8_text_draw(s_draw_gfx, x, y, curr.text, sz, col);
+      display_text_draw(s_draw_gfx, x, y, curr.text, sz, col);
     } break;
     case PbShape::None:
     default:
@@ -831,7 +831,7 @@ static void pb_play_layers_interpolated(const StoredLayer* pbg, const StoredLaye
 
     const uint32_t after_draw = millis();
     uint32_t remain = (t0 + budget) - after_draw;
-    if (remain < kPbOledDisplayBudgetMs) {
+    if (remain < kPbDisplayBudgetMs) {
       if (remain > 0) {
         vTaskDelay(pdMS_TO_TICKS(remain));
       }
@@ -869,7 +869,7 @@ static void pb_render_anim_array_timed(JsonArrayConst anim_arr) {
   size_t seg_idx = 0;
   for (JsonObjectConst seg : anim_arr) {
     if (seg_idx >= kPbMaxAnimSegsPerChunk) {
-      log_warn("[OLED] anim[] truncated at %u", (unsigned)kPbMaxAnimSegsPerChunk);
+      log_warn("[DISPLAY] anim[] truncated at %u", (unsigned)kPbMaxAnimSegsPerChunk);
       break;
     }
     uint32_t seg_ms = seg["ms"].is<uint32_t>() ? seg["ms"].as<uint32_t>() : 0u;
@@ -886,7 +886,7 @@ static void pb_render_anim_array_timed(JsonArrayConst anim_arr) {
     JsonVariantConst elements_v = seg["elements"];
     stored_from_elements_v(elements_v, &cbg, &cn, &cm, &cel, &cer, &cex);
 
-    const uint16_t seg_bg = pb_json_rgb565_field(seg, "bg", DESKBOT_LCD_COLOR_BLACK);
+    const uint16_t seg_bg = pb_json_rgb565_field(seg, "bg", DESKBOT_DISPLAY_COLOR_BLACK);
 
     const StoredLayer* pbg = s_have_prev ? &s_prev_bg : nullptr;
     const StoredLayer* pn = s_have_prev ? &s_prev_nose : nullptr;
@@ -909,7 +909,7 @@ static void pb_render_vector_json(const char* json, size_t json_len) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, json, json_len);
   if (err) {
-    log_warn("[OLED] pb vector json parse failed: %s", err.c_str());
+    log_warn("[DISPLAY] pb vector json parse failed: %s", err.c_str());
     return;
   }
 
@@ -918,20 +918,20 @@ static void pb_render_vector_json(const char* json, size_t json_len) {
     return;
   }
 
-  log_warn("[OLED] pb anim payload must be anim[] array (pb_ver 2)");
+  log_warn("[DISPLAY] pb anim payload must be anim[] array (pb_ver 2)");
 }
 
-struct OledRequest {
-  OledScene scene;
+struct DisplayRequest {
+  DisplayScene scene;
   int32_t arg;
-  char* json_payload; /* 仅 OLED_SCENE_PB_VECTOR_JSON 使用；malloc 分配，任务内 free。 */
+  char* json_payload; /* 仅 DISPLAY_SCENE_PB_VECTOR_JSON 使用；malloc 分配，任务内 free。 */
   size_t json_len;
   uint8_t asset_count = 0;
-  OledPbAssetBlob assets[kOledMaxPbAssets]{};
+  DisplayPbAssetBlob assets[kDisplayMaxPbAssets]{};
   SemaphoreHandle_t notify_sem;
 };
 
-static void oled_free_request_assets(OledRequest& req) {
+static void display_free_request_assets(DisplayRequest& req) {
   for (uint8_t i = 0; i < req.asset_count; i++) {
     if (req.assets[i].data) {
       heap_caps_free(req.assets[i].data);
@@ -947,29 +947,29 @@ TaskHandle_t      s_task        = nullptr;
 SemaphoreHandle_t s_done_sem    = nullptr;
 SemaphoreHandle_t s_caller_lock = nullptr;
 
-void oled_render_task(void* /*arg*/) {
-  OledRequest req{};
+void display_render_task(void* /*arg*/) {
+  DisplayRequest req{};
   for (;;) {
     if (xQueueReceive(s_queue, &req, portMAX_DELAY) != pdTRUE) {
       continue;
     }
-    if (req.scene == OLED_SCENE_PB_VECTOR_JSON) {
-      oled_free_render_assets();
+    if (req.scene == DISPLAY_SCENE_PB_VECTOR_JSON) {
+      display_free_render_assets();
       s_render_asset_count = req.asset_count;
-      for (uint8_t i = 0; i < req.asset_count && i < kOledMaxPbAssets; i++) {
+      for (uint8_t i = 0; i < req.asset_count && i < kDisplayMaxPbAssets; i++) {
         s_render_assets[i] = req.assets[i];
         req.assets[i].data = nullptr;
         req.assets[i].len = 0;
       }
       req.asset_count = 0;
       pb_render_vector_json(req.json_payload, req.json_len);
-      oled_free_render_assets();
+      display_free_render_assets();
       if (req.json_payload) {
         ::free(req.json_payload);
       }
-    } else if (req.scene == OLED_SCENE_RESET) {
+    } else if (req.scene == DISPLAY_SCENE_RESET) {
       pb_vector_interp_reset();
-      oled_free_render_assets();
+      display_free_render_assets();
     }
     if (req.notify_sem) {
       xSemaphoreGive(req.notify_sem);
@@ -983,8 +983,8 @@ void ensure_render_task() {
   }
   if (!s_queue) {
     /* 队列容量 32：与音频/舵机队列对齐，可缓冲 ~32 个 chunk_ms（~3.2~6.4s）的口型动画。
-     * 满则 oled_render_submit_pb_vector_json 走 drop-oldest，永不阻塞 caller（WS 回调）。 */
-    s_queue = xQueueCreate(32, sizeof(OledRequest));
+     * 满则 display_render_submit_pb_vector_json 走 drop-oldest，永不阻塞 caller（WS 回调）。 */
+    s_queue = xQueueCreate(32, sizeof(DisplayRequest));
   }
   if (!s_done_sem) {
     s_done_sem = xSemaphoreCreateBinary();
@@ -994,7 +994,7 @@ void ensure_render_task() {
   }
   if (!s_task) {
     /* U8g2 drawUTF8(gb2312) + JPEGDEC 解码全屏图栈较深；10KB 会触发 canary（见拍照 overlay）。 */
-    xTaskCreatePinnedToCore(oled_render_task, "oled_render", 32 * 1024, nullptr, 2, &s_task,
+    xTaskCreatePinnedToCore(display_render_task, "display_render", 32 * 1024, nullptr, 2, &s_task,
                             APP_CPU_NUM);
   }
 }
@@ -1005,13 +1005,13 @@ void task_setup_display() {
   ensure_render_task();
 }
 
-static void oled_fill_request_assets(OledRequest& req, uint8_t* const* asset_bufs,
+static void display_fill_request_assets(DisplayRequest& req, uint8_t* const* asset_bufs,
                                      const size_t* asset_lens, uint8_t asset_count) {
   req.asset_count = 0;
   if (!asset_bufs || !asset_lens || asset_count == 0) {
     return;
   }
-  for (uint8_t i = 0; i < asset_count && i < kOledMaxPbAssets; i++) {
+  for (uint8_t i = 0; i < asset_count && i < kDisplayMaxPbAssets; i++) {
     if (!asset_bufs[i] || asset_lens[i] == 0) {
       continue;
     }
@@ -1021,7 +1021,7 @@ static void oled_fill_request_assets(OledRequest& req, uint8_t* const* asset_buf
   }
 }
 
-static void oled_enqueue_pb_vector_request(OledRequest& req, bool wait_done) {
+static void display_enqueue_pb_vector_request(DisplayRequest& req, bool wait_done) {
   if (wait_done) {
     xSemaphoreTake(s_caller_lock, portMAX_DELAY);
     xSemaphoreTake(s_done_sem, 0);
@@ -1034,23 +1034,23 @@ static void oled_enqueue_pb_vector_request(OledRequest& req, bool wait_done) {
 
   req.notify_sem = nullptr;
   if (xQueueSend(s_queue, &req, 0) != pdTRUE) {
-    OledRequest dropped{};
+    DisplayRequest dropped{};
     xQueueReceive(s_queue, &dropped, 0);
-    if (dropped.scene == OLED_SCENE_PB_VECTOR_JSON) {
+    if (dropped.scene == DISPLAY_SCENE_PB_VECTOR_JSON) {
       if (dropped.json_payload) {
         ::free(dropped.json_payload);
       }
-      oled_free_request_assets(dropped);
+      display_free_request_assets(dropped);
     }
     xQueueSend(s_queue, &req, 0);
   }
 }
 
-void oled_render_submit_pb_vector_json(const char* json, size_t json_len, bool wait_done) {
-  oled_render_submit_pb_vector_json(json, json_len, nullptr, nullptr, 0, wait_done);
+void display_render_submit_pb_vector_json(const char* json, size_t json_len, bool wait_done) {
+  display_render_submit_pb_vector_json(json, json_len, nullptr, nullptr, 0, wait_done);
 }
 
-void oled_render_submit_pb_vector_json(const char* json, size_t json_len, uint8_t* const* asset_bufs,
+void display_render_submit_pb_vector_json(const char* json, size_t json_len, uint8_t* const* asset_bufs,
                                        const size_t* asset_lens, uint8_t asset_count,
                                        bool wait_done) {
   ensure_render_task();
@@ -1064,16 +1064,16 @@ void oled_render_submit_pb_vector_json(const char* json, size_t json_len, uint8_
   memcpy(copy, json, json_len);
   copy[json_len] = '\0';
 
-  OledRequest req{};
-  req.scene = OLED_SCENE_PB_VECTOR_JSON;
+  DisplayRequest req{};
+  req.scene = DISPLAY_SCENE_PB_VECTOR_JSON;
   req.arg = 0;
   req.json_payload = copy;
   req.json_len = json_len;
-  oled_fill_request_assets(req, asset_bufs, asset_lens, asset_count);
-  oled_enqueue_pb_vector_request(req, wait_done);
+  display_fill_request_assets(req, asset_bufs, asset_lens, asset_count);
+  display_enqueue_pb_vector_request(req, wait_done);
 }
 
-void oled_render_submit_pb_vector_json_owned(char* json, size_t json_len, uint8_t* const* asset_bufs,
+void display_render_submit_pb_vector_json_owned(char* json, size_t json_len, uint8_t* const* asset_bufs,
                                              const size_t* asset_lens, uint8_t asset_count,
                                              bool wait_done) {
   ensure_render_task();
@@ -1085,28 +1085,28 @@ void oled_render_submit_pb_vector_json_owned(char* json, size_t json_len, uint8_
   }
   json[json_len] = '\0';
 
-  OledRequest req{};
-  req.scene = OLED_SCENE_PB_VECTOR_JSON;
+  DisplayRequest req{};
+  req.scene = DISPLAY_SCENE_PB_VECTOR_JSON;
   req.arg = 0;
   req.json_payload = json;
   req.json_len = json_len;
-  oled_fill_request_assets(req, asset_bufs, asset_lens, asset_count);
-  oled_enqueue_pb_vector_request(req, wait_done);
+  display_fill_request_assets(req, asset_bufs, asset_lens, asset_count);
+  display_enqueue_pb_vector_request(req, wait_done);
 }
 
-void oled_render_reset() {
+void display_render_reset() {
   ensure_render_task();
   xSemaphoreTake(s_caller_lock, portMAX_DELAY);
 
   /* 1. drain 队列里所有未渲染 req：释放 json_payload + 唤醒 sync caller 防永久阻塞。
    *    drain 必须在入队 RESET 之前，否则 RESET 会被同一轮 drain 误吃。 */
-  OledRequest dropped{};
+  DisplayRequest dropped{};
   while (xQueueReceive(s_queue, &dropped, 0) == pdTRUE) {
-    if (dropped.scene == OLED_SCENE_PB_VECTOR_JSON) {
+    if (dropped.scene == DISPLAY_SCENE_PB_VECTOR_JSON) {
       if (dropped.json_payload) {
         ::free(dropped.json_payload);
       }
-      oled_free_request_assets(dropped);
+      display_free_request_assets(dropped);
     }
     if (dropped.notify_sem) {
       xSemaphoreGive(dropped.notify_sem);
@@ -1115,8 +1115,8 @@ void oled_render_reset() {
 
   /* 2. 入队 RESET 到队尾：渲染任务完成"当前正在渲染的 req"（含 vTaskDelay）后 receive 到，
    *    再做 noop 收尾（不清屏、保留当前画面）。 */
-  OledRequest req{};
-  req.scene = OLED_SCENE_RESET;
+  DisplayRequest req{};
+  req.scene = DISPLAY_SCENE_RESET;
   req.arg = 0;
   req.json_payload = nullptr;
   req.json_len = 0;
@@ -1126,7 +1126,7 @@ void oled_render_reset() {
   xSemaphoreGive(s_caller_lock);
 }
 
-unsigned oled_render_input_queue_depth(void) {
+unsigned display_render_input_queue_depth(void) {
   ensure_render_task();
   return s_queue ? (unsigned)uxQueueMessagesWaiting(s_queue) : 0u;
 }

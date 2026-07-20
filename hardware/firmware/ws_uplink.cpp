@@ -1,7 +1,6 @@
 #include "ws_uplink.h"
 
 #include "asr_chat_client.h"
-#include "camera_uplink_client.h"
 #include "deskbot_uplink_state.h"
 #include "logger.h"
 
@@ -135,7 +134,6 @@ bool ws_uplink_send(const char* json, const uint8_t* bin, size_t bin_len,
     if (s_client) {
       ws_uplink_drain_rx(s_client);
     }
-    camera_uplink_pump_only();
     if (!s_ws->sendTXT(json)) {
       vTaskDelay(pdMS_TO_TICKS(2));
       taskYIELD();
@@ -151,7 +149,6 @@ bool ws_uplink_send(const char* json, const uint8_t* bin, size_t bin_len,
     if (s_client) {
       ws_uplink_drain_rx(s_client);
     }
-    camera_uplink_pump_only();
     if (s_ws->sendBIN(bin, bin_len)) {
       return true;
     }
@@ -305,5 +302,4 @@ void ws_uplink_write_pump_impl(void) {
 
 extern "C" void deskbot_ws_uplink_write_pump(void) {
   ws_uplink_write_pump_impl();
-  camera_uplink_write_pump();
 }
