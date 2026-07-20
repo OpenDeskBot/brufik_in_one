@@ -11,6 +11,7 @@ from deskbot_server.debug_prefs_store import get_camera_servo_auto_mode, persist
 from deskbot_server.memory_store import add_memory, delete_memory
 from deskbot_server.scheduled_task_service import execute_schedule_task_tool
 from deskbot_server.session_store import execute_session_tool
+from deskbot_server.miot_tools import execute_miot_tool
 from deskbot_server.web_tools import webfetch, websearch
 
 logger = logging.getLogger("deskbot-server")
@@ -114,6 +115,11 @@ def execute_llm_tools(
                 results.append(out)
             elif tool == "session":
                 out = execute_session_tool(raw, device_id=dev)
+                results.append(out)
+            elif tool in ("miot", "mihome", "mijia"):
+                if not dev:
+                    raise ValueError("miot 需要 device_id")
+                out = execute_miot_tool(raw, device_id=dev)
                 results.append(out)
             elif tool == "webfetch":
                 url = str(raw.get("url") or "").strip()

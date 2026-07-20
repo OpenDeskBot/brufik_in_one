@@ -1,0 +1,9 @@
+# 控制米家 IoT 的最小依赖（不含摄像头/感知）
+aiohttp>=3.14.1
+aiofiles>=25.1.0
+cryptography>=44.0.0
+pydantic>=2.13.4
+pyyaml>=6.0.2
+click>=8.1.0
+
+# SDK 本体通过 install.sh 安装 miloco-miot wheel（--no-deps）

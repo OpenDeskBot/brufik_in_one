@@ -27,6 +27,17 @@ from deskbot_server.memory_store import (
     list_memory_entries_for_device,
     update_memory,
 )
+from deskbot_server.miot_service import (
+    authorize_and_sync,
+    error_payload,
+    get_bind_url,
+    get_status,
+    load_homes_cache,
+    miot_sdk_available,
+    parse_auth_payload,
+    sync_homes,
+    unbind as miot_unbind,
+)
 from deskbot_server.scheduled_task_service import (
     count_scheduled_tasks_for_device,
     delete_scheduled_task,
@@ -717,3 +728,148 @@ def api_delete_scheduled_task(task_id: str):
     if not delete_scheduled_task(task_id, device_id=device_id):
         return jsonify({"ok": False, "error": "任务不存在"}), 404
     return jsonify({"ok": True})
+
+
+# ----- 米家 IoT -----
+
+
+@bp.get("/api/miot/status")
+@login_required
+def api_miot_status():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    ok_sdk, sdk_err = miot_sdk_available()
+    if not ok_sdk:
+        return jsonify({"ok": False, "error": sdk_err, "sdk_ok": False}), 503
+    refresh = str(request.args.get("refresh") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    try:
+        status = get_status(device_id, refresh=refresh)
+    except Exception as exc:
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    homes = load_homes_cache(device_id)
+    return jsonify(
+        {
+            "ok": True,
+            "sdk_ok": True,
+            "device_id": device_id,
+            "status": status,
+            "homes": homes,
+            "device_count": homes.get("device_count") or len(homes.get("devices") or []),
+            "scene_count": homes.get("scene_count") or len(homes.get("scenes") or []),
+        }
+    )
+
+
+@bp.post("/api/miot/bind-url")
+@login_required
+def api_miot_bind_url():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    ok_sdk, sdk_err = miot_sdk_available()
+    if not ok_sdk:
+        return jsonify({"ok": False, "error": sdk_err}), 503
+    try:
+        url = get_bind_url(device_id)
+    except Exception as exc:
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    return jsonify(
+        {
+            "ok": True,
+            "auth_url": url,
+            "hint": (
+                "请在浏览器打开授权链接并登录小米账号。"
+                "授权完成后会进入「小米账号授权完成」页面，"
+                "点击「复制授权码」，回到本页粘贴即可（也可粘贴完整回调 URL）。"
+            ),
+        }
+    )
+
+
+@bp.post("/api/miot/authorize")
+@login_required
+def api_miot_authorize():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    payload = request.get_json(silent=True) or {}
+    code = str(payload.get("code") or "").strip()
+    state = str(payload.get("state") or "").strip()
+    callback = str(
+        payload.get("callback_url")
+        or payload.get("url")
+        or payload.get("payload")
+        or ""
+    ).strip()
+    try:
+        if code and state:
+            auth_code, auth_state = code, state
+        elif callback:
+            auth_code, auth_state = parse_auth_payload(callback)
+        else:
+            raise ValueError("请粘贴授权回调完整 URL，或提供 code 与 state")
+        result = authorize_and_sync(device_id, auth_code, auth_state)
+    except Exception as exc:
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    return jsonify(result)
+
+
+@bp.post("/api/miot/sync")
+@login_required
+def api_miot_sync():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    try:
+        homes = sync_homes(device_id)
+        status = get_status(device_id, refresh=True)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger("deskbot-server").exception(
+            "[miot] sync failed device_id=%s", device_id
+        )
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    return jsonify(
+        {
+            "ok": True,
+            "status": status,
+            "homes": homes,
+            "device_count": homes.get("device_count"),
+            "scene_count": homes.get("scene_count"),
+        }
+    )
+
+
+@bp.post("/api/miot/unbind")
+@login_required
+def api_miot_unbind():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    try:
+        miot_unbind(device_id)
+    except Exception as exc:
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@bp.get("/api/miot/homes")
+@login_required
+def api_miot_homes():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    homes = load_homes_cache(device_id)
+    return jsonify({"ok": True, "homes": homes})

@@ -10,7 +10,6 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "servo_early_init.h"
 
 int X_CENTER = 90;
 int Y_CENTER = 90;
@@ -397,11 +396,10 @@ void setup_head() {
 
   head_gpio_soft_center_axis(Y_PIN, y_us, kCenterPeriodMs, kCenterPulses, "Y");
   head_gpio_soft_center_axis(X_PIN, x_us, kCenterPeriodMs, kCenterPulses, "X");
-  deskbot_servo_pins_claim_low();
 
   s_logical_x = X_CENTER;
   s_logical_y = Y_CENTER;
-  log_info("[HEAD] gpio-center done (pins LOW, await camera then permanent attach)");
+  log_info("[HEAD] gpio-center done (await camera then permanent attach)");
 }
 
 /* ---- 运动接口 ---- */

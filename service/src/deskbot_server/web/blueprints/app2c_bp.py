@@ -128,6 +128,12 @@ def devices():
     return render_template("app2c/devices.html", active_nav="device")
 
 
+@bp.get("/my/miot")
+@login_required
+def miot():
+    return render_template("app2c/miot.html", active_nav="miot")
+
+
 @bp.get("/advanced")
 @login_required
 def advanced():

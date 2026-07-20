@@ -26,7 +26,7 @@ camera_face:
 debug:
   asr_auto_reply: true
   pb_idle_auto_dispatch: true
-  camera_servo_auto_mode: ''
+  camera_servo_auto_mode: follow
 server:
   host: 0.0.0.0
   port: 9000

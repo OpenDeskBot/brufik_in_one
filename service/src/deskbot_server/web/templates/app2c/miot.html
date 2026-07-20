@@ -1,0 +1,211 @@
+{% extends "base_2c.html" %}
+{% block page_title %}米家 · 小歪{% endblock %}
+{% block extra_head %}<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+<style>
+.miot-steps{display:grid;gap:10px;margin:16px 0 20px}
+.miot-step{display:flex;gap:12px;align-items:flex-start;background:var(--panel);border:var(--bw) solid var(--line);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow-sm)}
+.miot-step .n{font-family:var(--mono);font-weight:700;font-size:12px;background:var(--accent);color:#fff;border:var(--bw) solid var(--line);padding:2px 8px;flex:none}
+.miot-step p{margin:0;font-size:14px;line-height:1.5}
+.miot-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:14px 0 20px}
+.miot-meta .note small{margin-top:6px}
+.miot-meta .note b{display:block;font-size:15px;margin-top:8px}
+.miot-room{margin-bottom:14px}
+.miot-room h3{margin:0 0 8px;font-size:14px;font-family:var(--mono);letter-spacing:.04em}
+.miot-devs{display:flex;flex-wrap:wrap;gap:8px}
+.miot-chip{border:var(--bw) solid var(--line);border-radius:var(--rs);padding:6px 10px;background:var(--panel2);font-size:13px}
+.miot-chip .led{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);border:1px solid var(--line);margin-right:6px;vertical-align:middle}
+.miot-chip .led.off{background:var(--faint)}
+.miot-bindbox textarea.tinput{width:100%;min-height:88px;resize:vertical;font-family:var(--mono);font-size:12px}
+.miot-warn{background:var(--accent-soft);border:var(--bw) solid var(--line);border-radius:var(--r);padding:12px 14px;margin:12px 0;font-size:13px;line-height:1.5}
+</style>
+{% endblock %}
+{% block content %}
+<div id="app">
+  <div class="pagehd">
+    <div>
+      <div class="eyebrow">MIJIA · SMART HOME</div>
+      <h1>米家</h1>
+      <p>绑定小米账号后，可用语音控制家里的灯、空调与场景。</p>
+    </div>
+  </div>
+
+  <p class="lead" v-if="noDevice">请先在「我的设备」中选择一台 Brufik 设备。</p>
+  <p class="lead" v-if="msg">[[ msg ]]</p>
+  <div class="miot-warn" v-if="sdkErr">[[ sdkErr ]]</div>
+
+  <template v-if="!noDevice && !sdkErr">
+    <!-- 未绑定 -->
+    <div v-if="!status.bound">
+      <div class="note">
+        <span class="memtag">BIND</span>
+        <p>三步完成授权，大约一分钟。</p>
+        <div class="miot-steps">
+          <div class="miot-step"><span class="n">1</span><p>点击「开始绑定」，在新标签页用小米账号登录并同意授权。</p></div>
+          <div class="miot-step"><span class="n">2</span><p>授权成功后会进入<strong>「小米账号授权完成」</strong>页面（不是打不开的 127.0.0.1）。点击页面上的<strong>「复制授权码」</strong>。</p></div>
+          <div class="miot-step"><span class="n">3</span><p>回到本页粘贴授权码（或完整 URL），点「完成绑定」。系统会自动拉取家庭与设备。</p></div>
+        </div>
+        <div class="btngroup" style="margin-bottom:14px">
+          <button class="btn primary" @click="startBind" :disabled="busy">[[ busy ? '处理中…' : '开始绑定' ]]</button>
+          <a v-if="authUrl" class="btn ghost" :href="authUrl" target="_blank" rel="noopener">再次打开授权页</a>
+          <button class="btn ghost" v-if="authUrl" @click="pasteClipboard" :disabled="busy">从剪贴板粘贴</button>
+        </div>
+        <div class="miot-bindbox" v-if="authUrl || callbackUrl">
+          <textarea class="tinput" v-model="callbackUrl" placeholder="粘贴授权码（一串 base64）或完整回调 URL"></textarea>
+          <div class="btngroup" style="margin-top:10px">
+            <button class="btn primary" @click="finishBind" :disabled="busy || !callbackUrl.trim()">完成绑定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 已绑定 -->
+    <div v-else>
+      <div class="note">
+        <span class="memtag">ACCOUNT</span>
+        <p>已绑定[[ status.nickname ? ' · ' + status.nickname : '' ]]</p>
+        <div class="miot-meta">
+          <div class="note" style="box-shadow:none">
+            <span class="memtag">LAST REFRESH</span>
+            <b>[[ status.last_refreshed_at_fmt || '—' ]]</b>
+            <small>上次续期时间</small>
+          </div>
+          <div class="note" style="box-shadow:none">
+            <span class="memtag">VALID UNTIL</span>
+            <b>[[ status.expires_ts_fmt || '—' ]]</b>
+            <small>有效至 · 剩余 [[ status.expires_in_human || '—' ]]</small>
+          </div>
+          <div class="note" style="box-shadow:none">
+            <span class="memtag">NEXT REFRESH</span>
+            <b>[[ status.next_refresh_at_fmt || '—' ]]</b>
+            <small>下次自动续期约此时</small>
+          </div>
+        </div>
+        <div class="btngroup">
+          <button class="btn primary" @click="doSync" :disabled="busy">刷新设备列表</button>
+          <button class="btn ghost" @click="doRefreshToken" :disabled="busy">立即续期</button>
+          <button class="btn ghost" @click="doUnbind" :disabled="busy">解除绑定</button>
+        </div>
+        <small style="margin-top:12px;display:block">
+          上次同步设备：[[ status.last_synced_at_fmt || '—' ]] ·
+          [[ deviceCount ]] 台设备 · [[ sceneCount ]] 个场景
+        </small>
+      </div>
+
+      <div style="margin-top:22px" v-if="homesList.length">
+        <div class="eyebrow" style="margin-bottom:12px">HOME TREE</div>
+        <div v-for="h in homesList" :key="h.home_name" class="note" style="margin-bottom:12px">
+          <span class="memtag">HOME</span>
+          <p style="margin-bottom:10px">[[ h.home_name ]]</p>
+          <div class="miot-room" v-for="r in h.rooms" :key="r.room_name">
+            <h3>[[ r.room_name ]]</h3>
+            <div class="miot-devs">
+              <span class="miot-chip" v-for="d in r.devices" :key="d.did">
+                <span class="led" :class="{off: !d.online}"></span>[[ d.name ]]
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:18px" v-if="scenes.length">
+        <div class="eyebrow" style="margin-bottom:12px">SCENES</div>
+        <div class="miot-devs">
+          <span class="miot-chip" v-for="s in scenes" :key="s.scene_id">[[ s.scene_name ]]</span>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({
+  delimiters:['[[',']]'],
+  data(){
+    return {
+      noDevice:false, busy:false, msg:'', sdkErr:'',
+      status:{}, homes:{}, authUrl:'', callbackUrl:'',
+    };
+  },
+  computed:{
+    homesList(){ return (this.homes && this.homes.homes) || []; },
+    scenes(){ return (this.homes && this.homes.scenes) || []; },
+    deviceCount(){ return this.homes.device_count || (this.homes.devices||[]).length || 0; },
+    sceneCount(){ return this.homes.scene_count || (this.homes.scenes||[]).length || 0; },
+  },
+  methods:{
+    async load(){
+      const d=await (await fetch('/app/api/devices')).json();
+      this.noDevice = !d.current_device_id;
+      if(this.noDevice){ this.status={}; this.homes={}; return; }
+      const r=await (await fetch('/app/api/miot/status')).json();
+      if(r.sdk_ok===false || (!r.ok && r.error && String(r.error).includes('miloco'))){
+        this.sdkErr = r.error || '米家 SDK 不可用';
+        return;
+      }
+      if(!r.ok){ this.msg=r.error||'加载失败'; if(r.hint) this.msg += ' · '+r.hint; return; }
+      this.sdkErr='';
+      this.status = r.status || {};
+      this.homes = r.homes || {};
+    },
+    async startBind(){
+      this.busy=true; this.msg='';
+      try{
+        const r=await (await fetch('/app/api/miot/bind-url',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+        if(!r.ok){ this.msg=(r.error||'获取授权链接失败')+(r.hint?' · '+r.hint:''); return; }
+        this.authUrl=r.auth_url;
+        window.open(r.auth_url,'_blank','noopener');
+        this.msg='已打开授权页。完成后在「授权完成」页点复制授权码，再粘贴到下方。';
+      } finally { this.busy=false; }
+    },
+    async pasteClipboard(){
+      try{
+        const t=await navigator.clipboard.readText();
+        if(t && t.trim()){ this.callbackUrl=t.trim(); this.msg='已从剪贴板粘贴，请点「完成绑定」'; }
+        else this.msg='剪贴板为空';
+      }catch(e){ this.msg='无法读取剪贴板，请手动粘贴（需浏览器剪贴板权限）'; }
+    },
+    async finishBind(){
+      const url=this.callbackUrl.trim(); if(!url) return;
+      this.busy=true; this.msg='';
+      try{
+        const r=await (await fetch('/app/api/miot/authorize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({callback_url:url})})).json();
+        if(!r.ok){ this.msg=(r.error||'绑定失败')+(r.hint||r.solution?' · '+(r.hint||r.solution):''); return; }
+        this.msg='绑定成功'+(r.nickname?' · '+r.nickname:'')+'，已同步设备。';
+        this.callbackUrl=''; this.authUrl='';
+        await this.load();
+      } finally { this.busy=false; }
+    },
+    async doSync(){
+      this.busy=true; this.msg='';
+      try{
+        const r=await (await fetch('/app/api/miot/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+        if(!r.ok){ this.msg=(r.error||'同步失败')+(r.hint?' · '+r.hint:''); return; }
+        this.status=r.status||this.status; this.homes=r.homes||{};
+        this.msg='已刷新：'+ (r.device_count||0) +' 台设备，'+ (r.scene_count||0) +' 个场景';
+      } finally { this.busy=false; }
+    },
+    async doRefreshToken(){
+      this.busy=true; this.msg='';
+      try{
+        const r=await (await fetch('/app/api/miot/status?refresh=1')).json();
+        if(!r.ok){ this.msg=(r.error||'续期失败')+(r.hint?' · '+r.hint:''); return; }
+        this.status=r.status||{}; this.homes=r.homes||this.homes;
+        this.msg='已检查/续期 token';
+      } finally { this.busy=false; }
+    },
+    async doUnbind(){
+      if(!confirm('确定解除米家账号绑定？语音将无法控制米家设备。')) return;
+      this.busy=true; this.msg='';
+      try{
+        const r=await (await fetch('/app/api/miot/unbind',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+        if(!r.ok){ this.msg=r.error||'解绑失败'; return; }
+        this.msg='已解除绑定'; await this.load();
+      } finally { this.busy=false; }
+    },
+  },
+  mounted(){ this.load(); },
+}).mount('#app');
+</script>
+{% endblock %}

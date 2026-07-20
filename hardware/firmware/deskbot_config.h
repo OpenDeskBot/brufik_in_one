@@ -11,7 +11,7 @@
 #define WIFI_DEFAULT_SSID "Micband"
 #define WIFI_DEFAULT_PASSWORD "Xiaomi@2025"
 
-#define DESKBOT_WS_HOST "10.221.64.74"
+#define DESKBOT_WS_HOST "10.220.138.26"
 #define DESKBOT_WS_PORT 9000
 
 /* 服务端 WebSocket 鉴权 Key（odk_... 或 odk_free_...）。留空则无法连接 /asr_chat。 */
@@ -80,9 +80,8 @@ static inline bool deskbot_api_key_configured(void) {
 #define DESKBOT_DRAW_W DESKBOT_PB_COORD_W
 #define DESKBOT_DRAW_H DESKBOT_PB_COORD_H
 
-/* 舵机 PWM：丝印 D6=GPIO43，D7=GPIO44（芯片默认 UART0，Bootloader 日志易致误动作）
- * 左右(X) → D9/8 小舵机；上下(Y) → D3/4 大舵机
- * 保护：custom bootloader + servo_early_init constructor + setup claim LOW */
+/* 舵机 PWM（已避开 UART0 的 D6/D7）
+ * 左右(X) → D9/GPIO8 小舵机；上下(Y) → D3/GPIO4 大舵机 */
 #ifndef DESKBOT_ROM_X_PIN
 #define DESKBOT_ROM_X_PIN 8
 #endif

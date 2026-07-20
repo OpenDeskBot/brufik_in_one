@@ -207,12 +207,34 @@ def llm_tools_prompt_appendix() -> str:
         "    · 当前 session：{\"tool\":\"session\",\"action\":\"current\"}\n"
         "    · 最近列表：{\"tool\":\"session\",\"action\":\"list\",\"limit\":10}\n"
         "    · 读取详情：{\"tool\":\"session\",\"action\":\"get\",\"session_id\":\"…\"}（省略 id 则读当前）\n"
+        "  - miot: 米家智能家居查看/控制（需已在网站「米家」页绑定）。"
+        "**用户要求开关灯/空调/场景等家居操作时必须调用，禁止仅口头答应。**\n"
+        "    设备清单见上方「米家智能家居」摘要；优先用 name，重名加 room，或用 did。\n"
+        "    · 列表：{\"tool\":\"miot\",\"action\":\"list\",\"online\":true}\n"
+        "    · 读属性：{\"tool\":\"miot\",\"action\":\"props\",\"name\":\"台灯\",\"keys\":[\"on\",\"brightness\"]}\n"
+        "    · 写属性：{\"tool\":\"miot\",\"action\":\"set\",\"name\":\"台灯\",\"key\":\"on\",\"value\":true}\n"
+        "    · 查能力：{\"tool\":\"miot\",\"action\":\"spec\",\"name\":\"台灯\"}\n"
+        "    · 调动作：{\"tool\":\"miot\",\"action\":\"action\",\"name\":\"音箱\",\"key\":\"play-text\",\"args\":[\"你好\"]}\n"
+        "    · 跑场景：{\"tool\":\"miot\",\"action\":\"run_scene\",\"scene_name\":\"回家模式\"}\n"
+        "    · 刷新缓存：{\"tool\":\"miot\",\"action\":\"sync\"}；授权状态：{\"tool\":\"miot\",\"action\":\"status\"}\n"
+        "    失败时结果含 error/hint/solution，请用口语向用户说明原因与解决办法。\n"
     )
 
 
+def llm_miot_prompt_appendix(device_id: Optional[str] = None) -> str:
+    """米家家庭/设备摘要，注入 system prompt。"""
+    from deskbot_server.miot_service import llm_miot_prompt_appendix as _miot_ax
+
+    return _miot_ax(device_id)
+
+
 def llm_static_context_prompt_appendix(device_id: Optional[str] = None) -> str:
-    """长期记忆 + 工具说明（传感器/人脸见每轮 user 消息）。"""
-    parts = [llm_memory_prompt_appendix(device_id), llm_tools_prompt_appendix()]
+    """长期记忆 + 米家摘要 + 工具说明（传感器/人脸见每轮 user 消息）。"""
+    parts = [
+        llm_memory_prompt_appendix(device_id),
+        llm_miot_prompt_appendix(device_id),
+        llm_tools_prompt_appendix(),
+    ]
     return "\n\n".join(p for p in parts if p)
 
 

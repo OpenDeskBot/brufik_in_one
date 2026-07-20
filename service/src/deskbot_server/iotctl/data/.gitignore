@@ -1,0 +1,3 @@
+# 运行时数据目录（token、spec 缓存），可随目录一起拷贝
+*
+!.gitignore

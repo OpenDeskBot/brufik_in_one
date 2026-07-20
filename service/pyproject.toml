@@ -30,6 +30,10 @@ dependencies = [
     "croniter==2.0.7",
     "pypinyin>=0.53.0",
     "g2p-en>=2.1.0",
+    "aiohttp>=3.14.1",
+    "aiofiles>=25.1.0",
+    "cryptography>=44.0.0",
+    "pydantic>=2.13.4",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +41,14 @@ dev = [
     "sounddevice==0.5.3",
     "ruff>=0.9",
     "pytest>=8.0",
+]
+# miloco-miot 需从 iotctl/wheels 本地安装：
+#   pip install --no-deps src/deskbot_server/iotctl/wheels/miloco_miot-*.whl
+miot = [
+    "aiohttp>=3.14.1",
+    "aiofiles>=25.1.0",
+    "cryptography>=44.0.0",
+    "pydantic>=2.13.4",
 ]
 
 [project.scripts]

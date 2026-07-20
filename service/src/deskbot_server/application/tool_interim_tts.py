@@ -21,6 +21,9 @@ _TOOL_INTERIM_PHRASES: dict[str, str] = {
     "session": "我换一下话题",
     "read": "我读一下文件",
     "write": "我写进文件里",
+    "miot": "我帮你控一下设备",
+    "mihome": "我帮你控一下设备",
+    "mijia": "我帮你控一下设备",
 }
 
 _DEFAULT_PHRASE = "稍等一下"
