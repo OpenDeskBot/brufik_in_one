@@ -1,11 +1,13 @@
 CONFIG_ESP_CONSOLE_NONE=y
+# loopTask 已无 Opus；实际以 platformio.ini -DARDUINO_LOOP_STACK_SIZE 与 getArduinoLoopTaskStackSize() 为准。
+# 注意：纯 framework=arduino 时预编译 SDK 的 CONFIG_ARDUINO_LOOP_STACK_SIZE=8192 不会被本文件覆盖。
 CONFIG_ARDUINO_LOOP_STACK_SIZE=24576
 
-# 相机 JPEG ~8KB 须一次或少量 TCP 段发完，避免 sendBIN 等 ACK 时 write 超时
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
-CONFIG_LWIP_TCP_WND_DEFAULT=16384
+# 双 WS（asr_chat + camera_uplink）并行时需要更大发送窗，避免互抢导致 write 超时
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
 
-# Opus 编码任务栈较大，允许任务栈使用 PSRAM（否则 xTaskCreateStatic 会 assert）
+# loop / 大栈任务可把栈放到 PSRAM（否则内部 SRAM 不够）
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
 

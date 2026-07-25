@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from deskbot_server.face_expr_scenes_store import (
+from deskbot_server.dao.face_expr_scenes_store import (
     load_face_expr_scenes_file,
     normalize_face_expr_scenes,
     save_face_expr_scenes_file,
@@ -24,13 +24,10 @@ def design_file(monkeypatch):
         global_dir = root / "global"
         global_dir.mkdir()
         design_path = global_dir / "deskbot-face.json"
-        design_path.write_text(
-            json.dumps(_minimal_design_doc(), ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        design_path.write_text(json.dumps(_minimal_design_doc(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", root)
         monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", root / "device")
-        from deskbot_server.face_design_store import clear_face_design_cache
+        from deskbot_server.dao.face_design_store import clear_face_design_cache
 
         clear_face_design_cache()
         yield design_path

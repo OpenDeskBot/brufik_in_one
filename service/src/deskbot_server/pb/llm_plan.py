@@ -7,23 +7,15 @@ import logging
 from collections import deque
 from typing import Any, Optional
 
-from deskbot_server.face_expr_scenes_store import (
+from deskbot_server.dao.face_expr_scenes_store import (
     _extract_frame_elements,
     find_design_scene_by_name,
     load_face_expr_scenes_file,
 )
+from deskbot_server.dao.servo_config_store import clamp_servo_step, load_servo_cfg_file, resolve_move_for_perspective
 from deskbot_server.pb.phoneme_anim import phoneme_seq_to_anim_seq
+from deskbot_server.pb.servo_pcm import _silence_phoneme_seg, anim_elements_from_row, make_anim_item
 from deskbot_server.pb.shapes import apply_anim_bg_color_elements
-from deskbot_server.pb.servo_pcm import (
-    _silence_phoneme_seg,
-    anim_elements_from_row,
-    make_anim_item,
-)
-from deskbot_server.servo_config_store import (
-    clamp_servo_step,
-    load_servo_cfg_file,
-    resolve_move_for_perspective,
-)
 
 logger = logging.getLogger("deskbot-server")
 
@@ -70,9 +62,7 @@ def _scale_ms_values(raw_ms: list[int], target_ms: int) -> list[int]:
     return scaled
 
 
-def _resolve_servo_preset_steps(
-    preset_id: str, *, device_id: Optional[str] = None
-) -> list[dict[str, Any]]:
+def _resolve_servo_preset_steps(preset_id: str, *, device_id: Optional[str] = None) -> list[dict[str, Any]]:
     want = str(preset_id or "").strip()
     if not want:
         return []
@@ -98,9 +88,7 @@ def preset_default_ms(preset_id: str, *, device_id: Optional[str] = None) -> int
     return sum(max(1, int(s.get("ms") or 0)) for s in steps)
 
 
-def resolve_anim_scene_frames(
-    anim_name: str, *, device_id: Optional[str] = None
-) -> list[dict[str, Any]]:
+def resolve_anim_scene_frames(anim_name: str, *, device_id: Optional[str] = None) -> list[dict[str, Any]]:
     """加载表情场景帧；未找到时回退 ``name=default``。"""
     rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id) or []
     ent = find_design_scene_by_name(rows, anim_name)
@@ -120,18 +108,13 @@ def anim_default_ms(anim_name: str, *, device_id: Optional[str] = None) -> int:
     return sum(max(1, int(fr.get("ms") or 0)) for fr in frames)
 
 
-def expand_llm_moves(
-    moves: list[dict[str, Any]] | None, *, device_id: Optional[str] = None
-) -> list[dict[str, int]]:
+def expand_llm_moves(moves: list[dict[str, Any]] | None, *, device_id: Optional[str] = None) -> list[dict[str, int]]:
     """将 ``[{move, ms}, ...]`` 展开为缩放后的舵机 step 列表。"""
     out: list[dict[str, int]] = []
     for item in moves or []:
         if not isinstance(item, dict):
             continue
-        move_id = resolve_move_for_perspective(
-            str(item.get("move") or "").strip(),
-            device_id=device_id,
-        )
+        move_id = resolve_move_for_perspective(str(item.get("move") or "").strip(), device_id=device_id)
         try:
             target_ms = int(item.get("ms", 0))
         except (TypeError, ValueError):
@@ -180,9 +163,7 @@ def expand_llm_moves(
     return out
 
 
-def expand_llm_anims(
-    anims: list[dict[str, Any]] | None, *, device_id: Optional[str] = None
-) -> list[dict[str, Any]]:
+def expand_llm_anims(anims: list[dict[str, Any]] | None, *, device_id: Optional[str] = None) -> list[dict[str, Any]]:
     """将 ``[{anim, ms}, ...]`` 展开为缩放后的 ``{ms, elements}`` 帧列表。"""
     out: list[dict[str, Any]] = []
     for item in anims or []:
@@ -206,16 +187,13 @@ def expand_llm_anims(
                 elements = _extract_frame_elements(fr if isinstance(fr, dict) else {})
             except ValueError:
                 continue
-            elements = apply_anim_bg_color_elements(
-                elements, bg=item.get("bg"), color=item.get("color")
-            )
+            elements = apply_anim_bg_color_elements(elements, bg=item.get("bg"), color=item.get("color"))
             out.append({"ms": int(sms), "elements": elements})
     return out
 
 
 def map_anim_frames_to_tts_segs(
-    segs: list[dict[str, Any]],
-    anim_frames: list[dict[str, Any]],
+    segs: list[dict[str, Any]], anim_frames: list[dict[str, Any]]
 ) -> list[dict[str, Any] | None]:
     """按 TTS 时间轴把 ``anim_frames`` 铺到每个分片（非 1:1 索引）。
 
@@ -244,9 +222,10 @@ def map_anim_frames_to_tts_segs(
         if mid >= overlay_span:
             out.append(None)
             continue
-        while frame_idx < len(anim_frames) - 1 and acc + max(
-            1, int(anim_frames[frame_idx].get("ms") or _FRAME_MS_MIN)
-        ) <= mid:
+        while (
+            frame_idx < len(anim_frames) - 1
+            and acc + max(1, int(anim_frames[frame_idx].get("ms") or _FRAME_MS_MIN)) <= mid
+        ):
             acc += max(1, int(anim_frames[frame_idx].get("ms") or _FRAME_MS_MIN))
             frame_idx += 1
         els = anim_frames[frame_idx].get("elements")
@@ -255,10 +234,7 @@ def map_anim_frames_to_tts_segs(
 
 
 def interleave_tts_segs_with_llm_plan(
-    segs: list[dict[str, Any]],
-    move_steps: list[dict[str, int]],
-    anim_frames: list[dict[str, Any]],
-    sample_rate: int,
+    segs: list[dict[str, Any]], move_steps: list[dict[str, int]], anim_frames: list[dict[str, Any]], sample_rate: int
 ) -> tuple[list[dict[str, Any]], list[dict[str, int] | None], list[dict[str, Any] | None]]:
     """TTS 分片与 move step 按索引交错；``anims`` 按时间轴铺到全部分片。
 
@@ -298,9 +274,7 @@ def interleave_tts_segs_with_llm_plan(
 
 
 def merge_llm_plan_anim_rows(
-    segs: list[dict[str, Any]],
-    phoneme_rows: list[dict[str, Any]],
-    parallel_anim: list[dict[str, Any] | None] | None,
+    segs: list[dict[str, Any]], phoneme_rows: list[dict[str, Any]], parallel_anim: list[dict[str, Any] | None] | None
 ) -> list[dict[str, Any]]:
     """合并 LLM 指定 anim 与音素口型：有真实音素口播时保留音素 ``mouth``。"""
     out: list[dict[str, Any]] = []
@@ -321,9 +295,7 @@ def merge_llm_plan_anim_rows(
             # 纯表情/舵机包的静音 PCM 不应覆盖情绪口型；仅 TTS 音素口播时保留嘴型
             if has_audio and ph_name and isinstance(ph_el.get("mouth"), list):
                 merged["mouth"] = copy.deepcopy(ph_el["mouth"])
-            row["anim"] = [
-                make_anim_item(merged, chunk_ms, phoneme=ph_name or None)
-            ]
+            row["anim"] = [make_anim_item(merged, chunk_ms, phoneme=ph_name or None)]
         out.append(row)
     return out
 

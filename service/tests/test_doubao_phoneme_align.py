@@ -1,22 +1,20 @@
 """doubao_phoneme_align 单元测试。"""
+
 from __future__ import annotations
 
 from deskbot_server.core.ports.tts import PhonemeSegment
-from deskbot_server.tts.doubao_phoneme_align import (
+from deskbot_server.infrastructure.tts.doubao_phoneme_align import (
+    TimedPhoneme,
     build_phoneme_segments,
     extract_timed_phonemes_from_sentence_end,
     split_pcm_by_timed_phonemes,
-    TimedPhoneme,
 )
 
 
 def test_split_pcm_by_api_phonemes():
     sr = 16000
     pcm = b"\x01\x02" * (sr // 10)  # 100ms
-    timed = [
-        TimedPhoneme("n", 0, 40),
-        TimedPhoneme("i", 40, 100),
-    ]
+    timed = [TimedPhoneme("n", 0, 40), TimedPhoneme("i", 40, 100)]
     segs = split_pcm_by_timed_phonemes(pcm, sr, timed)
     assert len(segs) == 2
     assert sum(len(s.pcm) for s in segs) == len(pcm)
@@ -49,20 +47,10 @@ def test_sentence_end_preferred_over_incremental_subtitles():
     """增量 subtitle 不应叠加到 sentence_end 之上导致末尾重复。"""
     sr = 24000
     pcm = b"\x00\x01" * (sr // 2)  # 500ms
-    words = [
-        {"word": "你", "startTime": 0.0, "endTime": 0.25},
-        {"word": "好", "startTime": 0.25, "endTime": 0.5},
-    ]
-    subtitles = [
-        {"words": [words[0]]},
-        {"words": words},
-    ]
+    words = [{"word": "你", "startTime": 0.0, "endTime": 0.25}, {"word": "好", "startTime": 0.25, "endTime": 0.5}]
+    subtitles = [{"words": [words[0]]}, {"words": words}]
     segs = build_phoneme_segments(
-        text="你好",
-        pcm=pcm,
-        sample_rate=sr,
-        sentence_end={"words": words},
-        subtitles=subtitles,
+        text="你好", pcm=pcm, sample_rate=sr, sentence_end={"words": words}, subtitles=subtitles
     )
     assert sum(len(s.pcm) for s in segs) == len(pcm)
     assert len(segs) >= 2

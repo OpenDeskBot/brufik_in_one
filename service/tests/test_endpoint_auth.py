@@ -11,8 +11,8 @@ def temp_db(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "test.db"
         monkeypatch.setenv("DESKBOT_DB_PATH", str(db_path))
-        from deskbot_server.db.engine import init_engine, reset_engine
         from deskbot_server.db import init_database
+        from deskbot_server.db.engine import init_engine, reset_engine
 
         reset_engine()
         init_engine(db_path)
@@ -40,9 +40,7 @@ def test_flask_api_allows_logged_in_developer(temp_db):
     client = app.test_client()
 
     login = client.post(
-        "/login",
-        data={"email": "alice@example.com", "password": "password1234"},
-        follow_redirects=False,
+        "/login", data={"email": "alice@example.com", "password": "password1234"}, follow_redirects=False
     )
     assert login.status_code == 302
 
@@ -59,11 +57,7 @@ def test_flask_api_denies_debug_for_non_developer(temp_db):
     app = create_app()
     client = app.test_client()
 
-    login = client.post(
-        "/login",
-        data={"email": "bob@example.com", "password": "password1234"},
-        follow_redirects=False,
-    )
+    login = client.post("/login", data={"email": "bob@example.com", "password": "password1234"}, follow_redirects=False)
     assert login.status_code == 302
 
     resp = client.get("/debug/llm")
@@ -79,21 +73,13 @@ def test_register_and_login_flow(temp_db):
 
     r = client.post(
         "/register",
-        data={
-            "email": "newbie@example.com",
-            "password": "password1234",
-            "confirm_password": "password1234",
-        },
+        data={"email": "newbie@example.com", "password": "password1234", "confirm_password": "password1234"},
         follow_redirects=False,
     )
     assert r.status_code == 302
 
     client.post("/logout")
-    r2 = client.post(
-        "/login",
-        data={"email": "newbie@example.com", "password": "password1234"},
-        follow_redirects=False,
-    )
+    r2 = client.post("/login", data={"email": "newbie@example.com", "password": "password1234"}, follow_redirects=False)
     assert r2.status_code == 302
 
 
@@ -107,10 +93,7 @@ def test_developer_user_management(temp_db):
 
     app = create_app()
     client = app.test_client()
-    client.post(
-        "/login",
-        data={"email": "admin@example.com", "password": "password1234"},
-    )
+    client.post("/login", data={"email": "admin@example.com", "password": "password1234"})
 
     resp = client.get("/debug/users")
     assert resp.status_code == 200
@@ -119,10 +102,7 @@ def test_developer_user_management(temp_db):
     member = get_user_by_email("member@example.com")
     assert member is not None
 
-    api = client.post(
-        f"/api/debug/users/{member.id}/developer",
-        json={"is_developer": True},
-    )
+    api = client.post(f"/api/debug/users/{member.id}/developer", json={"is_developer": True})
     assert api.status_code == 200
     assert api.get_json()["user"]["is_developer"] is True
 
@@ -135,8 +115,8 @@ def test_http_require_api_key_rejects_missing():
 
 
 def test_http_require_api_key_accepts_valid_key(temp_db):
-    from deskbot_server.auth.api_key_service import authenticate_api_key, create_api_key
     from deskbot_server.auth.service import create_user
+    from deskbot_server.dao.api_key_service import authenticate_api_key, create_api_key
     from deskbot_server.ws.api_key_gate import http_require_api_key
 
     user = create_user("bob@example.com", "password1234")
@@ -148,9 +128,9 @@ def test_http_require_api_key_accepts_valid_key(temp_db):
 
 
 def test_http_require_device_access_enforces_ownership(temp_db):
-    from deskbot_server.auth.api_key_service import authenticate_api_key, create_api_key
     from deskbot_server.auth.device_service import bind_device
     from deskbot_server.auth.service import create_user
+    from deskbot_server.dao.api_key_service import authenticate_api_key, create_api_key
     from deskbot_server.ws.api_key_gate import http_require_device_access
 
     user = create_user("carol@example.com", "password1234")
@@ -165,7 +145,7 @@ def test_http_require_device_access_enforces_ownership(temp_db):
 
 
 def test_http_require_device_access_skips_free_key(temp_db):
-    from deskbot_server.auth.api_key_service import authenticate_api_key
+    from deskbot_server.dao.api_key_service import authenticate_api_key
     from deskbot_server.ws.api_key_gate import http_require_device_access
 
     key_file = temp_db.parent / ".free_api_key"

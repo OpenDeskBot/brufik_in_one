@@ -10,16 +10,13 @@ from websockets.http11 import Request, d, parse_headers, parse_line, read_body
 from websockets.protocol import CONNECTING, Protocol
 from websockets.server import ServerProtocol
 
-_ALLOWED_METHODS = frozenset(
-    {b"GET", b"POST", b"PUT", b"DELETE", b"OPTIONS", b"HEAD"}
-)
+_ALLOWED_METHODS = frozenset({b"GET", b"POST", b"PUT", b"DELETE", b"OPTIONS", b"HEAD"})
 
 _protocol_base_parse = Protocol.parse
 
 
 def parse_http_request_with_body(
-    read_line: Callable[[int], Generator[None, None, bytes]],
-    read_exact: Callable[[int], Generator[None, None, bytes]],
+    read_line: Callable[[int], Generator[None, None, bytes]], read_exact: Callable[[int], Generator[None, None, bytes]]
 ) -> Generator[None, None, Request]:
     """解析 HTTP/1.1 请求行、头与 Content-Length body（与 websockets Request.parse 兼容）。"""
     try:
@@ -35,13 +32,9 @@ def parse_http_request_with_body(
     protocol = bytes(protocol)
     raw_path = bytes(raw_path)
     if protocol != b"HTTP/1.1":
-        raise ValueError(
-            f"unsupported protocol; expected HTTP/1.1: {d(request_line)}"
-        )
+        raise ValueError(f"unsupported protocol; expected HTTP/1.1: {d(request_line)}")
     if method_b not in _ALLOWED_METHODS:
-        raise ValueError(
-            f"unsupported HTTP method; expected GET/POST/...; got {d(method_b)}"
-        )
+        raise ValueError(f"unsupported HTTP method; expected GET/POST/...; got {d(method_b)}")
 
     path = raw_path.decode("ascii", "surrogateescape")
     headers = yield from parse_headers(read_line)
@@ -51,13 +44,7 @@ def parse_http_request_with_body(
         raise NotImplementedError("transfer codings aren't supported")
 
     if "Content-Length" in headers:
-        body = yield from read_body(
-            200,
-            headers,
-            read_line,
-            read_exact,
-            read_line,
-        )
+        body = yield from read_body(200, headers, read_line, read_exact, read_line)
 
     req = Request(path, headers)
     object.__setattr__(req, "method", method_b.decode("ascii"))
@@ -68,14 +55,9 @@ def parse_http_request_with_body(
 def _patched_server_protocol_parse(self) -> Generator[None]:
     if self.state is CONNECTING:
         try:
-            request = yield from parse_http_request_with_body(
-                self.reader.read_line,
-                self.reader.read_exact,
-            )
+            request = yield from parse_http_request_with_body(self.reader.read_line, self.reader.read_exact)
         except Exception as exc:
-            self.handshake_exc = InvalidMessage(
-                "did not receive a valid HTTP request"
-            )
+            self.handshake_exc = InvalidMessage("did not receive a valid HTTP request")
             self.handshake_exc.__cause__ = exc
             self.send_eof()
             self.parser = self.discard()

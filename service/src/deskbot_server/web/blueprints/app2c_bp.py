@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import mimetypes
 
-from flask import Blueprint, jsonify, redirect, render_template, request, url_for
-from flask_login import current_user, login_required
+from fastapi import APIRouter
 
-from deskbot_server.auth.api_key_service import (
+from deskbot_server.auth.device_service import list_devices_for_user, user_owns_device
+from deskbot_server.auth.service import change_password, get_user_by_id, update_display_name
+from deskbot_server.dao.api_key_service import (
     create_api_key,
     get_api_key_usage_today,
     get_user_device_usage_summary,
@@ -14,39 +15,34 @@ from deskbot_server.auth.api_key_service import (
     list_api_keys_for_user,
     revoke_api_key,
 )
-from deskbot_server.auth.device_service import list_devices_for_user, user_owns_device
-from deskbot_server.auth.service import change_password, get_user_by_id, update_display_name
-from deskbot_server.emotion_expr_map_store import (
-    load_emotion_expr_map,
-    save_emotion_expr_map,
-)
-from deskbot_server.face_expr_scenes_store import (
-    load_face_expr_scenes_file,
-    save_face_expr_scenes_file,
-)
-from deskbot_server.face_mouth_config_store import (
-    load_face_mouth_cfg_file,
-    save_face_mouth_cfg_file,
-)
-from deskbot_server.llm.env_store import save_llm_env
-from deskbot_server.llm.runtime import (
+from deskbot_server.dao.emotion_expr_map_store import load_emotion_expr_map, save_emotion_expr_map
+from deskbot_server.dao.face_expr_scenes_store import load_face_expr_scenes_file, save_face_expr_scenes_file
+from deskbot_server.dao.face_mouth_config_store import load_face_mouth_cfg_file, save_face_mouth_cfg_file
+from deskbot_server.dao.llm_config_store import SUPPORTED_PROTOCOLS, get_active_model_id, list_llm_models
+from deskbot_server.infrastructure.llm.env_store import save_llm_env
+from deskbot_server.infrastructure.llm.runtime import (
     ResolvedLlmConfig,
     build_chat_model,
     chat_completion,
     resolve_llm_config,
     resolve_system_llm_config,
 )
-from deskbot_server.llm_config_store import (
-    SUPPORTED_PROTOCOLS,
-    get_active_model_id,
-    list_llm_models,
-)
 from deskbot_server.web.blueprints.app_bp import _flatten_usage_daily_rows
+from deskbot_server.web.flaskish import (
+    FlaskishAPIRoute,
+    current_user,
+    jsonify,
+    login_required,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from deskbot_server.web.helpers import camera_view_ws_base, device_pipeline_ws_base
 from deskbot_server.web.session_device import get_current_device_id
 
 # No url_prefix: 2C consumer routes live at root (/home, /voice, /my/*)
-bp = Blueprint("app2c", __name__)
+router = APIRouter(route_class=FlaskishAPIRoute, tags=["app2c"])
 
 
 def _default_robot_face_payload() -> dict:
@@ -64,35 +60,32 @@ def _default_robot_face_payload() -> dict:
                 "eye_r": face.get("eye_r") or [],
                 "mouth": (_default_mouth_fallback_shape().get("elements") or []),
                 "extra": [],
-            },
+            }
         },
     }
 
 
-@bp.get("/home")
+@router.get("/home")
 @login_required
 def home():
     return render_template(
-        "app2c/home.html",
-        active_nav="home",
-        camera_view_ws_base=camera_view_ws_base(),
-        **_default_robot_face_payload(),
+        "app2c/home.html", active_nav="home", camera_view_ws_base=camera_view_ws_base(), **_default_robot_face_payload()
     )
 
 
-@bp.get("/voice")
+@router.get("/voice")
 @login_required
 def voice():
     return render_template("app2c/voice.html", active_nav="voice")
 
 
-@bp.get("/expr")
+@router.get("/expr")
 @login_required
 def expr():
     return render_template("app2c/expr.html", active_nav="expr")
 
 
-@bp.get("/lab")
+@router.get("/lab")
 @login_required
 def lab():
     return render_template(
@@ -104,37 +97,43 @@ def lab():
     )
 
 
-@bp.get("/my/memories")
+@router.get("/my/memories")
 @login_required
 def memories():
     return render_template("app2c/memories.html", active_nav="memory")
 
 
-@bp.get("/my/reminders")
+@router.get("/my/reminders")
 @login_required
 def reminders():
     return render_template("app2c/reminders.html", active_nav="remind")
 
 
-@bp.get("/my/people")
+@router.get("/my/people")
 @login_required
 def people():
     return render_template("app2c/people.html", active_nav="people")
 
 
-@bp.get("/my/devices")
+@router.get("/my/devices")
 @login_required
 def devices():
     return render_template("app2c/devices.html", active_nav="device")
 
 
-@bp.get("/advanced")
+@router.get("/my/miot")
+@login_required
+def miot():
+    return render_template("app2c/miot.html", active_nav="miot")
+
+
+@router.get("/advanced")
 @login_required
 def advanced():
     return render_template("app2c/advanced.html", active_nav="advanced")
 
 
-@bp.get("/onboarding")
+@router.get("/onboarding")
 @login_required
 def onboarding():
     return redirect(url_for("app2c.advanced", tab="llm"))
@@ -161,13 +160,13 @@ def _system_llm_payload() -> dict:
     }
 
 
-@bp.get("/api/setup/llm")
+@router.get("/api/setup/llm")
 @login_required
 def setup_llm_get():
     return jsonify({"ok": True, **_system_llm_payload()})
 
 
-@bp.post("/api/setup/llm")
+@router.post("/api/setup/llm")
 @login_required
 def setup_llm_post():
     payload = request.get_json(silent=True) or {}
@@ -192,7 +191,7 @@ def setup_llm_post():
     return jsonify({"ok": True, **result})
 
 
-@bp.post("/api/setup/llm/test")
+@router.post("/api/setup/llm/test")
 @login_required
 def setup_llm_test():
     payload = request.get_json(silent=True) or {}
@@ -223,10 +222,7 @@ def setup_llm_test():
             display_name=model_name,
         )
         reply, meta = chat_completion(
-            [{"role": "user", "content": prompt}],
-            config=config,
-            json_mode=False,
-            temperature=0.7,
+            [{"role": "user", "content": prompt}], config=config, json_mode=False, temperature=0.7
         )
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -234,11 +230,7 @@ def setup_llm_test():
         return jsonify({"ok": False, "error": str(exc)}), 502
 
     return jsonify(
-        {
-            "ok": True,
-            "reply": reply,
-            "meta": {"model": meta.get("model"), "display_name": meta.get("display_name")},
-        }
+        {"ok": True, "reply": reply, "meta": {"model": meta.get("model"), "display_name": meta.get("display_name")}}
     )
 
 
@@ -250,7 +242,7 @@ def _list_ark_models(api_key: str, base_url: str | None = None) -> list[dict]:
     import json as _json
     import urllib.request
 
-    from deskbot_server.llm.runtime import ARK_OPENAI_BASE_URL
+    from deskbot_server.infrastructure.llm.runtime import ARK_OPENAI_BASE_URL
 
     url = (str(base_url or "").strip() or ARK_OPENAI_BASE_URL).rstrip("/") + "/models"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
@@ -269,7 +261,7 @@ def _list_ark_models(api_key: str, base_url: str | None = None) -> list[dict]:
     return out
 
 
-@bp.post("/api/setup/llm/models")
+@router.post("/api/setup/llm/models")
 @login_required
 def setup_llm_models():
     payload = request.get_json(silent=True) or {}
@@ -285,13 +277,13 @@ def setup_llm_models():
     return jsonify({"ok": True, "models": models, "default_model": DEFAULT_TEXT_MODEL})
 
 
-@bp.post("/api/debug/reset-account")
+@router.post("/api/debug/reset-account")
 @login_required
 def debug_reset_account():
     """调试用：把当前账号重置回新用户状态（解绑所有设备、吊销 API Key、清除本机大模型配置）。"""
-    from deskbot_server.auth.api_key_service import revoke_api_key
     from deskbot_server.auth.device_service import unbind_device
-    from deskbot_server.llm.env_store import clear_llm_env
+    from deskbot_server.dao.api_key_service import revoke_api_key
+    from deskbot_server.infrastructure.llm.env_store import clear_llm_env
     from deskbot_server.web.session_device import clear_current_device
 
     uid = current_user.id
@@ -357,7 +349,7 @@ def _llm_config_message(*, device_selected: bool, api_key_set: bool, source: str
     return "需要完成大模型配置：请展开配置，填写模型 ID 与 ARK_API_KEY，保存并设为当前。"
 
 
-@bp.get("/api/advanced")
+@router.get("/api/advanced")
 @login_required
 def advanced_summary_get():
     user = get_user_by_id(current_user.id)
@@ -368,15 +360,10 @@ def advanced_summary_get():
     device_usage = get_user_device_usage_summary(current_user.id, days=14)
     user_today = get_user_usage_today(current_user.id)
     device_daily_rows = _flatten_usage_daily_rows(
-        device_usage.get("device_stats") or [],
-        label_key="display_name",
-        sub_id_key="device_id",
+        device_usage.get("device_stats") or [], label_key="display_name", sub_id_key="device_id"
     )
     key_daily_rows = _flatten_usage_daily_rows(
-        usage.get("key_stats") or [],
-        label_key="name",
-        sub_id_key="api_key_id",
-        sub_label_key="key_prefix",
+        usage.get("key_stats") or [], label_key="name", sub_id_key="api_key_id", sub_label_key="key_prefix"
     )
 
     llm = {
@@ -412,9 +399,7 @@ def advanced_summary_get():
             }
             llm["needs_config"] = not api_key_set
             llm["config_message"] = _llm_config_message(
-                device_selected=True,
-                api_key_set=api_key_set,
-                source=resolved.source,
+                device_selected=True, api_key_set=api_key_set, source=resolved.source
             )
         except ValueError as exc:
             llm["error"] = str(exc)
@@ -429,9 +414,7 @@ def advanced_summary_get():
         system_api_key_set = bool(llm["system_default"] and llm["system_default"].get("api_key_set"))
         llm["needs_config"] = not system_api_key_set
         llm["config_message"] = _llm_config_message(
-            device_selected=False,
-            api_key_set=system_api_key_set,
-            source=system_default.source,
+            device_selected=False, api_key_set=system_api_key_set, source=system_default.source
         )
 
     return jsonify(
@@ -463,7 +446,7 @@ def advanced_summary_get():
     )
 
 
-@bp.patch("/api/advanced/profile")
+@router.patch("/api/advanced/profile")
 @login_required
 def advanced_profile_patch():
     payload = request.get_json(silent=True) or {}
@@ -475,15 +458,12 @@ def advanced_profile_patch():
     return jsonify(
         {
             "ok": True,
-            "user": {
-                "email": getattr(user, "email", ""),
-                "display_name": getattr(user, "display_name", "") or "",
-            },
+            "user": {"email": getattr(user, "email", ""), "display_name": getattr(user, "display_name", "") or ""},
         }
     )
 
 
-@bp.post("/api/advanced/password")
+@router.post("/api/advanced/password")
 @login_required
 def advanced_password_post():
     payload = request.get_json(silent=True) or {}
@@ -499,7 +479,7 @@ def advanced_password_post():
     return jsonify({"ok": True})
 
 
-@bp.post("/api/advanced/api-keys")
+@router.post("/api/advanced/api-keys")
 @login_required
 def advanced_api_key_post():
     payload = request.get_json(silent=True) or {}
@@ -511,7 +491,7 @@ def advanced_api_key_post():
     return jsonify({"ok": True, "raw_key": raw, "api_key": _api_key_payload(row)})
 
 
-@bp.delete("/api/advanced/api-keys/<key_id>")
+@router.delete("/api/advanced/api-keys/{key_id}")
 @login_required
 def advanced_api_key_delete(key_id: str):
     if not revoke_api_key(current_user.id, key_id):
@@ -572,7 +552,7 @@ def _image_mime_from_upload(filename: str, content_type: str, image_bytes: bytes
     return mime_type
 
 
-@bp.get("/api/emotion_expr_map")
+@router.get("/api/emotion_expr_map")
 @login_required
 def emotion_expr_map_get():
     device_id, err = _owned_device_or_error()
@@ -581,7 +561,7 @@ def emotion_expr_map_get():
     return jsonify({"ok": True, "device_id": device_id, "map": load_emotion_expr_map(device_id=device_id)})
 
 
-@bp.post("/api/emotion_expr_map")
+@router.post("/api/emotion_expr_map")
 @login_required
 def emotion_expr_map_post():
     device_id, err = _owned_device_or_error()
@@ -598,7 +578,7 @@ def emotion_expr_map_post():
     return jsonify({"ok": True, "map": saved})
 
 
-@bp.get("/api/face_expr_scenes")
+@router.get("/api/face_expr_scenes")
 @login_required
 def face_expr_scenes_get():
     device_id, err = _owned_device_or_error()
@@ -611,7 +591,7 @@ def face_expr_scenes_get():
     return jsonify({"ok": True, "device_id": device_id, "config": rows})
 
 
-@bp.post("/api/face_expr_scenes")
+@router.post("/api/face_expr_scenes")
 @login_required
 def face_expr_scenes_post():
     device_id, err = _owned_device_or_error()
@@ -632,7 +612,7 @@ def face_expr_scenes_post():
     return jsonify({"ok": True, "device_id": device_id, "config": saved})
 
 
-@bp.get("/api/face_mouth_by_phoneme")
+@router.get("/api/face_mouth_by_phoneme")
 @login_required
 def face_mouth_by_phoneme_get():
     device_id, err = _owned_device_or_error()
@@ -645,7 +625,7 @@ def face_mouth_by_phoneme_get():
     return jsonify({"ok": True, "device_id": device_id, "mouth_by_phoneme_groups": groups})
 
 
-@bp.post("/api/face_mouth_by_phoneme")
+@router.post("/api/face_mouth_by_phoneme")
 @login_required
 def face_mouth_by_phoneme_post():
     device_id, err = _owned_device_or_error()
@@ -664,7 +644,7 @@ def face_mouth_by_phoneme_post():
     return jsonify({"ok": True, "device_id": device_id, "mouth_by_phoneme_groups": groups})
 
 
-@bp.post("/api/scene_playbook/export_plan")
+@router.post("/api/scene_playbook/export_plan")
 @login_required
 def scene_playbook_export_plan_post():
     device_id, err = _owned_device_or_error()
@@ -675,8 +655,8 @@ def scene_playbook_export_plan_post():
     if not isinstance(playbook, dict):
         return jsonify({"ok": False, "error": "missing playbook"}), 400
     try:
-        from deskbot_server.scene_playbook_runner import playbook_debug_snapshot
-        from deskbot_server.scene_playbooks_store import normalize_playbook
+        from deskbot_server.dao.scene_playbooks_store import normalize_playbook
+        from deskbot_server.service.scene_playbook_runner import playbook_debug_snapshot
 
         pb = normalize_playbook(playbook)
         snap = playbook_debug_snapshot(pb, device_id=device_id)
@@ -685,7 +665,7 @@ def scene_playbook_export_plan_post():
     return jsonify({"ok": True, "device_id": device_id, **snap})
 
 
-@bp.post("/api/face_design/generate-from-image")
+@router.post("/api/face_design/generate-from-image")
 @login_required
 def face_design_generate_from_image_post():
     device_id, err = _optional_owned_device_or_error()
@@ -696,9 +676,11 @@ def face_design_generate_from_image_post():
         return jsonify({"ok": False, "error": "请先上传图片"}), 400
     image_bytes = upload.read()
     prompt = str(request.form.get("prompt") or "").strip()
-    mime_type = _image_mime_from_upload(upload.filename, upload.mimetype or upload.content_type or "", image_bytes)
+    mime_type = _image_mime_from_upload(
+        upload.filename, getattr(upload, "mimetype", None) or getattr(upload, "content_type", None) or "", image_bytes
+    )
     try:
-        from deskbot_server.ark_face_svg import generate_face_svg_from_image
+        from deskbot_server.vision.ark_face_svg import generate_face_svg_from_image
 
         result = generate_face_svg_from_image(image_bytes, mime_type, prompt=prompt)
     except ValueError as exc:
@@ -708,3 +690,36 @@ def face_design_generate_from_image_post():
     except Exception as exc:
         return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
     return jsonify({"device_id": device_id, **result})
+
+
+ENDPOINTS = {
+    "app2c.home": "/home",
+    "app2c.voice": "/voice",
+    "app2c.expr": "/expr",
+    "app2c.lab": "/lab",
+    "app2c.memories": "/my/memories",
+    "app2c.reminders": "/my/reminders",
+    "app2c.people": "/my/people",
+    "app2c.devices": "/my/devices",
+    "app2c.miot": "/my/miot",
+    "app2c.advanced": "/advanced",
+    "app2c.onboarding": "/onboarding",
+    "app2c.setup_llm_get": "/api/setup/llm",
+    "app2c.setup_llm_post": "/api/setup/llm",
+    "app2c.setup_llm_test": "/api/setup/llm/test",
+    "app2c.setup_llm_models": "/api/setup/llm/models",
+    "app2c.debug_reset_account": "/api/debug/reset-account",
+    "app2c.advanced_summary_get": "/api/advanced",
+    "app2c.advanced_profile_patch": "/api/advanced/profile",
+    "app2c.advanced_password_post": "/api/advanced/password",
+    "app2c.advanced_api_key_post": "/api/advanced/api-keys",
+    "app2c.advanced_api_key_delete": "/api/advanced/api-keys/{key_id}",
+    "app2c.emotion_expr_map_get": "/api/emotion_expr_map",
+    "app2c.emotion_expr_map_post": "/api/emotion_expr_map",
+    "app2c.face_expr_scenes_get": "/api/face_expr_scenes",
+    "app2c.face_expr_scenes_post": "/api/face_expr_scenes",
+    "app2c.face_mouth_by_phoneme_get": "/api/face_mouth_by_phoneme",
+    "app2c.face_mouth_by_phoneme_post": "/api/face_mouth_by_phoneme",
+    "app2c.scene_playbook_export_plan_post": "/api/scene_playbook/export_plan",
+    "app2c.face_design_generate_from_image_post": "/api/face_design/generate-from-image",
+}

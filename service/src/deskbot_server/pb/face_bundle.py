@@ -48,15 +48,16 @@ def _frame_elements(frames: list[Any], idx: int) -> dict[str, Any]:
 
 def expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, Any]:
     """从 ``deskbot-face.json`` 的 ``idle``/``default`` 取眼/鼻，口型来自 ``phonemes``。"""
-    from deskbot_server.face_expr_scenes_store import (
+    from deskbot_server.dao.face_expr_scenes_store import (
         _DEFAULT_SPEECH_BLINK_CLOSE_MS,
         _DEFAULT_SPEECH_BLINK_OPEN_MS,
         default_speech_blink_scene,
         find_design_scene_by_name,
         load_face_expr_scenes_file,
     )
-    from deskbot_server.face_mouth_config_store import groups_to_mouth_bundle, load_face_mouth_cfg_file
+    from deskbot_server.dao.face_mouth_dao import FaceMouthDao
 
+    mouth_dao = FaceMouthDao()
     rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id) or []
     ent = (
         find_design_scene_by_name(rows, "default")
@@ -93,35 +94,22 @@ def expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, An
 
     bundle: dict[str, Any] = {
         "mouth_by_phoneme": {},
-        "eye_l": {
-            "default": eye_l_default,
-            "open": eye_l_open,
-            "close": eye_l_close,
-        },
-        "eye_r": {
-            "default": eye_r_default,
-            "open": eye_r_open,
-            "close": eye_r_close,
-        },
+        "eye_l": {"default": eye_l_default, "open": eye_l_open, "close": eye_l_close},
+        "eye_r": {"default": eye_r_default, "open": eye_r_open, "close": eye_r_close},
         "nose": {"default": nose_default},
         "extra": {"default": extra_default},
-        "metadata": {
-            "blink": {
-                "open_ms": open_ms,
-                "close_ms": _DEFAULT_SPEECH_BLINK_CLOSE_MS,
-            },
-        },
+        "metadata": {"blink": {"open_ms": open_ms, "close_ms": _DEFAULT_SPEECH_BLINK_CLOSE_MS}},
     }
 
-    groups = load_face_mouth_cfg_file(seed_if_missing=True, device_id=device_id) or []
-    bundle.update(groups_to_mouth_bundle(groups))
+    groups = mouth_dao.load(seed_if_missing=True, device_id=device_id) or []
+    bundle.update(mouth_dao.groups_to_mouth_bundle(groups))
     return ensure_pb_face_bundle_shape(bundle)
 
 
 def load_expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, Any]:
     """``default`` 表情脸包；随 ``deskbot-face.json`` mtime 热重载。"""
     global _expr_default_bundle_cache
-    from deskbot_server.face_design_store import design_file_mtime
+    from deskbot_server.dao.face_design_store import design_file_mtime
 
     dev = str(device_id or "").strip()
     design_mtime = design_file_mtime(device_id=dev or None)
@@ -131,11 +119,10 @@ def load_expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[st
     out = expr_default_pb_face_bundle(device_id=dev or None)
     _expr_default_bundle_cache = (dev, design_mtime, out)
     _logger.info(
-        "[pb_face_bundle] 已从 deskbot-face 加载 device_id=%s design_mtime=%s",
-        dev or "(global)",
-        design_mtime,
+        "[pb_face_bundle] 已从 deskbot-face 加载 device_id=%s design_mtime=%s", dev or "(global)", design_mtime
     )
     return out
+
 
 def default_pb_face_bundle() -> dict[str, Any]:
     """默认整包：口型按音素 + 默认零偏移；眼为 ``default``/``open``/``close`` 三键；鼻仅 ``default``。
@@ -145,39 +132,19 @@ def default_pb_face_bundle() -> dict[str, Any]:
     fc = default_face_circles()
     mouth_by: dict[str, Any] = {}
     for ph in enumerate_zh_phonemes():
-        mouth_by[ph] = {
-            "elements": default_mouth_rect_for_phoneme(ph),
-            "offset": {"x": 0, "y": 0},
-        }
+        mouth_by[ph] = {"elements": default_mouth_rect_for_phoneme(ph), "offset": {"x": 0, "y": 0}}
     eye_l_open = copy.deepcopy(fc["eye_l"])
     eye_r_open = copy.deepcopy(fc["eye_r"])
-    eye_l_blink = [
-        scale_primitive({"shape": "line", "x1": 34, "y1": 26, "x2": 50, "y2": 26}),
-    ]
-    eye_r_blink = [
-        scale_primitive({"shape": "line", "x1": 78, "y1": 26, "x2": 94, "y2": 26}),
-    ]
+    eye_l_blink = [scale_primitive({"shape": "line", "x1": 34, "y1": 26, "x2": 50, "y2": 26})]
+    eye_r_blink = [scale_primitive({"shape": "line", "x1": 78, "y1": 26, "x2": 94, "y2": 26})]
     nose0 = copy.deepcopy(fc["nose"])
     return {
         "mouth_by_phoneme": mouth_by,
-        "eye_l": {
-            "default": copy.deepcopy(eye_l_open),
-            "open": copy.deepcopy(eye_l_open),
-            "close": eye_l_blink,
-        },
-        "eye_r": {
-            "default": copy.deepcopy(eye_r_open),
-            "open": copy.deepcopy(eye_r_open),
-            "close": eye_r_blink,
-        },
+        "eye_l": {"default": copy.deepcopy(eye_l_open), "open": copy.deepcopy(eye_l_open), "close": eye_l_blink},
+        "eye_r": {"default": copy.deepcopy(eye_r_open), "open": copy.deepcopy(eye_r_open), "close": eye_r_blink},
         "nose": {"default": nose0},
         "extra": {"default": []},
-        "metadata": {
-            "blink": {
-                "open_ms": 3000,
-                "close_ms": 100,
-            },
-        },
+        "metadata": {"blink": {"open_ms": 3000, "close_ms": 100}},
     }
 
 
@@ -202,24 +169,15 @@ def demo_pb_face_bundle() -> dict[str, Any]:
         "open": [scale_primitive({"shape": "ellipse_fill", "x": 86, "y": 26, "rw": 7, "rh": 7})],
         "close": [scale_primitive({"shape": "ellipse_fill", "x": 86, "y": 26, "rw": 10, "rh": 1})],
     }
-    b["nose"] = {
-        "default": [scale_primitive({"shape": "circle", "x": 64, "y": 34, "r": 5})],
-    }
-    b["metadata"] = {
-        "blink": {
-            "open_ms": 1400,
-            "close_ms": 140,
-        },
-    }
+    b["nose"] = {"default": [scale_primitive({"shape": "circle", "x": 64, "y": 34, "r": 5})]}
+    b["metadata"] = {"blink": {"open_ms": 1400, "close_ms": 140}}
     mb = b.get("mouth_by_phoneme")
     if isinstance(mb, dict):
         for ph, row in mb.items():
             if not isinstance(row, dict):
                 continue
             dx, dy = 0, 0
-            if ph in ("_", "sil", "sp", "spl", "spn") or (
-                ph and re.match(r"^sp[1-4]$", ph)
-            ):
+            if ph in ("_", "sil", "sp", "spl", "spn") or (ph and re.match(r"^sp[1-4]$", ph)):
                 pass
             elif ph and ph[-1] in "12345":
                 body = ph[:-1]
@@ -377,7 +335,7 @@ def _resolve_face_bundle_file_path(raw: str) -> str:
         return ""
     if os.path.isabs(p):
         return p
-    from deskbot_server.paths import PROJECT_ROOT
+    from deskbot_server.utils.paths import PROJECT_ROOT
 
     return str((PROJECT_ROOT / p).resolve())
 
@@ -410,10 +368,7 @@ def ensure_pb_face_bundle_shape(data: dict[str, Any]) -> dict[str, Any]:
         mb = {}
     gr = d.get("mouth_by_phoneme_groups")
     groups_list = gr if isinstance(gr, list) else None
-    has_valid_groups = bool(
-        groups_list
-        and any(is_mouth_phoneme_group_entry(x) for x in groups_list)
-    )
+    has_valid_groups = bool(groups_list and any(is_mouth_phoneme_group_entry(x) for x in groups_list))
     if not mb and not has_valid_groups:
         d["mouth_by_phoneme"] = copy.deepcopy(fb0["mouth_by_phoneme"])
     else:
@@ -427,9 +382,7 @@ def ensure_pb_face_bundle_shape(data: dict[str, Any]) -> dict[str, Any]:
                     flat[ph] = copy.deepcopy(_default_mouth_fallback_shape())
         if "_" not in flat:
             flat["_"] = copy.deepcopy(
-                _normalize_mouth_entry(
-                    fb_m.get("_") if isinstance(fb_m, dict) else _default_mouth_fallback_shape()
-                )
+                _normalize_mouth_entry(fb_m.get("_") if isinstance(fb_m, dict) else _default_mouth_fallback_shape())
             )
         d["mouth_by_phoneme"] = flat
     d.pop("mouth_by_phoneme_groups", None)
@@ -491,9 +444,7 @@ def load_pb_face_bundle_json_document(path_raw: str) -> dict[str, Any]:
     return out
 
 
-def resolve_pb_face_bundle(
-    tts_cfg: dict[str, Any] | None, *, device_id: str | None = None
-) -> dict[str, Any]:
+def resolve_pb_face_bundle(tts_cfg: dict[str, Any] | None, *, device_id: str | None = None) -> dict[str, Any]:
     """根据 ``tts`` 配置与环境变量选择卡通脸数据包。
 
     - 默认：``data/deskbot-face.json``（``emotions`` + ``phonemes``，按 mtime 热重载）。
@@ -502,17 +453,9 @@ def resolve_pb_face_bundle(
     - ``pb_face_bundle_file`` / ``DESKBOT_PB_FACE_BUNDLE_FILE``：在 base 上再合并一层 overlay。
     """
     cfg = tts_cfg or {}
-    json_path = str(
-        cfg.get("pb_face_bundle_json")
-        or os.environ.get("DESKBOT_PB_FACE_BUNDLE_JSON", "")
-        or ""
-    ).strip()
+    json_path = str(cfg.get("pb_face_bundle_json") or os.environ.get("DESKBOT_PB_FACE_BUNDLE_JSON", "") or "").strip()
 
-    fpath = str(
-        cfg.get("pb_face_bundle_file")
-        or os.environ.get("DESKBOT_PB_FACE_BUNDLE_FILE", "")
-        or ""
-    ).strip()
+    fpath = str(cfg.get("pb_face_bundle_file") or os.environ.get("DESKBOT_PB_FACE_BUNDLE_FILE", "") or "").strip()
 
     if json_path:
         try:
@@ -529,11 +472,7 @@ def resolve_pb_face_bundle(
                     _logger.warning("读取 pb_face_bundle_file=%r 失败: %s", fpath, e)
             return base
 
-    prof = str(
-        cfg.get("pb_face_bundle")
-        or os.environ.get("DESKBOT_PB_FACE_BUNDLE", "")
-        or "default"
-    ).strip().lower()
+    prof = str(cfg.get("pb_face_bundle") or os.environ.get("DESKBOT_PB_FACE_BUNDLE", "") or "default").strip().lower()
     if prof == "demo":
         base = demo_pb_face_bundle()
     else:

@@ -1,9 +1,7 @@
 #include "cmd.h"
-#include "audio_player.h"
-#include "asr_chat_client.h"
+#include "logger.h"
+#include "speaker.h"
 #include "task_trace.h"
-
-extern AsrChatClient asrChatClient;
 
 void handle_cmd(String cmd) {
   if (Serial.available() > 0 && cmd == "") {
@@ -42,8 +40,8 @@ void handle_cmd(String cmd) {
 }
 
 /* 调用约定：
- * - head_* 命令同步：head.cpp::motor_task 内部斜坡推进在独立任务，head_move 等通过 sync semaphore 等待完成。
- * - 表情/OLED 动画由 asr_chat 下行 pb 矢量帧驱动，不再支持本地 eye_* / play_animation 等命令。
+ * - head_* 命令异步入队：motor_task 独立执行斜坡，不阻塞命令处理。
+ * - 表情/显示动画由 asr_chat 下行 pb 矢量帧驱动，不再支持本地 eye_* / play_animation 等命令。
  * - "delay" 命令保留为调试用，原地阻塞 1s。
  */
 void executeCommand(String cmd) {
@@ -58,13 +56,13 @@ void executeCommand(String cmd) {
   } else if (cmd == "head_center") {
     head_center();
   } else if (cmd == "head_nod") {
-    head_nod(3);
+    head_nod();
   } else if (cmd == "head_shake" || cmd == "shake" || cmd == "head_shake_3") {
     head_shake_async();
   } else if (cmd == "head_roll_left") {
-    head_roll_left(10);
+    head_roll_left();
   } else if (cmd == "head_roll_right") {
-    head_roll_right(10);
+    head_roll_right();
   } else if (cmd == "head_clear_pending") {
     head_clear_motor_pending();
   } else if (cmd == "delay") {
@@ -80,22 +78,6 @@ void executeFactoryCommand(String cmd) {
   if (cmd == "reboot" || cmd == "restart") {
     log_info("[Factory] Rebooting device...");
     ESP.restart();
-  } else if (cmd.startsWith("adjust_x")) {
-    int firstSpaceIndex = cmd.indexOf(' ');
-    if (firstSpaceIndex > 0) {
-      String offsetString = cmd.substring(firstSpaceIndex + 1);
-      int offset = offsetString.toInt();
-      adjust_x_center(offset);
-      log_info("[Factory] X_CENTER=%d (servo attach unchanged)", X_CENTER);
-    }
-  } else if (cmd.startsWith("adjust_y")) {
-    int firstSpaceIndex = cmd.indexOf(' ');
-    if (firstSpaceIndex > 0) {
-      String offsetString = cmd.substring(firstSpaceIndex + 1);
-      int offset = offsetString.toInt();
-      adjust_y_center(offset);
-      log_info("[Factory] Y_CENTER=%d (servo attach unchanged)", Y_CENTER);
-    }
   } else if (cmd == "head_clear_pending") {
     head_clear_motor_pending();
     log_info("[Factory] head_clear_pending");
@@ -179,24 +161,16 @@ void executeFactoryCommand(String cmd) {
     if (firstSpaceIndex > 0) {
       int secondSpaceIndex = cmd.indexOf(' ', firstSpaceIndex + 1);
       if (secondSpaceIndex > 0) {
-        int thirdSpaceIndex = cmd.indexOf(' ', secondSpaceIndex + 1);
-        if (thirdSpaceIndex > 0) {
-          String xString = cmd.substring(firstSpaceIndex + 1, secondSpaceIndex);
-          String yString = cmd.substring(secondSpaceIndex + 1, thirdSpaceIndex);
-          String delayString = cmd.substring(thirdSpaceIndex + 1);
-          int x_offset = xString.toInt();
-          int y_offset = yString.toInt();
-          int servo_delay = delayString.toInt();
-          head_move(x_offset, y_offset, servo_delay);
-        }
+        int x_offset = cmd.substring(firstSpaceIndex + 1, secondSpaceIndex).toInt();
+        int y_offset = cmd.substring(secondSpaceIndex + 1).toInt();
+        head_move(x_offset, y_offset);
       }
     }
   } else if (cmd == "reset_wifi") {
     wifi_provision_reset();
   } else if (cmd == "chat") {
-    /* {"factory":"chat"}：置位后进入主 loop 里的 asr_chat 长会话（服务端 ASR+LLM+TTS）。 */
-    start_chat = true;
-    log_info("[Factory] chat triggered");
+    /* 主 loop 已持续泵 pb；mic 自治上行，无需再切会话。 */
+    log_info("[Factory] chat: already running (serviceLoop + mic autonomous)");
   } else if (cmd == "task") {
     log_task_dump();
   } else if (cmd.startsWith("play_url")) {
@@ -214,23 +188,10 @@ void executeFactoryCommand(String cmd) {
       return;
     }
     log_info("[Factory] play_url: %s", url.c_str());
-    audio_play_url(url.c_str(), DESKBOT_AUDIO_PLAY_VOLUME);
+    speaker_play_url(url.c_str());
   } else if (cmd.startsWith("asr_chat")) {
-    // {"factory":"asr_chat"} 或 {"factory":"asr_chat 12"}：走 /asr_chat 长连接语音轮次。
-    uint16_t max_sec = 10;
-    int firstSpaceIndex = cmd.indexOf(' ');
-    if (firstSpaceIndex > 0) {
-      String sec = cmd.substring(firstSpaceIndex + 1);
-      sec.trim();
-      if (!sec.isEmpty()) {
-        int v = sec.toInt();
-        if (v > 0) {
-          max_sec = (uint16_t)v;
-        }
-      }
-    }
-    log_info("[Factory] asr_chat max_sec=%u", (unsigned)max_sec);
-    asrChatClient.runVoiceRound(max_sec);
+    /* mic_task 自治上行；无需再跑语音轮次。 */
+    log_info("[Factory] asr_chat: mic uplink is autonomous (no voice round)");
   } else {
     log_warn("[Factory] Unknown factory command: %s", cmd.c_str());
     return;

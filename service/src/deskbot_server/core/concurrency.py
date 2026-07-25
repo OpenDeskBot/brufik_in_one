@@ -28,23 +28,15 @@ def _resolve_limit(cfg_val: int, *, env_name: str, default_when_zero: int) -> Op
     return n if n > 0 else None
 
 
-def configure_concurrency(
-    *,
-    max_concurrent_asr: int = 0,
-    max_concurrent_face_infer: int = 0,
-) -> None:
+def configure_concurrency(*, max_concurrent_asr: int = 0, max_concurrent_face_infer: int = 0) -> None:
     """在 ``main`` 启动时调用一次；``0`` 表示使用与 CPU 核数相关的默认值。"""
     global _asr_sem, _face_sem
     cpu = os.cpu_count() or 2
     asr_n = _resolve_limit(
-        max_concurrent_asr,
-        env_name="DESKBOT_MAX_CONCURRENT_ASR",
-        default_when_zero=max(1, min(4, cpu)),
+        max_concurrent_asr, env_name="DESKBOT_MAX_CONCURRENT_ASR", default_when_zero=max(1, min(4, cpu))
     )
     face_n = _resolve_limit(
-        max_concurrent_face_infer,
-        env_name="DESKBOT_MAX_CONCURRENT_FACE",
-        default_when_zero=max(2, min(8, cpu * 2)),
+        max_concurrent_face_infer, env_name="DESKBOT_MAX_CONCURRENT_FACE", default_when_zero=max(2, min(8, cpu * 2))
     )
     _asr_sem = asyncio.Semaphore(asr_n) if asr_n else None
     _face_sem = asyncio.Semaphore(face_n) if face_n else None
@@ -54,6 +46,15 @@ def configure_concurrency(
         face_n if face_n else "unlimited",
         cpu,
     )
+    try:
+        from deskbot_server.service.camera_face_service import CameraFaceService
+
+        # 进程池 worker 数与 face 并发上限对齐（上限过大时按 CPU 截断）
+        pool_n = face_n if face_n else max(1, min(4, cpu))
+        pool_n = max(1, min(pool_n, cpu))
+        CameraFaceService.start_pool(max_workers=pool_n)
+    except Exception:
+        logger.exception("[concurrency] 人脸识别进程池初始化失败")
 
 
 @asynccontextmanager

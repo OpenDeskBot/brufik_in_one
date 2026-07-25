@@ -18,8 +18,8 @@ def temp_db(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "test.db"
         monkeypatch.setenv("DESKBOT_DB_PATH", str(db_path))
-        from deskbot_server.db.engine import init_engine, reset_engine
         from deskbot_server.db import init_database
+        from deskbot_server.db.engine import init_engine, reset_engine
 
         reset_engine()
         init_engine(db_path)
@@ -28,7 +28,7 @@ def temp_db(monkeypatch):
 
 
 def test_free_api_key_seed(temp_db):
-    from deskbot_server.auth.api_key_service import (
+    from deskbot_server.dao.api_key_service import (
         FREE_DAILY_QUOTA_BYTES,
         FREE_FILE_KEY_ID,
         authenticate_api_key,
@@ -78,14 +78,14 @@ def test_bind_conflict(temp_db):
 
 
 def test_api_key_create_auth_and_usage(temp_db):
-    from deskbot_server.auth.api_key_service import (
+    from deskbot_server.auth.device_service import bind_device
+    from deskbot_server.auth.service import create_user, update_display_name
+    from deskbot_server.dao.api_key_service import (
         authenticate_api_key,
         create_api_key,
         get_user_usage_summary,
         record_usage,
     )
-    from deskbot_server.auth.device_service import bind_device
-    from deskbot_server.auth.service import create_user, update_display_name
 
     user = create_user("bob@example.com", "password1234")
     update_display_name(user.id, "Bob")
@@ -98,7 +98,7 @@ def test_api_key_create_auth_and_usage(temp_db):
 
     record_usage(row.id, "asr", 1024, device_id="deskbot_bob")
     record_usage(row.id, "llm", 512, device_id="deskbot_bob")
-    from deskbot_server.auth.api_key_service import get_user_usage_today
+    from deskbot_server.dao.api_key_service import get_user_usage_today
 
     summary = get_user_usage_summary(user.id, days=7)
     assert summary["totals"]["asr_bytes"] == 1024
@@ -110,13 +110,9 @@ def test_api_key_create_auth_and_usage(temp_db):
 
 
 def test_free_key_usage_visible_to_device_owner(temp_db):
-    from deskbot_server.auth.api_key_service import (
-        authenticate_api_key,
-        get_user_usage_today,
-        record_usage,
-    )
     from deskbot_server.auth.device_service import bind_device
     from deskbot_server.auth.service import create_user
+    from deskbot_server.dao.api_key_service import authenticate_api_key, get_user_usage_today, record_usage
 
     user = create_user("dave@example.com", "password1234")
     bind_device(user.id, "deskbot_dave")
@@ -134,9 +130,9 @@ def test_free_key_usage_visible_to_device_owner(temp_db):
 
 
 def test_device_level_usage(temp_db):
-    from deskbot_server.auth.api_key_service import create_api_key, get_user_device_usage_summary, record_usage
     from deskbot_server.auth.device_service import bind_device
     from deskbot_server.auth.service import create_user
+    from deskbot_server.dao.api_key_service import create_api_key, get_user_device_usage_summary, record_usage
 
     user = create_user("carol@example.com", "password1234")
     bind_device(user.id, "deskbot_dev1")
@@ -153,7 +149,7 @@ def test_device_level_usage(temp_db):
 
 
 def test_free_key_quota_exceeded(temp_db):
-    from deskbot_server.auth.api_key_service import (
+    from deskbot_server.dao.api_key_service import (
         FREE_DAILY_QUOTA_BYTES,
         QuotaExceededError,
         authenticate_api_key,
@@ -170,7 +166,7 @@ def test_free_key_quota_exceeded(temp_db):
 
 
 def test_free_key_from_file_only(temp_db):
-    from deskbot_server.auth.api_key_service import authenticate_api_key, write_free_api_key_file
+    from deskbot_server.dao.api_key_service import authenticate_api_key, write_free_api_key_file
 
     custom_key = "odk_free_customKeyForFileOnlyTest"
     write_free_api_key_file(custom_key)

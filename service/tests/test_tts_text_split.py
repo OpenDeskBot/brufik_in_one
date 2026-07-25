@@ -1,7 +1,8 @@
 """text_split 单元测试。"""
+
 from __future__ import annotations
 
-from deskbot_server.tts.text_split import split_tts_by_punctuation
+from deskbot_server.infrastructure.tts.text_split import split_tts_by_punctuation
 
 
 def test_split_single_sentence():

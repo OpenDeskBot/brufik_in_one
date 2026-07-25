@@ -3,16 +3,12 @@ from __future__ import annotations
 import copy
 from typing import Any, Optional
 
-from deskbot_server.face_expr_scenes_store import (
+from deskbot_server.dao.face_expr_scenes_store import (
     design_frames_to_pb_chain,
     find_design_scene_by_name,
     load_face_expr_scenes_file,
 )
-from deskbot_server.pb.shapes import (
-    PB_ACTION_APPEND,
-    PB_LEVEL_DEBUG,
-    apply_pb_dispatch_fields,
-)
+from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_LEVEL_DEBUG, apply_pb_dispatch_fields
 
 
 def _load_design_scenes_rows(*, device_id: Optional[str] = None) -> list[dict[str, Any]]:
@@ -41,16 +37,11 @@ def _pb_scenes_root(doc: dict) -> dict:
 
 
 def _pb_scene_entry_by_name(
-    doc: dict,
-    scene_lower: str,
-    *,
-    device_id: Optional[str] = None,
+    doc: dict, scene_lower: str, *, device_id: Optional[str] = None
 ) -> Optional[dict[str, Any]]:
     """按 **不区分大小写** 匹配 ``deskbot-face.json`` 中的表情场景。"""
     _ = doc
-    return find_design_scene_by_name(
-        _load_design_scenes_rows(device_id=device_id), scene_lower
-    )
+    return find_design_scene_by_name(_load_design_scenes_rows(device_id=device_id), scene_lower)
 
 
 def _pb_scene_keys_sorted(doc: dict | None = None) -> list[str]:
@@ -66,9 +57,7 @@ def _pb_scene_keys_sorted(doc: dict | None = None) -> list[str]:
     return out
 
 
-def _prepare_pb_scene_chain_frames(
-    scene_name: str, *, runtime_req: str, device_id: Optional[str] = None
-) -> list[dict]:
+def _prepare_pb_scene_chain_frames(scene_name: str, *, runtime_req: str, device_id: Optional[str] = None) -> list[dict]:
     """从 ``deskbot-face.json`` 生成 pb 链，``append`` + 调试 ``level=3``。"""
     ent = find_design_scene_by_name(_load_design_scenes_rows(device_id=device_id), scene_name)
     if ent is None:

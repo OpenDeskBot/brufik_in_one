@@ -222,17 +222,13 @@ def format_face_bundle_json_lines(data: dict[str, Any]) -> list[str]:
     exg_raw = data.get("extra_groups")
     has_extra_groups = False
     if isinstance(exg_raw, list) and exg_raw:
-        valid_exg = [
-            g for g in exg_raw if isinstance(g, dict) and is_extra_elements_group_entry(g)
-        ]
+        valid_exg = [g for g in exg_raw if isinstance(g, dict) and is_extra_elements_group_entry(g)]
         if valid_exg:
             lines.extend(_fmt_extra_groups_array(valid_exg))
             has_extra_groups = True
 
     extra = data.get("extra") if isinstance(data.get("extra"), dict) else {}
-    ex_keys = sorted(
-        k for k in extra if not str(k).startswith("_") and isinstance(extra[k], list)
-    )
+    ex_keys = sorted(k for k in extra if not str(k).startswith("_") and isinstance(extra[k], list))
     if ex_keys:
         lines.append('  "extra": {')
         for ki, ek in enumerate(ex_keys):
@@ -247,9 +243,7 @@ def format_face_bundle_json_lines(data: dict[str, Any]) -> list[str]:
         lines.append('  "extra": {"default": []},')
 
     meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
-    lines.append(
-        f'  "metadata": {json.dumps(meta, ensure_ascii=False, separators=(", ", ": "))}'
-    )
+    lines.append(f'  "metadata": {json.dumps(meta, ensure_ascii=False, separators=(", ", ": "))}')
 
     extra_keys = [k for k in data if k not in _FMT_TOP_KEYS]
     for ek in extra_keys:

@@ -35,16 +35,13 @@ def _anim_row_from_elements(elements: dict[str, Any], *, chunk_ms: int, phoneme:
     return row
 
 
-def _phoneme_seq_from_design(
-    segments: list[dict[str, Any]],
-    design: dict[str, Any],
-) -> list[dict[str, Any]]:
+def _phoneme_seq_from_design(segments: list[dict[str, Any]], design: dict[str, Any]) -> list[dict[str, Any]]:
     """``deskbot-face.json`` 音素表达式：每片直接使用匹配帧的完整 ``elements``。"""
     out: list[dict[str, Any]] = []
     for idx, seg in enumerate(segments or []):
         ph = str(seg.get("phoneme") or "").strip()
         chunk_ms = int(seg.get("ms") or 0)
-        from deskbot_server.face_design_store import find_phoneme_expression, pick_expression_elements
+        from deskbot_server.dao.face_design_store import find_phoneme_expression, pick_expression_elements
 
         expr = find_phoneme_expression(design, ph)
         if expr is None and ph:
@@ -63,10 +60,7 @@ def _phoneme_seq_from_design(
 
 
 def phoneme_seq_to_anim_seq(
-    segments: list[dict[str, Any]],
-    face_bundle: dict[str, Any],
-    *,
-    device_id: Optional[str] = None,
+    segments: list[dict[str, Any]], face_bundle: dict[str, Any], *, device_id: Optional[str] = None
 ) -> list[dict[str, Any]]:
     """返回每片 ``idx, chunk_ms, phoneme, anim``（与仿真页 / pb 一致）。
 
@@ -83,7 +77,7 @@ def phoneme_seq_to_anim_seq(
 
     每片动画相位取 **该片开始时刻** 的累计毫秒（从首片起算）。
     """
-    from deskbot_server.face_design_store import _load_face_design_cached
+    from deskbot_server.dao.face_design_store import _load_face_design_cached
 
     design = _load_face_design_cached(device_id=device_id)
     if isinstance(design, dict) and design.get("phonemes"):
@@ -96,8 +90,7 @@ def phoneme_seq_to_anim_seq(
     mouth_raw = work.get("mouth_by_phoneme") if isinstance(work, dict) else None
     mouth_gr = work.get("mouth_by_phoneme_groups") if isinstance(work, dict) else None
     mouth_by = expand_mouth_by_phoneme(
-        mouth_raw if isinstance(mouth_raw, dict) else {},
-        mouth_gr if isinstance(mouth_gr, list) else None,
+        mouth_raw if isinstance(mouth_raw, dict) else {}, mouth_gr if isinstance(mouth_gr, list) else None
     )
     fb_mouth = _normalize_mouth_entry(mouth_by.get("_"))
     if not fb_mouth["elements"]:
@@ -142,17 +135,9 @@ def phoneme_seq_to_anim_seq(
         eye_l_raw = _pick_eye(eye_l, phase)
         eye_r_raw = _pick_eye(eye_r, phase)
         nose_raw = nose.get("default") if isinstance(nose.get("default"), list) else []
-        extra_raw = (
-            extra_lut.get(extra_state)
-            if isinstance(extra_lut.get(extra_state), list)
-            else None
-        )
+        extra_raw = extra_lut.get(extra_state) if isinstance(extra_lut.get(extra_state), list) else None
         if extra_raw is None:
-            extra_raw = (
-                extra_lut.get("default")
-                if isinstance(extra_lut.get("default"), list)
-                else []
-            )
+            extra_raw = extra_lut.get("default") if isinstance(extra_lut.get("default"), list) else []
 
         mouth_prims = copy.deepcopy(mouth_entry["elements"])
         eye_l_prims = apply_offset_to_primitives(eye_l_raw, dx, dy)
@@ -181,4 +166,3 @@ def phoneme_seq_to_anim_seq(
         )
         cum_ms += chunk_ms
     return out
-

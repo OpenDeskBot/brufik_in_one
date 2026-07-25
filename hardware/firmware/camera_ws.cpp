@@ -1,129 +1,211 @@
-/* camera_ws.cpp
- * JPEG 经 /asr_chat next_bin_len 发送；本模块只负责捕获并存入 PSRAM，发送由 AsrChatClient::loop() 驱动。
- */
 #include "camera_ws.h"
-#include "esp_camera.h"
-#include "esp_heap_caps.h"
+
+#include "camera.h"
+#include "deskbot_config.h"
+#include "logger.h"
+#include "utils/utils.h"
+#include "ws_transport.h"
+
 #include <Arduino.h>
+#include <WebSocketsClient.h>
+#include <WiFi.h>
+#include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <freertos/semphr.h>
 
-static constexpr uint32_t kDefaultUploadFps = 10;
+WebSocketsClient camera_ws;
+static std::atomic<int> g_camera_ws_state{-1};
+static bool s_handlers_registered = false;
+static bool s_registered_with_uplink = false;
+static unsigned long s_reconnect_backoff_ms = 2000;
+static unsigned long s_last_reconnect_ms = 0;
+static unsigned long s_connected_at_ms = 0;
+static unsigned long s_connect_attempt_started_ms = 0;
 
-/* 采集间隔（ms）；默认 10fps；运行时由 camera_ws_set_fps / 服务端 cam_fps 调整。 */
-static volatile uint32_t s_cap_interval_ms = 1000u / kDefaultUploadFps;
+static void set_state(int v) {
+  g_camera_ws_state.store(v, std::memory_order_release);
+}
 
-static constexpr size_t kJpegBufSize = 64 * 1024;
+static void mark_disconnected_internal(const char* why) {
+  set_state(-1);
+  s_connected_at_ms = 0;
+  s_connect_attempt_started_ms = 0;
+  camera_notify_capture(kCamStop);
+  if (why && why[0]) {
+    log_warn("[CAMERA_WS] state=-1 (%s)", why);
+  }
+}
 
-static SemaphoreHandle_t s_mutex      = nullptr;
-static uint8_t*          s_buf        = nullptr;
-static size_t            s_len        = 0;
-static uint32_t          s_seq        = 0;
-static bool              s_ready      = false;
-static bool              s_init_ok    = false;
-
-static void cameraCaptureTask(void*) {
-  uint32_t last_cap_ms = 0;
-  for (;;) {
-    if (deskbot_vision_uplink_paused()) {
-      vTaskDelay(pdMS_TO_TICKS(50));
-      continue;
+static void register_handlers() {
+  if (s_handlers_registered) {
+    return;
+  }
+  s_handlers_registered = true;
+  camera_ws.onEvent([](WStype_t type, uint8_t* payload, size_t length) {
+    if (type == WStype_CONNECTED) {
+      set_state(-1);
+      s_connected_at_ms = millis();
+      return;
     }
-
-    const uint32_t now = millis();
-    const uint32_t cap_interval_ms = s_cap_interval_ms;
-    if (cap_interval_ms > 0 && now - last_cap_ms < cap_interval_ms) {
-      vTaskDelay(pdMS_TO_TICKS(10));
-      continue;
+    if (type == WStype_DISCONNECTED) {
+      mark_disconnected_internal("disconnected");
+      return;
     }
-
-    camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb) {
-      vTaskDelay(pdMS_TO_TICKS(20));
-      continue;
+    if (type == WStype_ERROR) {
+      mark_disconnected_internal("ws error");
+      return;
     }
-
-    if (fb->format == PIXFORMAT_JPEG && fb->len > 0 && fb->len <= kJpegBufSize) {
-      if (xSemaphoreTake(s_mutex, 0) == pdTRUE) {
-        memcpy(s_buf, fb->buf, fb->len);
-        s_len   = fb->len;
-        s_seq  += 1;
-        s_ready = true;
-        xSemaphoreGive(s_mutex);
-        last_cap_ms = now;
+    if (type == WStype_BIN && payload && length >= 5) {
+      PackedFrame frame;
+      if (parse_packed_frame(payload, length, frame) && frame.doc["type"] == "ready") {
+        camera_ws.setReconnectInterval(7UL * 24UL * 3600UL * 1000UL);
+        s_reconnect_backoff_ms = 2000;
+        s_connect_attempt_started_ms = 0;
+        set_state(0);
+        log_warn("[CAMERA_WS] ready state=0 → capture_go");
+        camera_notify_capture(kCamGo);
       }
     }
-
-    esp_camera_fb_return(fb);
-    vTaskDelay(1);
-  }
+  });
 }
 
-bool camera_ws_take_frame(const uint8_t** out_buf, size_t* out_len, uint32_t* out_seq) {
-  if (!s_init_ok || !s_ready) {
-    return false;
-  }
-  if (xSemaphoreTake(s_mutex, 0) != pdTRUE) {
-    return false;
-  }
-  if (!s_ready) {
-    xSemaphoreGive(s_mutex);
-    return false;
-  }
-  s_ready   = false;
-  *out_buf  = s_buf;
-  *out_len  = s_len;
-  *out_seq  = s_seq;
-  return true;
+static void disconnect_ws() {
+  camera_ws.disconnect();
+  set_state(-1);
+  s_connected_at_ms = 0;
+  s_connect_attempt_started_ms = 0;
+  camera_notify_capture(kCamStop);
 }
 
-void camera_ws_release_frame(void) {
-  if (s_mutex) {
-    xSemaphoreGive(s_mutex);
-  }
+static bool camera_ws_enabled() {
+  return deskbot_camera_uplink_enabled();
 }
 
-void camera_ws_discard_pending(void) {
-  if (!s_mutex) {
+static void ensure_connected_owner() {
+  if (WiFi.status() != WL_CONNECTED || !camera_ws_enabled()) {
+    if (g_camera_ws_state.load(std::memory_order_acquire) != -1) {
+      set_state(-1);
+      camera_notify_capture(kCamStop);
+    }
     return;
   }
-  if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
-    return;
-  }
-  s_ready = false;
-  s_len = 0;
-  xSemaphoreGive(s_mutex);
-}
-
-void camera_ws_set_fps(uint32_t fps) {
-  if (fps == 0) {
-    return;
-  }
-  s_cap_interval_ms = 1000u / fps;
-  Serial.printf("[camera_ws] set fps=%u interval=%ums\r\n", (unsigned)fps, (unsigned)s_cap_interval_ms);
-}
-
-void task_setup_camera_capture(void) {
-  s_mutex = xSemaphoreCreateMutex();
-  if (!s_mutex) {
-    Serial.println("[camera_ws] mutex create failed");
+  if (!deskbot_api_key_configured() || DESKBOT_WS_HOST[0] == '\0') {
     return;
   }
 
-  s_buf = (uint8_t*)heap_caps_malloc(kJpegBufSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!s_buf) {
-    Serial.println("[camera_ws] PSRAM alloc failed");
+  register_handlers();
+  camera_ws.loop();
+
+  const int st = g_camera_ws_state.load(std::memory_order_acquire);
+
+  if (camera_ws.isConnected() && st == 0) {
+    s_connect_attempt_started_ms = 0;
     return;
   }
 
-  s_init_ok = true;
-  Serial.printf("[camera_ws] init default_fps=%u interval=%ums (via /asr_chat)\r\n",
-                (unsigned)kDefaultUploadFps, (unsigned)s_cap_interval_ms);
+  if (camera_ws.isConnected()) {
+    if (st != 0 && s_connected_at_ms != 0 &&
+        (millis() - s_connected_at_ms) > 3000UL) {
+      log_warn("[CAMERA_WS] no ready JSON, force state=0 → capture_go");
+      camera_ws.setReconnectInterval(7UL * 24UL * 3600UL * 1000UL);
+      s_reconnect_backoff_ms = 2000;
+      s_connect_attempt_started_ms = 0;
+      set_state(0);
+      camera_notify_capture(kCamGo);
+      return;
+    }
+    return;
+  }
 
-  BaseType_t ok = xTaskCreatePinnedToCore(
-      cameraCaptureTask, "camera_cap", 4096, nullptr, 1, nullptr, 0);
-  if (ok != pdPASS) {
-    Serial.println("[camera_ws] task create failed");
+  if (st != -1) {
+    set_state(-1);
+    camera_notify_capture(kCamStop);
+  }
+
+  const unsigned long now = millis();
+  if (s_connect_attempt_started_ms != 0) {
+    if ((now - s_connect_attempt_started_ms) > (unsigned long)DESKBOT_WS_CONNECT_TIMEOUT_MS) {
+      log_warn("[CAMERA_WS] connect timeout, backoff then retry");
+      disconnect_ws();
+      s_connect_attempt_started_ms = 0;
+      if (s_reconnect_backoff_ms < 30000UL) {
+        s_reconnect_backoff_ms *= 2;
+        if (s_reconnect_backoff_ms > 30000UL) {
+          s_reconnect_backoff_ms = 30000UL;
+        }
+      }
+    }
+    return;
+  }
+
+  if (s_last_reconnect_ms != 0 && (now - s_last_reconnect_ms) < s_reconnect_backoff_ms) {
+    return;
+  }
+  s_last_reconnect_ms = now;
+  s_connect_attempt_started_ms = now;
+
+  camera_ws.disconnect();
+  set_state(-1);
+  s_connected_at_ms = 0;
+
+  char path[80];
+  snprintf(path, sizeof(path), "%s?device_id=%s", DESKBOT_CAMERA_WS_PATH, get_device_id());
+  char auth_header[96];
+  snprintf(auth_header, sizeof(auth_header), "X-API-Key: %s", DESKBOT_API_KEY);
+  camera_ws.setExtraHeaders(auth_header);
+  camera_ws.setReconnectInterval(500);
+  log_warn("[CAMERA_WS] reconnecting ws://%s:%u%s", DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT, path);
+  camera_ws.begin(DESKBOT_WS_HOST, DESKBOT_WS_PORT, path);
+}
+
+int camera_ws_state(void) {
+  return g_camera_ws_state.load(std::memory_order_acquire);
+}
+
+bool camera_ws_try_begin_send(void) {
+  int expected = 0;
+  return g_camera_ws_state.compare_exchange_strong(expected, 1, std::memory_order_acq_rel,
+                                                   std::memory_order_acquire);
+}
+
+void camera_ws_end_send_ok(void) {
+  int expected = 1;
+  (void)g_camera_ws_state.compare_exchange_strong(expected, 0, std::memory_order_acq_rel,
+                                                  std::memory_order_acquire);
+  camera_notify_capture(kCamGo);
+}
+
+void camera_ws_mark_disconnected(void) {
+  mark_disconnected_internal("send fail");
+}
+
+void camera_ws_on_image_finished(void) {
+  /* 成功发送走 end_send_ok；此处用于「扔掉/跳过」仍放行下一帧。 */
+  if (g_camera_ws_state.load(std::memory_order_acquire) == 1) {
+    int expected = 1;
+    (void)g_camera_ws_state.compare_exchange_strong(expected, 0, std::memory_order_acq_rel,
+                                                    std::memory_order_acquire);
+  }
+  if (g_camera_ws_state.load(std::memory_order_acquire) == 0) {
+    camera_notify_capture(kCamGo);
+  }
+}
+
+WebSocketsClient* camera_ws_client(void) {
+  return &camera_ws;
+}
+
+void ws_camera_auto_reconnect(void) {
+  if (!camera_ws_enabled()) {
+    return;
+  }
+  if (!s_registered_with_uplink) {
+    ws_transport_set_camera_client(&camera_ws);
+    s_registered_with_uplink = true;
+    set_state(-1);
+  }
+  ensure_connected_owner();
+  if (camera_ws.isConnected()) {
+    camera_ws.loop();
   }
 }

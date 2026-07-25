@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from functools import wraps
 
-from flask import flash, jsonify, redirect, request, url_for
-from flask_login import current_user
+from deskbot_server.web.flaskish import current_user, flash, jsonify, redirect, request, url_for
 
 
 def current_user_is_developer() -> bool:

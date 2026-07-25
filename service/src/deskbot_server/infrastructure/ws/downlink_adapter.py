@@ -6,22 +6,14 @@ from typing import Any, Optional
 from deskbot_server.core.settings import AppSettings
 from deskbot_server.ws.device_pipeline import DevicePipelineBroker
 from deskbot_server.ws.stages import _emit_stage
-from deskbot_server.ws.ws_send import (
-    _maybe_pb_serial_chain_guard,
-    _send_pb_wire_to_asr_device,
-)
+from deskbot_server.ws.ws_send import _maybe_pb_serial_chain_guard, _send_pb_wire_to_asr_device
 
 
 class WsDownlinkAdapter:
     """WebSocket 下行适配器：实现 DownlinkPort。"""
 
     def __init__(
-        self,
-        websocket,
-        *,
-        settings: AppSettings,
-        device_id: Optional[str],
-        dp_broker: Optional[DevicePipelineBroker],
+        self, websocket, *, settings: AppSettings, device_id: Optional[str], dp_broker: Optional[DevicePipelineBroker]
     ) -> None:
         self._ws = websocket
         self._settings = settings
@@ -51,9 +43,7 @@ class WsDownlinkAdapter:
     async def send_pb_wire(
         self, wire_text: str, binaries: Optional[list[bytes]] = None, pcm: Optional[bytes] = None
     ) -> bool:
-        return await _send_pb_wire_to_asr_device(
-            self._ws, wire_text, binaries=binaries, pcm=pcm
-        )
+        return await _send_pb_wire_to_asr_device(self._ws, wire_text, binaries=binaries, pcm=pcm)
 
     @asynccontextmanager
     async def pb_serial_chain(self):

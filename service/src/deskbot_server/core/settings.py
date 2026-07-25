@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+
 def _env_bool(name: str) -> Optional[bool]:
     raw = (os.environ.get(name) or "").strip().lower()
     if raw in ("1", "true", "yes", "on"):
@@ -112,25 +113,13 @@ class AppSettings:
         tf = dict(asr.get("text_filter") or {})
 
         pb_only_env = _env_bool("DESKBOT_ASR_CHAT_DEVICE_PB_ONLY")
-        pb_only = (
-            pb_only_env
-            if pb_only_env is not None
-            else bool(srv.get("asr_chat_device_pb_only", True))
-        )
+        pb_only = pb_only_env if pb_only_env is not None else bool(srv.get("asr_chat_device_pb_only", True))
 
         minimal_env = _env_bool("DESKBOT_ASR_CHAT_MINIMAL_DOWNLINK")
-        minimal = (
-            minimal_env
-            if minimal_env is not None
-            else bool(srv.get("asr_chat_minimal_device_downlink", False))
-        )
+        minimal = minimal_env if minimal_env is not None else bool(srv.get("asr_chat_minimal_device_downlink", False))
 
         face_info_env = _env_bool("DESKBOT_SEND_FACE_INFO")
-        face_info = (
-            face_info_env
-            if face_info_env is not None
-            else bool(srv.get("send_face_info_to_asr_chat", False))
-        )
+        face_info = face_info_env if face_info_env is not None else bool(srv.get("send_face_info_to_asr_chat", False))
 
         if os.environ.get("TTS_PROVIDER"):
             tts["provider"] = os.environ["TTS_PROVIDER"]
@@ -183,12 +172,9 @@ class AppSettings:
                 port=int(os.environ.get("DESKBOT_SERVER_PORT") or srv.get("port", 9000)),
                 ws_path=os.environ.get("DESKBOT_WS_PATH") or str(srv.get("ws_path", "/asr_chat")),
                 ws_ping_interval=_parse_ping_interval(
-                    os.environ.get("DESKBOT_WS_PING_INTERVAL"),
-                    srv.get("ws_ping_interval", 20),
+                    os.environ.get("DESKBOT_WS_PING_INTERVAL"), srv.get("ws_ping_interval", 20)
                 ),
-                ws_ping_timeout=float(
-                    os.environ.get("DESKBOT_WS_PING_TIMEOUT") or srv.get("ws_ping_timeout", 20)
-                ),
+                ws_ping_timeout=float(os.environ.get("DESKBOT_WS_PING_TIMEOUT") or srv.get("ws_ping_timeout", 20)),
                 asr_chat_device_pb_only=pb_only,
                 asr_chat_minimal_device_downlink=minimal,
                 send_face_info_to_asr_chat=face_info and not pb_only,
@@ -220,9 +206,7 @@ class AppSettings:
                 hub=str(asr.get("hub", "hf")),
                 language=str(asr.get("language", "zh")),
                 use_quant_onnx=bool(asr.get("use_quant_onnx", True)),
-                onnx_intra_op_threads=max(
-                    1, int(asr.get("onnx_intra_op_threads", 4))
-                ),
+                onnx_intra_op_threads=max(1, int(asr.get("onnx_intra_op_threads", 4))),
                 text_filter=AsrTextFilterSettings(
                     min_text_len=int(tf.get("min_text_len", 2)),
                     min_chinese_ratio=float(tf.get("min_chinese_ratio", 0.2)),

@@ -10,17 +10,17 @@ from typing import Optional
 from websockets.exceptions import ConnectionClosed
 
 from deskbot_server.constants import DEVICE_PIPELINE_MAX_EVENTS
-from deskbot_server.util import (
+from deskbot_server.utils.util import (
     _extract_device_id,
     _format_ts,
     _json_msg,
     _parse_query,
-    _peer_str,
     _split_path,
     _ws_request_path,
 )
+from deskbot_server.utils.ws_utils import WsUtils
 from deskbot_server.ws.registry import DeviceRegistry
-from deskbot_server.ws.ws_send import _PerWsFireAndForget, _safe_send
+from deskbot_server.ws.ws_send import _PerWsFireAndForget
 
 logger = logging.getLogger("deskbot-server")
 
@@ -79,19 +79,13 @@ class DevicePipelineBroker:
             if dedupe_rid:
                 evt["request_id"] = dedupe_rid
                 self._events = deque(
-                    (
-                        e
-                        for e in self._events
-                        if e.get("request_id") != dedupe_rid
-                    ),
-                    maxlen=self._max_events,
+                    (e for e in self._events if e.get("request_id") != dedupe_rid), maxlen=self._max_events
                 )
             else:
                 rid = str(evt.get("request_id") or "").strip()
                 if rid:
                     self._events = deque(
-                        (e for e in self._events if e.get("request_id") != rid),
-                        maxlen=self._max_events,
+                        (e for e in self._events if e.get("request_id") != rid), maxlen=self._max_events
                     )
             self._events.appendleft(evt)
 
@@ -117,12 +111,7 @@ class DevicePipelineBroker:
         self._fanout.submit(
             ws,
             json.dumps(
-                {
-                    "type": "pipeline_snapshot",
-                    "items": snap,
-                    "device_filter": device_filter,
-                    "max_events": max_events,
-                }
+                {"type": "pipeline_snapshot", "items": snap, "device_filter": device_filter, "max_events": max_events}
             ),
         )
 
@@ -139,11 +128,7 @@ class DevicePipelineBroker:
         """
         device_id = str(device_id or "unknown")
         async with self._lock:
-            targets = [
-                ws
-                for ws, flt in self._subscribers.items()
-                if not flt or flt == device_id
-            ]
+            targets = [ws for ws, flt in self._subscribers.items() if not flt or flt == device_id]
         if not targets:
             return
         msg = json.dumps(payload, ensure_ascii=False)
@@ -160,9 +145,7 @@ class DevicePipelineBroker:
         return items
 
     @staticmethod
-    def normalize_event(
-        data: dict, default_device_id: Optional[str] = None
-    ) -> Optional[dict]:
+    def normalize_event(data: dict, default_device_id: Optional[str] = None) -> Optional[dict]:
         """把任意上报字典规范化为统一的流水线事件结构。"""
         if not isinstance(data, dict):
             return None
@@ -236,11 +219,7 @@ async def publish_auto_dispatch_event(
     await broker.publish(evt)
 
 
-async def handle_device_pipeline(
-    websocket,
-    broker: DevicePipelineBroker,
-    registry: DeviceRegistry,
-) -> None:
+async def handle_device_pipeline(websocket, broker: DevicePipelineBroker, registry: DeviceRegistry) -> None:
     """/device_pipeline WS 入口。
 
     协议：
@@ -255,9 +234,9 @@ async def handle_device_pipeline(
     role = (qargs.get("role") or "").lower() or None
     url_device = _extract_device_id(qargs)
     is_subscriber = role in ("subscriber", "sub", "viewer", "consumer")
-    peer = _peer_str(websocket)
+    peer = WsUtils.peer_str(websocket)
 
-    await _safe_send(
+    await WsUtils.safe_send(
         websocket,
         _json_msg(
             {
@@ -272,11 +251,7 @@ async def handle_device_pipeline(
 
     try:
         if is_subscriber:
-            logger.info(
-                "[/device_pipeline] 订阅者接入 peer=%s device_filter=%s",
-                peer,
-                url_device,
-            )
+            logger.info("[/device_pipeline] 订阅者接入 peer=%s device_filter=%s", peer, url_device)
             await broker.add_subscriber(websocket, url_device)
             try:
                 async for msg in websocket:
@@ -287,7 +262,7 @@ async def handle_device_pipeline(
                     except Exception:
                         continue
                     if d.get("type") == "ping":
-                        await _safe_send(websocket, _json_msg({"type": "pong"}))
+                        await WsUtils.safe_send(websocket, _json_msg({"type": "pong"}))
             finally:
                 await broker.remove_subscriber(websocket)
             return
@@ -299,23 +274,13 @@ async def handle_device_pipeline(
                 peer,
                 req_path,
             )
-            await _safe_send(
-                websocket,
-                _json_msg(
-                    {
-                        "type": "error",
-                        "message": "producer 必须在 URL 中携带 device_id",
-                    }
-                ),
+            await WsUtils.safe_send(
+                websocket, _json_msg({"type": "error", "message": "producer 必须在 URL 中携带 device_id"})
             )
             await websocket.close(code=1008, reason="device_id required")
             return
 
-        logger.info(
-            "[/device_pipeline] 生产者接入 device_id=%s peer=%s",
-            url_device,
-            peer,
-        )
+        logger.info("[/device_pipeline] 生产者接入 device_id=%s peer=%s", url_device, peer)
         await registry.connect(url_device, "device_pipeline", websocket)
         try:
             async for message in websocket:
@@ -330,31 +295,20 @@ async def handle_device_pipeline(
 
                 msg_type = str(data.get("type") or "").lower()
                 if msg_type == "ping":
-                    await _safe_send(websocket, _json_msg({"type": "pong"}))
+                    await WsUtils.safe_send(websocket, _json_msg({"type": "pong"}))
                     continue
 
-                evt = DevicePipelineBroker.normalize_event(
-                    data, default_device_id=url_device
-                )
+                evt = DevicePipelineBroker.normalize_event(data, default_device_id=url_device)
                 if not evt:
-                    await _safe_send(
-                        websocket,
-                        _json_msg(
-                            {
-                                "type": "pipeline_rejected",
-                                "reason": "invalid_payload",
-                            }
-                        ),
+                    await WsUtils.safe_send(
+                        websocket, _json_msg({"type": "pipeline_rejected", "reason": "invalid_payload"})
                     )
                     continue
                 evt["device_id"] = url_device
 
                 stored = await broker.publish(evt)
                 await registry.touch(url_device, evt.get("status"))
-                await _safe_send(
-                    websocket,
-                    _json_msg({"type": "pipeline_ack", "seq": stored["seq"]}),
-                )
+                await WsUtils.safe_send(websocket, _json_msg({"type": "pipeline_ack", "seq": stored["seq"]}))
         finally:
             await registry.disconnect(websocket)
     except ConnectionClosed as closed:

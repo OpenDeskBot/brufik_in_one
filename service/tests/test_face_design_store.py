@@ -1,9 +1,10 @@
 """face_design_store 单元测试。"""
+
 from __future__ import annotations
 
 import json
 
-from deskbot_server.face_design_store import (
+from deskbot_server.dao.face_design_store import (
     find_emotion_expression,
     find_phoneme_expression,
     merged_emotion_expressions,
@@ -29,7 +30,9 @@ def test_merged_emotion_expressions_file_overrides_builtin():
                 {
                     "name": "angry",
                     "title": "自定义生气",
-                    "frames": [{"ms": 100, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}],
+                    "frames": [
+                        {"ms": 100, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}
+                    ],
                 }
             ],
         }
@@ -56,7 +59,9 @@ def test_normalize_legacy_field_names():
                     "name": "a",
                     "alias": ["AA"],
                     "title": "a",
-                    "frames": [{"ms": 100, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}],
+                    "frames": [
+                        {"ms": 100, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}
+                    ],
                 }
             ],
             "emotion_expressions": [
@@ -64,7 +69,9 @@ def test_normalize_legacy_field_names():
                     "name": "idle",
                     "alias": ["default"],
                     "title": "idle",
-                    "frames": [{"ms": 100, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}],
+                    "frames": [
+                        {"ms": 100, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}
+                    ],
                 }
             ],
         }
@@ -108,7 +115,9 @@ def test_save_emotions_to_design_file(tmp_path, monkeypatch):
                         "name": "idle",
                         "alias": ["default"],
                         "title": "idle",
-                        "frames": [{"ms": 100, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}],
+                        "frames": [
+                            {"ms": 100, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}
+                        ],
                     }
                 ],
             }
@@ -117,8 +126,8 @@ def test_save_emotions_to_design_file(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", tmp_path)
     monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", tmp_path / "device")
-    from deskbot_server.face_design_store import clear_face_design_cache
-    from deskbot_server.face_expr_scenes_store import load_face_expr_scenes_file, save_face_expr_scenes_file
+    from deskbot_server.dao.face_design_store import clear_face_design_cache
+    from deskbot_server.dao.face_expr_scenes_store import load_face_expr_scenes_file, save_face_expr_scenes_file
 
     clear_face_design_cache()
     rows = save_face_expr_scenes_file(
@@ -147,6 +156,6 @@ def test_resolve_face_design_path_uses_global(tmp_path, monkeypatch):
     (device_dir / "deskbot-face.json").write_text('{"name":"d","phonemes":[],"emotions":[]}', encoding="utf-8")
     monkeypatch.setattr("deskbot_server.face_design_store.FACE_DESIGN_FILE", str(global_path))
     monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", tmp_path)
-    from deskbot_server.face_design_store import resolve_face_design_path
+    from deskbot_server.dao.face_design_store import resolve_face_design_path
 
     assert resolve_face_design_path(device_id="dev1") == str(global_path)

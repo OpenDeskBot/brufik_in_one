@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import struct
-
 import numpy as np
 import opuslib_next
 
-from deskbot_server.pipeline.opus_downlink import (
-    decode_opus_batch_to_pcm_s16le,
-    encode_pcm_s16le_to_opus_batch,
-)
-from deskbot_server.pipeline.opus_uplink import opus_frame_samples
+from deskbot_server.service.pipeline.opus_downlink import decode_opus_batch_to_pcm_s16le, encode_pcm_s16le_to_opus_batch
+from deskbot_server.service.pipeline.opus_uplink import opus_frame_samples
 
 
 def _tone_pcm(sample_rate: int, duration_ms: int = 200, freq: float = 440.0) -> bytes:

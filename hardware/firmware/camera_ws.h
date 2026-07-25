@@ -1,21 +1,28 @@
 #pragma once
 
+#include <WebSocketsClient.h>
 #include <stdint.h>
-#include <stddef.h>
 
-bool deskbot_vision_uplink_paused(void);
-
-/* 摄像头 JPEG 缓存；帧经 /asr_chat WebSocket 发送（next_bin_len）。
- *
- *   if (camera_ws_take_frame(&buf, &len, &seq)) { … send … camera_ws_release_frame(); }
+/**
+ * camera_ws 连接状态（原子）：
+ *  -1 = 未连接 / 错误
+ *   0 = 空闲，可发
+ *   1 = 正在发送
  */
+int camera_ws_state(void);
 
-/** 启动 camera_cap 任务（JPEG 抓帧缓存）；须在 setup_camera 成功之后。 */
-void task_setup_camera_capture(void);
-bool camera_ws_take_frame(const uint8_t** out_buf, size_t* out_len, uint32_t* out_seq);
-void camera_ws_release_frame(void);
-/** 丢弃尚未发送的 JPEG（语音 PCM 上行开始时调用，避免错开发射）。 */
-void camera_ws_discard_pending(void);
+bool camera_ws_try_begin_send(void);
+void camera_ws_end_send_ok(void);
+/** 断线或发送失败：state=-1，并 camera_notify_capture(kCamStop)。 */
+void camera_ws_mark_disconnected(void);
 
-/** 调整上行帧率（fps>0）；默认 10fps，服务端 pb 字段 cam_fps 可动态覆盖。 */
-void camera_ws_set_fps(uint32_t fps);
+/**
+ * 图片已处理完（成功发送，或队列里扔掉/跳过）：camera_notify_capture(kCamGo)。
+ * 不改变 state=-1 的错误态（错误请走 mark_disconnected）。
+ */
+void camera_ws_on_image_finished(void);
+
+WebSocketsClient* camera_ws_client(void);
+
+/** 仅 ws_transport_task 调用：注册 camera WS + 自动重连 + loop。 */
+void ws_camera_auto_reconnect(void);

@@ -13,10 +13,7 @@ FACE_LCD_LEGACY_WIDTH = 128
 FACE_LCD_LEGACY_HEIGHT = 64
 
 # 等比缩放，避免宽高分别拉伸导致表情变形
-_SCALE_UNIFORM = min(
-    FACE_LCD_WIDTH / FACE_LCD_LEGACY_WIDTH,
-    FACE_LCD_HEIGHT / FACE_LCD_LEGACY_HEIGHT,
-)
+_SCALE_UNIFORM = min(FACE_LCD_WIDTH / FACE_LCD_LEGACY_WIDTH, FACE_LCD_HEIGHT / FACE_LCD_LEGACY_HEIGHT)
 _OFFSET_X = int(round((FACE_LCD_WIDTH - FACE_LCD_LEGACY_WIDTH * _SCALE_UNIFORM) / 2))
 _OFFSET_Y = int(round((FACE_LCD_HEIGHT - FACE_LCD_LEGACY_HEIGHT * _SCALE_UNIFORM) / 2))
 
@@ -73,21 +70,14 @@ def scale_primitive(prim: dict[str, Any]) -> dict[str, Any]:
 
 
 def scale_primitives(prims: list[Any]) -> list[dict[str, Any]]:
-    return [
-        scale_primitive(p)
-        for p in prims
-        if isinstance(p, dict) and str(p.get("shape") or "").strip()
-    ]
+    return [scale_primitive(p) for p in prims if isinstance(p, dict) and str(p.get("shape") or "").strip()]
 
 
 def scale_offset(off: dict[str, Any] | None) -> dict[str, int]:
     """口型组 ``offset`` 为相对位移，仅按等比系数缩放。"""
     if not isinstance(off, dict):
         return {"x": 0, "y": 0}
-    return {
-        "x": _scale_legacy_scalar(off.get("x") or 0),
-        "y": _scale_legacy_scalar(off.get("y") or 0),
-    }
+    return {"x": _scale_legacy_scalar(off.get("x") or 0), "y": _scale_legacy_scalar(off.get("y") or 0)}
 
 
 def scale_anim_elements(elements: dict[str, Any]) -> dict[str, Any]:

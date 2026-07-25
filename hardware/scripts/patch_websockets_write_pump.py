@@ -10,11 +10,11 @@ WS_CPP = os.path.join(
 
 MARKER = "/* deskbot: write pump hook */"
 DECL = (
-    "\nextern \"C\" void deskbot_ws_uplink_write_pump(void); "
+    "\nextern \"C\" void deskbot_ws_transport_write_pump(void); "
     "/* deskbot: write pump hook */\n"
 )
 READCB_OLD = """        if(n > 0) {
-            deskbot_ws_uplink_write_pump();
+            deskbot_ws_transport_write_pump();
             WEBSOCKETS_YIELD();
         }
     }
@@ -36,25 +36,25 @@ WRITE_OLD_A = """        } else {
         }"""
 WRITE_NEW_A = """        } else {
             DEBUG_WEBSOCKETS("WS write %d failed left %d!\\n", len, n);
-            deskbot_ws_uplink_write_pump();
+            deskbot_ws_transport_write_pump();
         }
         if(n > 0) {
-            deskbot_ws_uplink_write_pump();
+            deskbot_ws_transport_write_pump();
             WEBSOCKETS_YIELD();
         }"""
 WRITE_OLD_B = """        } else {
             DEBUG_WEBSOCKETS("WS write %d failed left %d!\\n", len, n);
         }
         if(n > 0) {
-            deskbot_ws_uplink_write_pump();
+            deskbot_ws_transport_write_pump();
             WEBSOCKETS_YIELD();
         }"""
 WRITE_NEW_B = """        } else {
             DEBUG_WEBSOCKETS("WS write %d failed left %d!\\n", len, n);
-            deskbot_ws_uplink_write_pump();
+            deskbot_ws_transport_write_pump();
         }
         if(n > 0) {
-            deskbot_ws_uplink_write_pump();
+            deskbot_ws_transport_write_pump();
             WEBSOCKETS_YIELD();
         }"""
 
@@ -63,6 +63,11 @@ if not os.path.isfile(WS_CPP):
 else:
     content = open(WS_CPP, "r", encoding="utf-8").read()
     changed = False
+    # ws_uplink → ws_transport 重命名后，已打补丁的 libdeps 仍可能是旧符号名。
+    if "deskbot_ws_uplink_write_pump" in content:
+        content = content.replace("deskbot_ws_uplink_write_pump", "deskbot_ws_transport_write_pump")
+        changed = True
+        print("==> WebSockets.cpp: renamed write pump symbol uplink→transport")
     if READCB_OLD in content:
         content = content.replace(READCB_OLD, READCB_NEW, 1)
         changed = True
@@ -80,7 +85,7 @@ else:
         content = content.replace(WRITE_OLD_B, WRITE_NEW_B, 1)
         changed = True
         print("==> Patched WebSockets.cpp: write pump on zero-len too")
-    elif "deskbot_ws_uplink_write_pump();" in content and MARKER in content:
+    elif "deskbot_ws_transport_write_pump();" in content and MARKER in content:
         print("==> WebSockets.cpp write pump already patched")
     elif not changed:
         print("==> WebSockets.cpp: expected write() block not found, skip pump patch")

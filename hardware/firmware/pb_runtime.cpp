@@ -1,0 +1,686 @@
+#include "pb_runtime.h"
+
+#include <stdlib.h>
+#include <string.h>
+#include "camera.h"
+#include "display.h"
+#include "mic.h"
+#include "esp_heap_caps.h"
+#include "head.h"
+#include "logger.h"
+#include "utils/opus_codec.h"
+#include "utils/utils.h"
+#include "ws_transport.h"
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+
+PbRuntime::PbRuntime() {}
+
+uint8_t PbRuntime::normalizeAudioCh(uint8_t ch) {
+  return (ch == 0 || ch > 2) ? 1 : ch;
+}
+
+void PbRuntime::endAudioStreamIfNeeded() {
+  if (pb_audio_stream_started_) {
+    speaker_stream_pcm16_end(normalizeAudioCh(pb_ch_));
+    pb_audio_stream_started_ = false;
+  }
+}
+
+void PbRuntime::signalTtsRoundComplete() {
+  tts_active_ = false;
+}
+
+void PbRuntime::abortRound(bool abort_speaker) {
+  if (abort_speaker) {
+    speaker_abort();
+  }
+  display_render_reset();
+  head_clear_motor_pending();
+  endAudioStreamIfNeeded();
+  pb_req_[0] = '\0';
+  pb_sr_ = 0;
+  pb_ch_ = 0;
+  pb_fmt_[0] = '\0';
+  pb_audio_buf_ms_est_ = 0;
+  pb_last_buf_decay_ms_ = millis();
+  pb_ack_out_pending_ = false;
+  pb_ack_out_req_[0] = '\0';
+  pb_ack_out_idx_ = 0;
+  pb_ack_out_buf_ms_ = 0;
+  pb_last_pb_ack_sent_wall_ms_ = 0;
+  pb_ack_bypass_throttle_ = false;
+  signalTtsRoundComplete();
+}
+
+void PbRuntime::updateAudioBufDecayWall() {
+  const unsigned long now = millis();
+  if (pb_last_buf_decay_ms_ == 0) {
+    pb_last_buf_decay_ms_ = now;
+  }
+  if (pb_audio_buf_ms_est_ > 0) {
+    const int32_t dec = (int32_t)(now - pb_last_buf_decay_ms_);
+    if (dec > 0) {
+      pb_audio_buf_ms_est_ -= dec;
+      if (pb_audio_buf_ms_est_ < 0) {
+        pb_audio_buf_ms_est_ = 0;
+      }
+    }
+  }
+  pb_last_buf_decay_ms_ = now;
+}
+
+void PbRuntime::enqueueAck(const char* req, uint32_t idx, int32_t audio_buf_ms, bool include_servo) {
+  JsonDocument ack;
+  ack["type"] = "pb_ack";
+  ack["req"] = req;
+  ack["idx"] = idx;
+  ack["audio_buf_ms"] = audio_buf_ms;
+  if (include_servo) {
+    JsonObject servo = ack["servo"].to<JsonObject>();
+    servo["x"] = head_read_x();
+    servo["y"] = head_read_y_logic();
+    servo["x_min"] = X_MIN_LIMIT;
+    servo["x_max"] = X_MAX_LIMIT;
+    servo["y_min"] = Y_MIN_LIMIT;
+    servo["y_max"] = Y_MAX_LIMIT;
+  }
+  String msg;
+  if (serializeJson(ack, msg) == 0) {
+    log_warn("[PB] pb_ack serialize failed");
+    return;
+  }
+  (void)ws_transport_enqueue_state(msg.c_str());
+}
+
+void PbRuntime::flushPendingPbAck() {
+  if (!pb_ack_out_pending_) {
+    return;
+  }
+  const unsigned long now_wall = millis();
+  if (!pb_ack_bypass_throttle_ && pb_last_pb_ack_sent_wall_ms_ != 0 &&
+      (now_wall - pb_last_pb_ack_sent_wall_ms_ < 80UL)) {
+    return;
+  }
+  enqueueAck(pb_ack_out_req_, pb_ack_out_idx_, pb_ack_out_buf_ms_, /*include_servo=*/true);
+  pb_ack_bypass_throttle_ = false;
+  pb_last_pb_ack_sent_wall_ms_ = now_wall;
+  pb_ack_out_pending_ = false;
+}
+
+void PbRuntime::maybeAck(const pb_model& model) {
+  if (model.req[0] == '\0') {
+    return;
+  }
+  updateAudioBufDecayWall();
+  strncpy(pb_ack_out_req_, model.req, sizeof(pb_ack_out_req_));
+  pb_ack_out_req_[sizeof(pb_ack_out_req_) - 1] = '\0';
+  pb_ack_out_idx_ = (uint32_t)model.idx;
+  const uint32_t chunk_ms = model.chunk_ms > 0 ? (uint32_t)model.chunk_ms : 127u;
+  const unsigned qd = speaker_input_queue_depth();
+  pb_ack_out_buf_ms_ = (int32_t)(qd * chunk_ms);
+  if (pb_ack_out_buf_ms_ < pb_audio_buf_ms_est_) {
+    pb_ack_out_buf_ms_ = pb_audio_buf_ms_est_;
+  }
+  pb_ack_out_pending_ = true;
+}
+
+void PbRuntime::applySideEffects(const pb_model& model) {
+  if (model.volume >= 0) {
+    speaker_set_volume(model.volume);
+    log_info("[PB] volume=%d", model.volume);
+  }
+  if (model.cam_fps > 0) {
+    camera_set_fps((uint32_t)model.cam_fps);
+  }
+  if (model.sr > 0) {
+    pb_sr_ = model.sr;
+  }
+  if (model.ch > 0) {
+    pb_ch_ = model.ch;
+  }
+  if (model.fmt[0] != '\0') {
+    strncpy(pb_fmt_, model.fmt, sizeof(pb_fmt_));
+    pb_fmt_[sizeof(pb_fmt_) - 1] = '\0';
+  }
+}
+
+static bool model_has_payload(const pb_model& model) {
+  return model.anim_count > 0 || model.servo_count > 0 || model.audio.next_bin_len > 0 ||
+         model.asset_count > 0 || model.mic != PB_MIC_NONE;
+}
+
+static bool model_is_servo_only_gesture(const pb_model& model) {
+  return model.anim_count == 0 && model.audio.next_bin_len == 0 && model.asset_count == 0 &&
+         model.servo_count > 0;
+}
+
+bool PbRuntime::tryMicOnlySingle(pb_model& model) {
+  if (model.type != PB_MODEL_SINGLE || model.idx != 0 || model.mic == PB_MIC_NONE) {
+    return false;
+  }
+  if (model.anim_count > 0 || model.servo_count > 0 || model.audio.next_bin_len > 0 ||
+      model.asset_count > 0) {
+    return false;
+  }
+  if (model.mic == PB_MIC_OPEN) {
+    signalTtsRoundComplete();
+  }
+  enqueueAck(model.req, 0, 0, /*include_servo=*/false);
+  log_info("[PB] mic hint pb_single req=%s mic=%s", model.req,
+           model.mic == PB_MIC_OPEN ? "open" : "mute");
+  pb_model_free(model);
+  return true;
+}
+
+void PbRuntime::onChainHead(pb_model& model) {
+  const bool servo_only = model_is_servo_only_gesture(model);
+  const bool voice_servo_only = mic_capture_allowed() && servo_only;
+  const bool replace_realtime_servo =
+      servo_only && model.action == PB_MODEL_REPLACE && model.level >= 3;
+
+  if (model.action == PB_MODEL_REPLACE) {
+    if (replace_realtime_servo) {
+      head_clear_motor_pending();
+      log_info("[PB] realtime servo replace: cleared pending motor commands");
+    } else if (!voice_servo_only) {
+      speaker_abort();
+      display_render_reset();
+      head_clear_motor_pending();
+      endAudioStreamIfNeeded();
+      log_info("[PB] chain head replace drain req=%s type=%s", model.req,
+               pb_model_type_name(model.type));
+    } else {
+      log_info("[PB] servo-only during voice: skip audio drain req=%s", model.req);
+    }
+  }
+
+  strncpy(pb_req_, model.req, sizeof(pb_req_));
+  pb_req_[sizeof(pb_req_) - 1] = '\0';
+  if (!voice_servo_only) {
+    tts_active_ = true;
+  }
+}
+
+void PbRuntime::dispatchAnim(pb_model& model) {
+  if (!model.anim || model.anim_count == 0) {
+    return;
+  }
+  uint8_t* asset_bufs[PB_ASSET_CAPACITY]{};
+  size_t asset_lens[PB_ASSET_CAPACITY]{};
+  const uint8_t asset_count = model.asset_count > PB_ASSET_CAPACITY ? PB_ASSET_CAPACITY
+                                                                    : (uint8_t)model.asset_count;
+  for (uint8_t i = 0; i < asset_count; ++i) {
+    asset_bufs[i] = reinterpret_cast<uint8_t*>(model.assets[i].bin);
+    asset_lens[i] = (size_t)model.assets[i].next_bin_len;
+    model.assets[i].bin = nullptr;
+  }
+  display_render_submit_pb_anim_frames_owned(model.anim, model.anim_count, asset_bufs, asset_lens,
+                                              asset_count);
+  model.anim = nullptr;
+  model.anim_count = 0;
+}
+
+void PbRuntime::dispatchServo(const pb_model& model) {
+  if (!model.servo || model.servo_count == 0) {
+    return;
+  }
+  head_submit_pb_servo_frames(model.servo, model.servo_count);
+}
+
+bool PbRuntime::dispatchAudio(pb_model& model) {
+  if (!model.audio.bin || model.audio.next_bin_len <= 0) {
+    return true;
+  }
+  if (pb_sr_ == 0 || pb_ch_ == 0 || pb_fmt_[0] == '\0') {
+    log_warn("[PB] audio without sr/ch/fmt req=%s idx=%d", model.req, model.idx);
+    return false;
+  }
+  if (strcmp(pb_fmt_, "s16le") != 0 && strcmp(pb_fmt_, "opus") != 0) {
+    log_warn("[PB] unsupported fmt=%s", pb_fmt_);
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(model.audio.bin);
+  const size_t length = (size_t)model.audio.next_bin_len;
+  int16_t* pcm_owned = nullptr;
+  size_t samples = 0;
+  uint32_t free_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+
+  if (strcmp(pb_fmt_, "opus") == 0) {
+    const uint16_t opus_frames =
+        model.audio.frames > 0 ? (uint16_t)model.audio.frames : (uint16_t)1;
+    const size_t cap = opus_codec_decode_out_cap((int)pb_sr_, opus_frames);
+    pcm_owned = (int16_t*)heap_caps_malloc(cap * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pcm_owned) {
+      pcm_owned = (int16_t*)heap_caps_malloc(cap * sizeof(int16_t), MALLOC_CAP_DEFAULT);
+      free_caps = MALLOC_CAP_DEFAULT;
+    }
+    if (!pcm_owned) {
+      return false;
+    }
+    samples = opus_frames > 1
+                  ? opus_codec_decode_batch(payload, length, (int)pb_sr_, opus_frames, pcm_owned, cap)
+                  : opus_codec_decode(payload, length, (int)pb_sr_, pcm_owned, cap);
+    if (samples == 0) {
+      heap_caps_free(pcm_owned);
+      return false;
+    }
+  } else {
+    if ((length & 1u) != 0u) {
+      return false;
+    }
+    pcm_owned = (int16_t*)heap_caps_malloc(length, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pcm_owned) {
+      pcm_owned = (int16_t*)heap_caps_malloc(length, MALLOC_CAP_DEFAULT);
+      free_caps = MALLOC_CAP_DEFAULT;
+    }
+    if (!pcm_owned) {
+      return false;
+    }
+    memcpy(pcm_owned, payload, length);
+    samples = length / 2;
+  }
+
+  if (!pb_audio_stream_started_) {
+    if (!speaker_stream_pcm16_begin(pb_sr_, pb_ch_)) {
+      heap_caps_free(pcm_owned);
+      return false;
+    }
+    pb_audio_stream_started_ = true;
+    pb_last_buf_decay_ms_ = millis();
+    pb_audio_buf_ms_est_ = 0;
+  }
+  if (!speaker_stream_pcm16_chunk(pcm_owned, samples, free_caps)) {
+    return false;
+  }
+  pb_audio_buf_ms_est_ += (int32_t)(model.chunk_ms > 0 ? model.chunk_ms : 127);
+  return true;
+}
+
+void PbRuntime::onSequenceEnd(const pb_model& model) {
+  endAudioStreamIfNeeded();
+  log_info("[PB] complete req=%s idx=%d type=%s", model.req, model.idx,
+           pb_model_type_name(model.type));
+  signalTtsRoundComplete();
+}
+
+void PbRuntime::handleCancel(const pb_model& model) {
+  log_info("[PB] cancel req=%s active_req=%s", model.req, pb_req_);
+  if (model.req[0] == '\0' || pb_req_[0] == '\0' || strcmp(model.req, pb_req_) == 0) {
+    abortRound(/*abort_speaker=*/true);
+  }
+}
+
+void PbRuntime::dispatchModel(pb_model& model) {
+  if (model.type == PB_MODEL_CANCEL) {
+    handleCancel(model);
+    pb_model_free(model);
+    return;
+  }
+  if (!pb_model_is_play_type(model.type)) {
+    pb_model_free(model);
+    return;
+  }
+
+  log_info("[PB] dispatch req=%s type=%s idx=%d level=%d anim=%u servo=%u audio=%d",
+           model.req, pb_model_type_name(model.type), model.idx, model.level,
+           (unsigned)model.anim_count, (unsigned)model.servo_count, model.audio.next_bin_len);
+
+  if (tryMicOnlySingle(model)) {
+    return;
+  }
+
+  const bool is_chain_head =
+      (model.type == PB_MODEL_START || model.type == PB_MODEL_SINGLE) && model.idx == 0;
+  if (is_chain_head) {
+    onChainHead(model);
+  }
+
+  applySideEffects(model);
+
+  if (!model_has_payload(model)) {
+    log_warn("[PB] skip empty chunk req=%s idx=%d", model.req, model.idx);
+    pb_model_free(model);
+    return;
+  }
+
+  dispatchAnim(model);
+  dispatchServo(model);
+  if (!dispatchAudio(model)) {
+    log_warn("[PB] audio dispatch failed req=%s idx=%d", model.req, model.idx);
+  }
+
+  maybeAck(model);
+  pb_ack_bypass_throttle_ = true;
+
+  if (model.type == PB_MODEL_END || model.type == PB_MODEL_SINGLE) {
+    onSequenceEnd(model);
+  }
+
+  pb_model_free(model);
+}
+
+void PbRuntime::serviceLoop() {
+  flushPendingPbAck();
+  if (!tts_active_) {
+    updateAttentionDisplay();
+  }
+}
+
+void PbRuntime::updateAttentionDisplay() {
+  const unsigned long now = millis();
+  const bool should_wake = tts_active_;
+
+  if (should_wake) {
+    last_should_wake_ms_ = now;
+    if (display_state_ != DISPLAY_WAKEUP) {
+      log_info("[ATTENTION] -> WAKEUP (tts=%d)", (int)tts_active_);
+      display_state_ = DISPLAY_WAKEUP;
+      const int y_now = head_read_y_logic();
+      if (y_now != Y_CENTER) {
+        head_servo_cmd_async(HEAD_SERVO_HOLD, HEAD_SERVO_ABS, 0, Y_CENTER, /*step=*/0, /*ms=*/200);
+        log_info("[ATTENTION] wake raise Y %d -> %d", y_now, Y_CENTER);
+      }
+    }
+    return;
+  }
+
+  const bool first_time = (last_should_wake_ms_ == 0) && (display_state_ == DISPLAY_UNINIT);
+  const bool dwell_done =
+      (last_should_wake_ms_ != 0) && (now - last_should_wake_ms_ >= kIdleEnterDelayMs);
+  if (display_state_ != DISPLAY_SLEEP && (first_time || dwell_done)) {
+    log_info("[ATTENTION] -> SLEEP (dwell=%lums first=%d)",
+             last_should_wake_ms_ == 0 ? 0UL : (now - last_should_wake_ms_), (int)first_time);
+    const int idle_y_target = constrain(Y_CENTER + kSleepHeadDownDeg, Y_MIN_LIMIT, Y_MAX_LIMIT);
+    const int y_now = head_read_y_logic();
+    if (y_now != idle_y_target) {
+      head_servo_cmd_async(HEAD_SERVO_HOLD, HEAD_SERVO_ABS, 0, idle_y_target, /*step=*/0, /*ms=*/200);
+      log_info("[ATTENTION] sleep lower Y %d -> %d", y_now, idle_y_target);
+    }
+    display_state_ = DISPLAY_SLEEP;
+  }
+}
+
+void PbRuntime::onLinkDown() {
+  log_warn("[PB_RUNTIME] link down req=%s tts=%d heap=%u psram=%u", pb_req_, (int)tts_active_,
+           (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  abortRound(/*abort_speaker=*/true);
+  pb_runtime_discard_rx_queue();
+}
+
+namespace {
+
+PbRuntime s_runtime;
+bool s_setup_ok = false;
+TaskHandle_t s_task = nullptr;
+QueueHandle_t s_frame_q = nullptr;
+
+struct PbRxFrame {
+  enum class Kind : uint8_t {
+    kPacked = 0,
+    kLinkDown = 1,
+  };
+  Kind kind = Kind::kPacked;
+  uint8_t* data = nullptr;
+  size_t len = 0;
+};
+
+constexpr UBaseType_t kPbFrameQDepth = 16;
+constexpr uint32_t kPbRuntimeStack = 24 * 1024;
+constexpr UBaseType_t kPbRuntimePrio = 4;
+constexpr size_t kMaxPackedFrame = 1024 * 1024;
+constexpr size_t kPbModelRingCapacity = 32;
+constexpr uint32_t kPbDispatchLeadMs = 100;
+
+struct PbModelSlot {
+  pb_model model{};
+};
+
+PbModelSlot s_model_ring[kPbModelRingCapacity]{};
+size_t s_model_head = 0;
+size_t s_model_count = 0;
+uint32_t s_last_dispatch_ms = 0;
+uint32_t s_last_dispatch_chunk_ms = 0;
+bool s_has_dispatched_model = false;
+
+size_t model_ring_at(size_t offset) {
+  return (s_model_head + offset) % kPbModelRingCapacity;
+}
+
+void model_slot_clear(PbModelSlot& slot) {
+  pb_model_free(slot.model);
+}
+
+void model_slot_move(PbModelSlot& dst, PbModelSlot& src) {
+  if (&dst == &src) return;
+  model_slot_clear(dst);
+  dst.model = src.model;
+  src.model = pb_model{};
+}
+
+void model_ring_clear() {
+  for (size_t i = 0; i < s_model_count; ++i) {
+    model_slot_clear(s_model_ring[model_ring_at(i)]);
+  }
+  s_model_head = 0;
+  s_model_count = 0;
+  s_has_dispatched_model = false;
+}
+
+void model_ring_remove(size_t offset) {
+  if (offset >= s_model_count) return;
+  for (size_t i = offset; i + 1 < s_model_count; ++i) {
+    model_slot_move(s_model_ring[model_ring_at(i)], s_model_ring[model_ring_at(i + 1)]);
+  }
+  const size_t last = model_ring_at(s_model_count - 1);
+  model_slot_clear(s_model_ring[last]);
+  --s_model_count;
+}
+
+size_t model_ring_drop_same_priority(const pb_model& incoming) {
+  size_t dropped = 0;
+  size_t off = s_model_count;
+  while (off > 0) {
+    --off;
+    const pb_model& queued = s_model_ring[model_ring_at(off)].model;
+    if (queued.level != incoming.level) continue;
+    model_ring_remove(off);
+    ++dropped;
+  }
+  return dropped;
+}
+
+bool model_ring_push(PbModelSlot& incoming) {
+  if (incoming.model.action == PB_MODEL_REPLACE) {
+    const size_t dropped = model_ring_drop_same_priority(incoming.model);
+    if (dropped) {
+      log_info("[PB_SCHED] replace level=%d removed=%u buffered models", incoming.model.level,
+               (unsigned)dropped);
+    }
+  }
+  if (s_model_count > 0) {
+    const int tail_level = s_model_ring[model_ring_at(s_model_count - 1)].model.level;
+    if (incoming.model.level < tail_level) {
+      log_info("[PB_SCHED] drop lower priority req=%s level=%d tail_level=%d", incoming.model.req,
+               incoming.model.level, tail_level);
+      return false;
+    }
+  }
+  if (s_model_count >= kPbModelRingCapacity) {
+    if (s_model_count > 0 &&
+        incoming.model.level >= s_model_ring[model_ring_at(s_model_count - 1)].model.level) {
+      log_warn("[PB_SCHED] model ring full; drop oldest for req=%s level=%d", incoming.model.req,
+               incoming.model.level);
+      model_ring_remove(0);
+    } else {
+      log_warn("[PB_SCHED] model ring full; drop req=%s level=%d", incoming.model.req,
+               incoming.model.level);
+      return false;
+    }
+  }
+  const size_t tail = model_ring_at(s_model_count++);
+  model_slot_move(s_model_ring[tail], incoming);
+  log_info("[PB_SCHED] buffered req=%s idx=%d level=%d depth=%u", s_model_ring[tail].model.req,
+           s_model_ring[tail].model.idx, s_model_ring[tail].model.level, (unsigned)s_model_count);
+  return true;
+}
+
+bool model_slot_from_frame(const PbRxFrame& item, PbModelSlot& out) {
+  PackedFrame frame;
+  if (!parse_packed_frame(item.data, item.len, frame)) {
+    log_warn("[PB_SCHED] packed frame parse failed");
+    return false;
+  }
+  const char* err = nullptr;
+  const size_t media_len = frame.bin_len > 0 ? static_cast<size_t>(frame.bin_len) : 0;
+  if (!pb_model_from_json(frame.doc, frame.bin, media_len, out.model, err)) {
+    log_warn("[PB_SCHED] model parse rejected: %s", err ? err : "unknown");
+    return false;
+  }
+  return true;
+}
+
+bool model_ring_due(uint32_t now) {
+  if (s_model_count == 0 || !s_has_dispatched_model) return s_model_count > 0;
+  const uint32_t interval = s_last_dispatch_chunk_ms > kPbDispatchLeadMs
+                                ? s_last_dispatch_chunk_ms - kPbDispatchLeadMs
+                                : 0;
+  return interval == 0 || (uint32_t)(now - s_last_dispatch_ms) >= interval;
+}
+
+void model_ring_dispatch_due(uint32_t now) {
+  if (!model_ring_due(now)) return;
+  PbModelSlot& slot = s_model_ring[s_model_head];
+  const int chunk_ms = slot.model.chunk_ms;
+  if (speaker_input_queue_depth() >= SPEAKER_QUEUE_DEPTH) {
+    (void)speaker_drop_oldest_pending();
+  }
+  if (head_motor_input_queue_depth() >= HEAD_MOTOR_QUEUE_DEPTH) {
+    (void)head_drop_oldest_motor_pending();
+  }
+  s_runtime.dispatchModel(slot.model);
+  slot.model = pb_model{};
+  s_last_dispatch_ms = now;
+  s_last_dispatch_chunk_ms = (uint32_t)max(0, chunk_ms);
+  s_has_dispatched_model = true;
+  log_info("[PB_SCHED] dispatched remaining=%u chunk_ms=%d", (unsigned)(s_model_count - 1),
+           chunk_ms);
+  model_ring_remove(0);
+}
+
+void pb_runtime_task(void* /*arg*/) {
+  for (;;) {
+    PbRxFrame item{};
+    if (xQueueReceive(s_frame_q, &item, pdMS_TO_TICKS(2)) == pdTRUE) {
+      if (item.kind == PbRxFrame::Kind::kLinkDown) {
+        model_ring_clear();
+        s_runtime.onLinkDown();
+        continue;
+      }
+      struct FrameGuard {
+        uint8_t* p;
+        ~FrameGuard() {
+          free(p);
+        }
+      } guard{item.data};
+
+      PbModelSlot incoming{};
+      if (model_slot_from_frame(item, incoming)) {
+        if (incoming.model.type == PB_MODEL_CANCEL) {
+          log_info("[PB_SCHED] cancel req=%s; clear %u buffered models", incoming.model.req,
+                   (unsigned)s_model_count);
+          model_ring_clear();
+          s_runtime.handleCancel(incoming.model);
+          model_slot_clear(incoming);
+        } else if (!model_ring_push(incoming)) {
+          model_slot_clear(incoming);
+        }
+      }
+    }
+    model_ring_dispatch_due(millis());
+    s_runtime.serviceLoop();
+  }
+}
+
+}  // namespace
+
+bool setup_pb_runtime(void) {
+  if (!s_frame_q) {
+    s_frame_q = xQueueCreate(kPbFrameQDepth, sizeof(PbRxFrame));
+    if (!s_frame_q) {
+      log_error("[PB_RUNTIME] frame queue create failed");
+      s_setup_ok = false;
+      return false;
+    }
+  }
+  s_setup_ok = true;
+  log_info("[PB_RUNTIME] setup ok frame_q=%u", (unsigned)kPbFrameQDepth);
+  return true;
+}
+
+bool task_setup_pb_runtime(void) {
+  if (!s_setup_ok) {
+    log_error("[PB_RUNTIME] task_setup skipped (setup not ok)");
+    return false;
+  }
+  if (s_task) {
+    return true;
+  }
+  BaseType_t rc = xTaskCreatePinnedToCore(pb_runtime_task, "pb_runtime", kPbRuntimeStack, nullptr,
+                                           kPbRuntimePrio, &s_task, APP_CPU_NUM);
+  if (rc != pdPASS) {
+    log_error("[PB_RUNTIME] task create failed rc=%d (internal free=%u)", (int)rc,
+              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    s_task = nullptr;
+    return false;
+  }
+  log_info("[PB_RUNTIME] task OK stack=%u prio=%u", (unsigned)kPbRuntimeStack,
+           (unsigned)kPbRuntimePrio);
+  return true;
+}
+
+PbRuntime* pb_runtime(void) {
+  return &s_runtime;
+}
+
+bool pb_runtime_enqueue_frame(uint8_t* data, size_t length) {
+  if (!s_setup_ok || !s_frame_q) {
+    return false;
+  }
+  if (!data || length == 0 || length > kMaxPackedFrame) {
+    return false;
+  }
+  PbRxFrame item{};
+  item.kind = PbRxFrame::Kind::kPacked;
+  item.data = data;
+  item.len = length;
+  if (xQueueSend(s_frame_q, &item, 0) != pdTRUE) {
+    log_warn("[PB_RUNTIME] frame queue full len=%u", (unsigned)length);
+    return false;
+  }
+  return true;
+}
+
+void pb_runtime_notify_link_down(void) {
+  if (!s_frame_q) {
+    return;
+  }
+  PbRxFrame item{};
+  item.kind = PbRxFrame::Kind::kLinkDown;
+  (void)xQueueSend(s_frame_q, &item, 0);
+}
+
+void pb_runtime_discard_rx_queue(void) {
+  if (!s_frame_q) {
+    return;
+  }
+  PbRxFrame item{};
+  while (xQueueReceive(s_frame_q, &item, 0) == pdTRUE) {
+    if (item.kind == PbRxFrame::Kind::kPacked && item.data) {
+      free(item.data);
+    }
+  }
+}

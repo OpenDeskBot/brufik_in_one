@@ -7,50 +7,45 @@ import logging
 import mimetypes
 import os
 import time
+from functools import wraps
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
-from flask_login import current_user
+from fastapi import APIRouter
 
-from deskbot_server.application.face_registration import register_face_for_device
 from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
 from deskbot_server.auth.device_service import user_owns_device
 from deskbot_server.auth.permissions import current_user_is_developer, require_developer
 from deskbot_server.auth.service import list_users, set_user_developer
-from deskbot_server.camera_face_config_store import (
+from deskbot_server.constants import CAMERA_FACE_CFG_FILE, FACE_PROFILES_FILE, SCENE_PLAYBOOKS_FILE, USER_MEMORY_FILE
+from deskbot_server.dao.camera_face_config_store import (
     load_camera_face_cfg_file,
     normalize_camera_face_document,
     save_camera_face_cfg_file,
 )
-from deskbot_server.camera_face_tune import apply_camera_face_tune
-from deskbot_server.constants import (
-    CAMERA_FACE_CFG_FILE,
-    FACE_PROFILES_FILE,
-    SERVO_CFG_FILE,
-    USER_MEMORY_FILE,
-    SCENE_PLAYBOOKS_FILE,
-)
-from deskbot_server.device_data import (
-    load_llm_system_prompt,
-    resolve_json_path,
-    save_llm_system_prompt,
-)
-from deskbot_server.face_profiles_store import load_face_profiles
-from deskbot_server.llm.utils import llm_pb_scenes_prompt_appendix, parse_llm_reply
-from deskbot_server.memory_store import add_memory, delete_memory, list_memory_for_device
-from deskbot_server.servo_config_store import (
-    load_servo_cfg_file,
-    normalize_servo_document,
-    save_servo_cfg_file,
-)
-from deskbot_server.scene_playbooks_store import (
+from deskbot_server.dao.face_expr_scenes_store import load_face_expr_scenes_file
+from deskbot_server.dao.face_profiles_store import load_face_profiles
+from deskbot_server.dao.memory_store import add_memory, delete_memory, list_memory_for_device
+from deskbot_server.dao.scene_playbooks_store import (
     collect_missing_servo_presets,
     load_scene_playbooks_file,
     normalize_playbook,
     normalize_scene_playbooks,
     save_scene_playbooks_file,
 )
-from deskbot_server.face_expr_scenes_store import load_face_expr_scenes_file
-from deskbot_server.util import pcm_to_wav_bytes
+from deskbot_server.infrastructure.llm.utils import llm_pb_scenes_prompt_appendix, parse_llm_reply
+from deskbot_server.service.application.face_registration import register_face_for_device
+from deskbot_server.utils.device_data import load_llm_system_prompt, resolve_json_path, save_llm_system_prompt
+from deskbot_server.utils.util import pcm_to_wav_bytes
+from deskbot_server.vision.camera_face_tune import apply_camera_face_tune
+from deskbot_server.web.flaskish import (
+    FlaskishAPIRoute,
+    current_user,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from deskbot_server.web.helpers import (
     ALLOWED_LLM_ROLES,
     beijing_time_str,
@@ -62,7 +57,6 @@ from deskbot_server.web.helpers import (
 )
 from deskbot_server.web.session_device import get_current_device_id
 
-bp = Blueprint("debug", __name__)
 logger = logging.getLogger("deskbot-server")
 
 
@@ -83,8 +77,8 @@ def _is_consumer_api(path: str) -> bool:
     return path in _CONSUMER_API_PATHS or any(path.startswith(p) for p in _CONSUMER_API_PREFIXES)
 
 
-@bp.before_request
 def _require_developer_for_debug():
+    """Flask before_request 等价逻辑；消费侧白名单路径放行。"""
     path = request.path or ""
     if path == "/health":
         return None
@@ -98,6 +92,23 @@ def _require_developer_for_debug():
         return jsonify({"ok": False, "error": "需要开发者权限"}), 403
     flash("需要开发者权限", "error")
     return redirect(url_for("app2c.home"))
+
+
+class _DebugAPIRouter(APIRouter):
+    """在每个路由入口套用开发者权限守卫（消费侧 API 白名单除外）。"""
+
+    def add_api_route(self, path: str, endpoint, **kwargs):  # type: ignore[override]
+        @wraps(endpoint)
+        def guarded(*args, **kw):
+            blocked = _require_developer_for_debug()
+            if blocked is not None:
+                return blocked
+            return endpoint(*args, **kw)
+
+        return super().add_api_route(path, guarded, **kwargs)
+
+
+router = _DebugAPIRouter(route_class=FlaskishAPIRoute, tags=["debug"])
 
 
 def _deny_foreign_device(device_id: str):
@@ -143,37 +154,21 @@ def _optional_device_id():
     return did, None
 
 
-@bp.get("/health")
-def health_ok():
-    return ("ok", 200)
-
-
-@bp.get("/api/debug/ws_token")
+@router.get("/api/debug/ws_token")
 def api_debug_ws_token():
     """已登录用户获取调试台 WebSocket 令牌（默认 7 天有效）。"""
     info = issue_debug_ws_token(current_user.id)
-    return jsonify(
-        {
-            "ok": True,
-            "token": info.token,
-            "expires_in": info.expires_in,
-        }
-    )
+    return jsonify({"ok": True, "token": info.token, "expires_in": info.expires_in})
 
 
-@bp.get("/debug/users")
+@router.get("/debug/users")
 @require_developer
 def debug_users():
     rows = list_users()
-    return render_template(
-        "debug_users.html",
-        active_nav="users",
-        users=rows,
-        current_user_id=current_user.id,
-    )
+    return render_template("debug_users.html", active_nav="users", users=rows, current_user_id=current_user.id)
 
 
-@bp.post("/api/debug/users/<user_id>/developer")
+@router.post("/api/debug/users/{user_id}/developer")
 @require_developer
 def api_set_user_developer(user_id: str):
     payload = request.get_json(silent=True) or {}
@@ -198,7 +193,7 @@ def api_set_user_developer(user_id: str):
     )
 
 
-@bp.get("/debug/devices")
+@router.get("/debug/devices")
 def debug_devices():
     from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
     from deskbot_server.pb.shapes import _default_mouth_fallback_shape, default_face_circles
@@ -212,15 +207,12 @@ def debug_devices():
             "eye_r": fc.get("eye_r") or [],
             "mouth": mouth_fb,
             "extra": [],
-        },
+        }
     }
     from deskbot_server.auth.device_service import list_devices_for_user
 
     owned = list_devices_for_user(current_user.id)
-    owned_device_rows = [
-        {"device_id": d.device_id, "display_name": d.display_name or d.device_id}
-        for d in owned
-    ]
+    owned_device_rows = [{"device_id": d.device_id, "display_name": d.display_name or d.device_id} for d in owned]
     current = get_current_device_id()
     owned_ids = {d.device_id for d in owned}
     if current and current not in owned_ids:
@@ -243,10 +235,10 @@ def debug_devices():
     )
 
 
-@bp.get("/debug/tts")
+@router.get("/debug/tts")
 def debug_tts():
-    from deskbot_server.tts.doubao import load_doubao_tts_config
-    from deskbot_server.tts.speakers import list_doubao_tts_speaker_presets
+    from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config
+    from deskbot_server.infrastructure.tts.speakers import list_doubao_tts_speaker_presets
 
     cfg = load_doubao_tts_config()
     initial = {
@@ -260,16 +252,13 @@ def debug_tts():
         "audio_format": cfg.audio_format,
     }
     return render_template(
-        "debug_tts.html",
-        active_nav="tts",
-        initial_config=initial,
-        speaker_presets=list_doubao_tts_speaker_presets(),
+        "debug_tts.html", active_nav="tts", initial_config=initial, speaker_presets=list_doubao_tts_speaker_presets()
     )
 
 
-@bp.get("/api/doubao_tts/speakers")
+@router.get("/api/doubao_tts/speakers")
 def api_doubao_tts_speakers():
-    from deskbot_server.tts.speakers import (
+    from deskbot_server.infrastructure.tts.speakers import (
         list_doubao_tts_consumer_speaker_presets,
         list_doubao_tts_speaker_presets,
     )
@@ -281,18 +270,18 @@ def api_doubao_tts_speakers():
     return jsonify({"ok": True, "speakers": speakers, "t": time.time()})
 
 
-@bp.get("/api/doubao_tts/config")
+@router.get("/api/doubao_tts/config")
 def api_doubao_tts_config_get():
-    from deskbot_server.tts.doubao import load_doubao_tts_config
+    from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config
 
     cfg = load_doubao_tts_config()
     return jsonify({"ok": True, "config": cfg.masked(), "t": time.time()})
 
 
-@bp.post("/api/doubao_tts/config")
+@router.post("/api/doubao_tts/config")
 def api_doubao_tts_config_post():
-    from deskbot_server.tts.doubao import load_doubao_tts_config, resolve_optional_secret
-    from deskbot_server.tts.env_store import save_doubao_tts_env
+    from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config, resolve_optional_secret
+    from deskbot_server.infrastructure.tts.env_store import save_doubao_tts_env
 
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -311,7 +300,7 @@ def api_doubao_tts_config_post():
 
 
 def _doubao_cfg_from_payload(payload: dict):
-    from deskbot_server.tts.doubao import (
+    from deskbot_server.infrastructure.tts.doubao import (
         DoubaoTtsConfig,
         load_doubao_tts_config,
         resolve_optional_secret,
@@ -336,11 +325,8 @@ def _doubao_cfg_from_payload(payload: dict):
 
 
 def _doubao_voice_clone_cfg_from_payload(payload: dict):
-    from deskbot_server.tts.doubao import load_doubao_tts_config, resolve_optional_secret
-    from deskbot_server.tts.voice_clone import (
-        DEFAULT_VOICE_CLONE_RESOURCE_ID,
-        DoubaoVoiceCloneConfig,
-    )
+    from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config, resolve_optional_secret
+    from deskbot_server.infrastructure.tts.voice_clone import DEFAULT_VOICE_CLONE_RESOURCE_ID, DoubaoVoiceCloneConfig
 
     base = load_doubao_tts_config()
     app_key = resolve_optional_secret(payload.get("app_id"), base.app_id)
@@ -354,11 +340,7 @@ def _doubao_voice_clone_cfg_from_payload(payload: dict):
     clone_url = str(payload.get("voice_clone_url") or base.voice_clone_url).strip()
     status_url = str(payload.get("voice_status_url") or base.voice_status_url).strip()
     return DoubaoVoiceCloneConfig(
-        app_key=app_key,
-        access_key=access_key,
-        resource_id=resource_id,
-        clone_url=clone_url,
-        status_url=status_url,
+        app_key=app_key, access_key=access_key, resource_id=resource_id, clone_url=clone_url, status_url=status_url
     )
 
 
@@ -387,9 +369,9 @@ def _voice_clone_payload(result) -> dict:
     return {"ok": True, **payload, "t": time.time()}
 
 
-@bp.post("/api/doubao_tts/synthesize")
+@router.post("/api/doubao_tts/synthesize")
 def api_doubao_tts_synthesize():
-    from deskbot_server.tts.doubao import synthesize_doubao_tts
+    from deskbot_server.infrastructure.tts.doubao import synthesize_doubao_tts
 
     payload = request.get_json(force=True, silent=True) or {}
     text = str(payload.get("text") or "").strip()
@@ -427,9 +409,9 @@ def api_doubao_tts_synthesize():
     )
 
 
-@bp.post("/api/doubao_tts/voice-clone")
+@router.post("/api/doubao_tts/voice-clone")
 def api_doubao_tts_voice_clone():
-    from deskbot_server.tts.voice_clone import clone_doubao_voice, custom_speaker_id_from_name
+    from deskbot_server.infrastructure.tts.voice_clone import clone_doubao_voice, custom_speaker_id_from_name
 
     upload = request.files.get("audio") or request.files.get("file")
     if upload is None or not upload.filename:
@@ -444,12 +426,9 @@ def api_doubao_tts_voice_clone():
     voice_name = str(form.get("voice_name") or form.get("display_name") or "").strip()
     if not voice_name:
         return jsonify({"ok": False, "error": "请填写音色名称"}), 400
-    custom_speaker_id = str(form.get("custom_speaker_id") or "").strip() or custom_speaker_id_from_name(
-        voice_name
-    )
+    custom_speaker_id = str(form.get("custom_speaker_id") or "").strip() or custom_speaker_id_from_name(voice_name)
     audio_format = str(form.get("audio_format") or "").strip().lower() or _audio_format_from_upload(
-        upload.filename or "",
-        upload.content_type or "",
+        upload.filename or "", upload.content_type or ""
     )
     if not audio_format:
         return jsonify({"ok": False, "error": "无法识别音频格式，请上传 wav/mp3/ogg/m4a/aac/pcm"}), 400
@@ -457,7 +436,7 @@ def api_doubao_tts_voice_clone():
         language = int(form.get("language") or 0)
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "language 必须是数字枚举"}), 400
-    cfg = _doubao_voice_clone_cfg_from_payload(dict(form))
+    cfg = _doubao_voice_clone_cfg_from_payload(form)
     try:
         result = clone_doubao_voice(
             cfg,
@@ -476,9 +455,9 @@ def api_doubao_tts_voice_clone():
     return jsonify(_voice_clone_payload(result))
 
 
-@bp.post("/api/doubao_tts/voice-clone/status")
+@router.post("/api/doubao_tts/voice-clone/status")
 def api_doubao_tts_voice_clone_status():
-    from deskbot_server.tts.voice_clone import get_doubao_voice_clone_status
+    from deskbot_server.infrastructure.tts.voice_clone import get_doubao_voice_clone_status
 
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
@@ -497,18 +476,15 @@ def api_doubao_tts_voice_clone_status():
     return jsonify(_voice_clone_payload(result))
 
 
-@bp.get("/debug/llm")
+@router.get("/debug/llm")
 def debug_llm():
     from deskbot_server.auth.device_service import list_devices_for_user
-    from deskbot_server.llm.utils import llm_pb_plan_prompt_appendix
+    from deskbot_server.infrastructure.llm.utils import llm_pb_plan_prompt_appendix
 
     cfg = load_config()
     llm_cfg = cfg.get("llm", {}) or {}
     owned = list_devices_for_user(current_user.id)
-    owned_device_rows = [
-        {"device_id": d.device_id, "display_name": d.display_name or d.device_id}
-        for d in owned
-    ]
+    owned_device_rows = [{"device_id": d.device_id, "display_name": d.display_name or d.device_id} for d in owned]
     current = get_current_device_id()
     owned_ids = {d.device_id for d in owned}
     if current and current not in owned_ids:
@@ -527,7 +503,7 @@ def debug_llm():
     )
 
 
-@bp.get("/debug/simulation")
+@router.get("/debug/simulation")
 def debug_simulation():
     from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
     from deskbot_server.pb.shapes import default_face_circles
@@ -545,7 +521,7 @@ def debug_simulation():
     )
 
 
-@bp.post("/api/tts/phoneme_tts")
+@router.post("/api/tts/phoneme_tts")
 def api_tts_phoneme_tts():
     """豆包 TTS + 音素分片，供仿真调试等页面使用。"""
     from deskbot_server.core.settings import AppSettings
@@ -568,14 +544,7 @@ def api_tts_phoneme_tts():
     for seg in segs:
         chunk = bytes(seg.pcm or b"")
         pcm.extend(chunk)
-        display.append(
-            {
-                "phoneme_id": seg.phoneme_id,
-                "phoneme": seg.phoneme,
-                "ms": seg.ms,
-                "pcm_bytes": len(chunk),
-            }
-        )
+        display.append({"phoneme_id": seg.phoneme_id, "phoneme": seg.phoneme, "ms": seg.ms, "pcm_bytes": len(chunk)})
     sr = int(sr or sr_cfg or 24000)
     wav = pcm_to_wav_bytes(bytes(pcm), sr)
     return jsonify(
@@ -590,7 +559,7 @@ def api_tts_phoneme_tts():
     )
 
 
-@bp.get("/api/llm/system_prompt")
+@router.get("/api/llm/system_prompt")
 def api_llm_system_prompt_get():
     device_id, err = _require_device_id()
     if err:
@@ -606,7 +575,7 @@ def api_llm_system_prompt_get():
     )
 
 
-@bp.post("/api/llm/system_prompt")
+@router.post("/api/llm/system_prompt")
 def api_llm_system_prompt_post():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -632,7 +601,7 @@ def api_llm_system_prompt_post():
     )
 
 
-@bp.post("/api/llm/chat")
+@router.post("/api/llm/chat")
 def llm_chat():
     payload = request.get_json(force=True, silent=True) or {}
     user_text = str(payload.get("text") or "").strip()
@@ -658,7 +627,7 @@ def llm_chat():
     else:
         system_prompt = default_system_prompt
 
-    from deskbot_server.llm.runtime import resolve_llm_config
+    from deskbot_server.infrastructure.llm.runtime import resolve_llm_config
 
     try:
         llm_runtime_cfg = resolve_llm_config(debug_device_id or None)
@@ -675,14 +644,9 @@ def llm_chat():
             400,
         )
 
-    sys_content = (
-        f"{system_prompt}\n当前时间是: {beijing_time_str()}（北京时间，东八区）"
-    )
-    from deskbot_server.llm.user_message import build_llm_user_message
-    from deskbot_server.llm.utils import (
-        llm_device_screen_appendix,
-        llm_static_context_prompt_appendix,
-    )
+    sys_content = f"{system_prompt}\n当前时间是: {beijing_time_str()}（北京时间，东八区）"
+    from deskbot_server.infrastructure.llm.user_message import build_llm_user_message
+    from deskbot_server.infrastructure.llm.utils import llm_device_screen_appendix, llm_static_context_prompt_appendix
 
     sys_content += "\n" + llm_device_screen_appendix(debug_device_id or None)
     px = llm_pb_scenes_prompt_appendix(device_id=debug_device_id or None)
@@ -699,12 +663,7 @@ def llm_chat():
     elif isinstance(raw_ctx, str) and raw_ctx.strip():
         device_context = raw_ctx.strip()
 
-    messages = [
-        {
-            "role": "system",
-            "content": sys_content,
-        }
-    ]
+    messages = [{"role": "system", "content": sys_content}]
     for item in raw_history:
         if not isinstance(item, dict):
             continue
@@ -719,15 +678,13 @@ def llm_chat():
         {
             "role": "user",
             "content": build_llm_user_message(
-                user_text,
-                device_id=debug_device_id or None,
-                device_context=device_context,
+                user_text, device_id=debug_device_id or None, device_context=device_context
             ),
         }
     )
 
     try:
-        from deskbot_server.llm.runtime import chat_completion
+        from deskbot_server.infrastructure.llm.runtime import chat_completion
 
         t0 = time.monotonic()
         raw, meta = chat_completion(
@@ -821,7 +778,7 @@ def _normalize_generated_design(raw: dict) -> dict:
     return design
 
 
-@bp.post("/api/face_design/generate")
+@router.post("/api/face_design/generate")
 def api_face_design_generate():
     device_id, err = _optional_device_id()
     if err:
@@ -853,7 +810,7 @@ def api_face_design_generate():
     )
 
     try:
-        from deskbot_server.llm.runtime import chat_completion
+        from deskbot_server.infrastructure.llm.runtime import chat_completion
 
         t0 = time.monotonic()
         raw, meta = chat_completion(
@@ -887,66 +844,7 @@ def api_face_design_generate():
     )
 
 
-@bp.get("/api/servo_config")
-def api_servo_config_get():
-    device_id, err = _require_device_id()
-    if err:
-        return err
-    cfg_path = resolve_json_path(SERVO_CFG_FILE, device_id)
-    try:
-        cfg = load_servo_cfg_file(device_id=device_id)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
-    if cfg is None:
-        return jsonify(
-            {
-                "ok": True,
-                "exists": False,
-                "file": os.path.basename(cfg_path),
-                "device_id": device_id,
-                "t": time.time(),
-            }
-        )
-    return jsonify(
-        {
-            "ok": True,
-            "exists": True,
-            "config": cfg,
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
-    )
-
-
-@bp.post("/api/servo_config")
-def api_servo_config_post():
-    device_id, err = _require_device_id()
-    if err:
-        return err
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify({"ok": False, "error": "body must be a JSON object", "t": time.time()}), 400
-    cfg_path = resolve_json_path(SERVO_CFG_FILE, device_id)
-    try:
-        cfg = normalize_servo_document(payload, require_presets=True)
-        save_servo_cfg_file(cfg, device_id=device_id)
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 400
-    except OSError as exc:
-        return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
-    return jsonify(
-        {
-            "ok": True,
-            "config": cfg,
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
-    )
-
-
-@bp.get("/api/camera_face_config")
+@router.get("/api/camera_face_config")
 def api_camera_face_config_get():
     device_id, err = _require_device_id()
     if err:
@@ -975,7 +873,7 @@ def api_camera_face_config_get():
     )
 
 
-@bp.post("/api/camera_face_config")
+@router.post("/api/camera_face_config")
 def api_camera_face_config_post():
     device_id, err = _require_device_id()
     if err:
@@ -1004,7 +902,7 @@ def api_camera_face_config_post():
     )
 
 
-@bp.get("/api/face_profiles")
+@router.get("/api/face_profiles")
 def api_face_profiles_get():
     device_id, err = _require_device_id()
     if err:
@@ -1015,17 +913,11 @@ def api_face_profiles_get():
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
     return jsonify(
-        {
-            "ok": True,
-            "profiles": profiles,
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
+        {"ok": True, "profiles": profiles, "file": os.path.basename(cfg_path), "device_id": device_id, "t": time.time()}
     )
 
 
-@bp.post("/api/face_profiles/register")
+@router.post("/api/face_profiles/register")
 def api_face_profiles_register():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -1056,15 +948,14 @@ def api_face_profiles_register():
             "file": os.path.basename(resolve_json_path(FACE_PROFILES_FILE, device_id)),
             "device_id": device_id,
             "hint": (
-                "档案已写入（InsightFace 512 维）；请 ESP32 重连 /asr_chat 后正对镜头识别。"
-                "旧几何档案需重新「保存人名」"
+                "档案已写入（InsightFace 512 维）；请 ESP32 重连 /asr_chat 后正对镜头识别。旧几何档案需重新「保存人名」"
             ),
             "t": time.time(),
         }
     )
 
 
-@bp.get("/api/user_memory")
+@router.get("/api/user_memory")
 def api_user_memory_get():
     device_id, err = _require_device_id()
     if err:
@@ -1075,17 +966,11 @@ def api_user_memory_get():
     except (OSError, ValueError) as exc:
         return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
     return jsonify(
-        {
-            "ok": True,
-            "entries": entries,
-            "file": os.path.basename(cfg_path),
-            "device_id": device_id,
-            "t": time.time(),
-        }
+        {"ok": True, "entries": entries, "file": os.path.basename(cfg_path), "device_id": device_id, "t": time.time()}
     )
 
 
-@bp.post("/api/user_memory")
+@router.post("/api/user_memory")
 def api_user_memory_post():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -1103,7 +988,7 @@ def api_user_memory_post():
     return jsonify({"ok": True, "entry": entry, "t": time.time()})
 
 
-@bp.delete("/api/user_memory/<entry_id>")
+@router.delete("/api/user_memory/{entry_id}")
 def api_user_memory_delete(entry_id: str):
     device_id, err = _require_device_id()
     if err:
@@ -1117,27 +1002,17 @@ def api_user_memory_delete(entry_id: str):
     return jsonify({"ok": True, "id": entry_id, "t": time.time()})
 
 
-@bp.get("/api/face_expr_scenes")
+@router.get("/api/face_expr_scenes")
 def api_face_expr_scenes_get():
     device_id = _effective_device_id(required=False)
     try:
-        rows = load_face_expr_scenes_file(
-            seed_if_missing=True,
-            device_id=device_id or None,
-        ) or []
+        rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id or None) or []
     except (OSError, ValueError) as exc:
         return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
-    return jsonify(
-        {
-            "ok": True,
-            "scenes": rows,
-            "device_id": device_id or None,
-            "t": time.time(),
-        }
-    )
+    return jsonify({"ok": True, "scenes": rows, "device_id": device_id or None, "t": time.time()})
 
 
-@bp.get("/api/scene_playbooks")
+@router.get("/api/scene_playbooks")
 def api_scene_playbooks_get():
     device_id, err = _require_device_id()
     if err:
@@ -1159,7 +1034,7 @@ def api_scene_playbooks_get():
     )
 
 
-@bp.post("/api/scene_playbooks")
+@router.post("/api/scene_playbooks")
 def api_scene_playbooks_post():
     device_id, err = _require_device_id()
     if err:
@@ -1174,23 +1049,14 @@ def api_scene_playbooks_post():
     except OSError as exc:
         return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
     missing = collect_missing_servo_presets(rows, device_id=device_id)
-    out = {
-        "ok": True,
-        "config": rows,
-        "file": os.path.basename(cfg_path),
-        "device_id": device_id,
-        "t": time.time(),
-    }
+    out = {"ok": True, "config": rows, "file": os.path.basename(cfg_path), "device_id": device_id, "t": time.time()}
     if missing:
         out["missing_servo_presets"] = missing
-        out["warning"] = (
-            "部分 pb 包引用的舵机 preset 未写入 servo.json，设备下发时会跳过："
-            + ", ".join(missing)
-        )
+        out["warning"] = "部分 pb 包引用的舵机 preset 未写入 servo.json，设备下发时会跳过：" + ", ".join(missing)
     return jsonify(out)
 
 
-@bp.post("/api/scene_playbook/export_plan")
+@router.post("/api/scene_playbook/export_plan")
 def api_scene_playbook_export_plan():
     """导出单条编排 + 展开后的 LLM 计划（供排查）。"""
     device_id, err = _require_device_id()
@@ -1203,20 +1069,13 @@ def api_scene_playbook_export_plan():
         pb = normalize_playbook(payload.get("playbook"))
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 400
-    from deskbot_server.scene_playbook_runner import playbook_debug_snapshot
+    from deskbot_server.service.scene_playbook_runner import playbook_debug_snapshot
 
     snap = playbook_debug_snapshot(pb, device_id=device_id)
-    return jsonify(
-        {
-            "ok": True,
-            "device_id": device_id,
-            **snap,
-            "t": time.time(),
-        }
-    )
+    return jsonify({"ok": True, "device_id": device_id, **snap, "t": time.time()})
 
 
-@bp.get("/api/health")
+@router.get("/api/health")
 def health():
     cfg = load_config()
     deskbot_host = os.environ.get("DESKBOT_SERVER_HOST") or cfg.get("server", {}).get("host", "127.0.0.1")
@@ -1224,7 +1083,7 @@ def health():
         deskbot_host = "127.0.0.1"
     deskbot_port = int(os.environ.get("DESKBOT_SERVER_PORT") or cfg.get("server", {}).get("port", 9000))
 
-    from deskbot_server.tts.doubao import load_doubao_tts_config
+    from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config
 
     tts_cfg = load_doubao_tts_config()
     tts_provider = str((cfg.get("tts") or {}).get("provider") or "doubao").strip().lower()
@@ -1239,3 +1098,37 @@ def health():
             "tts_target": tts_cfg.ws_url,
         }
     )
+
+
+ENDPOINTS = {
+    "debug.api_debug_ws_token": "/api/debug/ws_token",
+    "debug.debug_users": "/debug/users",
+    "debug.api_set_user_developer": "/api/debug/users/{user_id}/developer",
+    "debug.debug_devices": "/debug/devices",
+    "debug.debug_tts": "/debug/tts",
+    "debug.api_doubao_tts_speakers": "/api/doubao_tts/speakers",
+    "debug.api_doubao_tts_config_get": "/api/doubao_tts/config",
+    "debug.api_doubao_tts_config_post": "/api/doubao_tts/config",
+    "debug.api_doubao_tts_synthesize": "/api/doubao_tts/synthesize",
+    "debug.api_doubao_tts_voice_clone": "/api/doubao_tts/voice-clone",
+    "debug.api_doubao_tts_voice_clone_status": "/api/doubao_tts/voice-clone/status",
+    "debug.debug_llm": "/debug/llm",
+    "debug.debug_simulation": "/debug/simulation",
+    "debug.api_tts_phoneme_tts": "/api/tts/phoneme_tts",
+    "debug.api_llm_system_prompt_get": "/api/llm/system_prompt",
+    "debug.api_llm_system_prompt_post": "/api/llm/system_prompt",
+    "debug.llm_chat": "/api/llm/chat",
+    "debug.api_face_design_generate": "/api/face_design/generate",
+    "debug.api_camera_face_config_get": "/api/camera_face_config",
+    "debug.api_camera_face_config_post": "/api/camera_face_config",
+    "debug.api_face_profiles_get": "/api/face_profiles",
+    "debug.api_face_profiles_register": "/api/face_profiles/register",
+    "debug.api_user_memory_get": "/api/user_memory",
+    "debug.api_user_memory_post": "/api/user_memory",
+    "debug.api_user_memory_delete": "/api/user_memory/{entry_id}",
+    "debug.api_face_expr_scenes_get": "/api/face_expr_scenes",
+    "debug.api_scene_playbooks_get": "/api/scene_playbooks",
+    "debug.api_scene_playbooks_post": "/api/scene_playbooks",
+    "debug.api_scene_playbook_export_plan": "/api/scene_playbook/export_plan",
+    "debug.health": "/api/health",
+}

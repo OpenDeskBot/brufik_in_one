@@ -1,7 +1,8 @@
 """doubao_words_phoneme 单元测试。"""
+
 from __future__ import annotations
 
-from deskbot_server.tts.doubao_words_phoneme import (
+from deskbot_server.infrastructure.tts.doubao_words_phoneme import (
     align_doubao_words,
     doubao_words_to_pb_segments,
     map_arpa_to_mouth_phone,
@@ -60,9 +61,7 @@ def test_chinese_word_pinyin_split():
 
 
 def test_snake_case_time_fields():
-    words = [
-        {"word": "Hi", "start_time": 0.1, "end_time": 0.4},
-    ]
+    words = [{"word": "Hi", "start_time": 0.1, "end_time": 0.4}]
     segs = doubao_words_to_pb_segments(words)
     assert len(segs) == 2
     assert segs[0]["phoneme"] in ("h", "a", "i")

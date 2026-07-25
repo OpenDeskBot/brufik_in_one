@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WIFI_PROVISION_CPP = REPO_ROOT / "hardware" / "firmware" / "wifi_provision.cpp"
 
@@ -31,4 +30,4 @@ def test_wifi_provision_http_api_exposes_status_and_captive_fallback():
     assert '\\"ap_ip\\"' in src
     assert '\\"device_id\\"' in src
     assert "server.onNotFound" in src
-    assert "sendHeader(\"Location\", \"/\"" in src
+    assert 'sendHeader("Location", "/"' in src

@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 
 def test_webfetch_ok():
-    from deskbot_server.web_tools import webfetch
+    from deskbot_server.service.web_tools import webfetch
 
     class _Resp:
         status = 200
@@ -26,13 +26,10 @@ def test_webfetch_ok():
 
 
 def test_websearch_returns_structure():
-    from deskbot_server.web_tools import websearch
+    from deskbot_server.service.web_tools import websearch
 
     payload = '{"AbstractText":"测试摘要","Heading":"标题","RelatedTopics":[]}'.encode()
-    with patch(
-        "deskbot_server.web_tools._http_get",
-        return_value=(200, "application/json", payload),
-    ):
+    with patch("deskbot_server.web_tools._http_get", return_value=(200, "application/json", payload)):
         out = websearch("测试")
     assert out["ok"] is True
     assert out["results"]

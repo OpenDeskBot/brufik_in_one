@@ -36,9 +36,7 @@ def test_parse_color_to_rgb565():
 
 
 def test_normalize_primitive_for_wire_c_rgb565():
-    wired = normalize_primitive_for_wire(
-        {"shape": "circle", "x": 1, "y": 2, "r": 3, "color": "#F80"}
-    )
+    wired = normalize_primitive_for_wire({"shape": "circle", "x": 1, "y": 2, "r": 3, "color": "#F80"})
     assert "color" not in wired
     assert isinstance(wired["c"], int)
     assert wired["c"] == rgb888_to_rgb565(0xFF, 0x88, 0x00)
@@ -52,16 +50,7 @@ def test_pb_json_messages_anim_is_array():
         "anim": [
             make_anim_item(
                 {
-                    "mouth": [
-                        {
-                            "shape": "rect",
-                            "x": 1,
-                            "y": 2,
-                            "w": 3,
-                            "h": 4,
-                            "color": "red",
-                        }
-                    ],
+                    "mouth": [{"shape": "rect", "x": 1, "y": 2, "w": 3, "h": 4, "color": "red"}],
                     "nose": [],
                     "eye_l": [],
                     "eye_r": [],
@@ -73,12 +62,7 @@ def test_pb_json_messages_anim_is_array():
         ],
     }
     pairs = pb_json_messages(
-        pb_req="abc",
-        sample_rate=24000,
-        fmt="s16le",
-        channels=1,
-        anim_rows=[row],
-        pcm_per_idx=[b"\x00" * 4800],
+        pb_req="abc", sample_rate=24000, fmt="s16le", channels=1, anim_rows=[row], pcm_per_idx=[b"\x00" * 4800]
     )
     msg, bins = pairs[0]
     assert msg["type"] == "pb_single"
@@ -101,12 +85,7 @@ def test_pb_json_messages_servo_is_array():
         "servo": [{"xm": 1, "ym": 1, "x": 0, "y": 10, "ms": 200}],
     }
     msg, _bins = pb_json_messages(
-        pb_req="abc",
-        sample_rate=24000,
-        fmt="s16le",
-        channels=1,
-        anim_rows=[row],
-        pcm_per_idx=[b""],
+        pb_req="abc", sample_rate=24000, fmt="s16le", channels=1, anim_rows=[row], pcm_per_idx=[b""]
     )[0]
     assert isinstance(msg["servo"], list)
     assert msg["servo"][0]["ms"] == 200
@@ -119,16 +98,9 @@ def test_merge_pb_subchunks_respects_max_ms():
     pcm = []
     for i in range(20):
         ms = 113
-        rows.append(
-            {
-                "chunk_ms": ms,
-                "anim": [make_anim_item(_elements(), ms, phoneme=f"p{i}")],
-            }
-        )
+        rows.append({"chunk_ms": ms, "anim": [make_anim_item(_elements(), ms, phoneme=f"p{i}")]})
         pcm.append(b"\x00" * (ms * 48))
-    merged_rows, merged_pcm = merge_pb_subchunks(
-        rows, pcm, sample_rate=24000, max_chunk_ms=PB_CHUNK_MS_MAX
-    )
+    merged_rows, merged_pcm = merge_pb_subchunks(rows, pcm, sample_rate=24000, max_chunk_ms=PB_CHUNK_MS_MAX)
     assert len(merged_rows) < len(rows)
     assert all(int(r["chunk_ms"]) <= PB_CHUNK_MS_MAX for r in merged_rows)
     assert sum(len(p) for p in merged_pcm) == sum(len(x) for x in pcm)
@@ -161,12 +133,7 @@ def test_pb_json_messages_volume_on_chain_types():
 def test_pb_json_messages_omits_volume_when_unset():
     row = {"chunk_ms": 50, "anim": [make_anim_item(_elements(), 50)]}
     msg, _ = pb_json_messages(
-        pb_req="req1",
-        sample_rate=24000,
-        fmt="s16le",
-        channels=1,
-        anim_rows=[row],
-        pcm_per_idx=[b""],
+        pb_req="req1", sample_rate=24000, fmt="s16le", channels=1, anim_rows=[row], pcm_per_idx=[b""]
     )[0]
     assert "volume" not in msg
 
@@ -184,12 +151,7 @@ def test_pb_json_messages_assets_binary_order():
         "_assets": [jpeg],
     }
     msg, bins = pb_json_messages(
-        pb_req="abc",
-        sample_rate=24000,
-        fmt="s16le",
-        channels=1,
-        anim_rows=[row],
-        pcm_per_idx=[b""],
+        pb_req="abc", sample_rate=24000, fmt="s16le", channels=1, anim_rows=[row], pcm_per_idx=[b""]
     )[0]
     assert msg["assets"][0]["next_bin_len"] == len(jpeg)
     assert bins == [jpeg]

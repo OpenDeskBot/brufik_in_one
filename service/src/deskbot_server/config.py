@@ -1,4 +1,5 @@
 """配置加载：YAML + LLM system prompt 外置文件。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from deskbot_server.paths import DEFAULT_CONFIG_PATH
+from deskbot_server.utils.paths import DEFAULT_CONFIG_PATH
 
 
 def load_config(path: str | None = None) -> dict[str, Any]:

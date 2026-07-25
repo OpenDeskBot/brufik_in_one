@@ -19,11 +19,7 @@ def parse_pb_mic(raw: Any) -> Optional[PbMicMode]:
     return None
 
 
-def build_mic_signal_pb(
-    *,
-    mic: PbMicMode = "open",
-    req: str | None = None,
-) -> dict[str, Any]:
+def build_mic_signal_pb(*, mic: PbMicMode = "open", req: str | None = None) -> dict[str, Any]:
     """空 pb_single：仅 ``mic`` 提示，不含 anim/servo/audio。"""
     mode = parse_pb_mic(mic) or "open"
     msg: dict[str, Any] = {

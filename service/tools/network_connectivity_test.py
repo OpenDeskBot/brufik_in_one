@@ -197,12 +197,11 @@ async def _mock_uplink_camera(
     jpeg: bytes,
     stats: dict[str, Any],
 ) -> None:
-    """经 /camera_uplink 模拟 JPEG 分块上行（与固件一致：裸 binary）。"""
+    """经 /camera_uplink 模拟 JPEG 上行（JSON next_bin_len + binary）。"""
     sent = 0
     failed = 0
     interval = 1.0 / max(0.5, fps)
     t_end = time.monotonic() + duration_sec
-    chunk = 512
     async with websockets.connect(ws_url, max_size=None, open_timeout=15) as ws:
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -213,13 +212,20 @@ async def _mock_uplink_camera(
                     break
             except asyncio.TimeoutError:
                 break
+        seq = 0
         while time.monotonic() < t_end:
             try:
-                off = 0
-                while off < len(jpeg):
-                    n = min(chunk, len(jpeg) - off)
-                    await ws.send(jpeg[off : off + n])
-                    off += n
+                seq += 1
+                header = json.dumps(
+                    {
+                        "type": "camera_frame",
+                        "codec": "jpeg",
+                        "next_bin_len": len(jpeg),
+                        "seq": seq,
+                    }
+                )
+                await ws.send(header)
+                await ws.send(jpeg)
                 sent += 1
             except Exception as exc:
                 failed += 1

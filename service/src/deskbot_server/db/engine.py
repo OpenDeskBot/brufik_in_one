@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from deskbot_server.paths import DATA_DIR
+from deskbot_server.utils.paths import DATA_DIR
 
 _engine = None
 _session_factory: scoped_session[Session] | None = None

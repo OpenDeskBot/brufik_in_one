@@ -10,11 +10,9 @@ from collections import deque
 from typing import Any
 
 from deskbot_server.constants import pb_max_chunk_ms_for_pcm
-from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
 from deskbot_server.pb.shapes import (
     PB_ACTION_REPLACE,
     PB_LEVEL_TASK,
-    apply_pb_device_hints_to_frames,
     attach_pb_device_hints,
     normalize_anim_list_for_wire,
 )
@@ -33,17 +31,9 @@ if PB_CHUNK_MS_MAX < _PB_CHUNK_MS_USER:
     )
 
 
-def make_anim_item(
-    elements: dict[str, Any],
-    ms: int,
-    *,
-    phoneme: str | None = None,
-) -> dict[str, Any]:
+def make_anim_item(elements: dict[str, Any], ms: int, *, phoneme: str | None = None) -> dict[str, Any]:
     """构造 ``anim[]`` 单项：``{ elements, ms, phoneme? }``。"""
-    item: dict[str, Any] = {
-        "elements": copy.deepcopy(elements),
-        "ms": max(1, int(ms)),
-    }
+    item: dict[str, Any] = {"elements": copy.deepcopy(elements), "ms": max(1, int(ms))}
     ph = str(phoneme or "").strip()
     if ph:
         item["phoneme"] = ph
@@ -85,11 +75,7 @@ def normalize_row_anim_list(row: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def merge_pb_subchunks(
-    rows: list[dict[str, Any]],
-    pcm_list: list[bytes],
-    *,
-    sample_rate: int,
-    max_chunk_ms: int = PB_CHUNK_MS_MAX,
+    rows: list[dict[str, Any]], pcm_list: list[bytes], *, sample_rate: int, max_chunk_ms: int = PB_CHUNK_MS_MAX
 ) -> tuple[list[dict[str, Any]], list[bytes]]:
     """将细粒度分片合并为 ``chunk_ms <= max_chunk_ms`` 的 pb 行。"""
     if not rows:
@@ -109,10 +95,7 @@ def merge_pb_subchunks(
             batch_pcm = b""
             batch_ms = 0
             return
-        row: dict[str, Any] = {
-            "chunk_ms": batch_ms,
-            "anim": batch_anim,
-        }
+        row: dict[str, Any] = {"chunk_ms": batch_ms, "anim": batch_anim}
         if batch_servos:
             row["servo"] = batch_servos
         merged_rows.append(row)
@@ -155,10 +138,7 @@ def merge_pb_subchunks(
 
         if row_ms > max_chunk_ms:
             _flush()
-            one_row: dict[str, Any] = {
-                "chunk_ms": row_ms,
-                "anim": anim_items,
-            }
+            one_row: dict[str, Any] = {"chunk_ms": row_ms, "anim": anim_items}
             if servo_items:
                 one_row["servo"] = servo_items
             merged_rows.append(one_row)
@@ -180,9 +160,7 @@ def merge_pb_subchunks(
         # 纯表情/场景链：PCM 故意为空，勿按 chunk_ms 填静音（否则固件 expect BIN）
         if not raw_pcm:
             continue
-        aligned, cms2 = align_pcm_s16le_mono_to_chunk_ms(
-            raw_pcm, int(row.get("chunk_ms") or 0), sample_rate
-        )
+        aligned, cms2 = align_pcm_s16le_mono_to_chunk_ms(raw_pcm, int(row.get("chunk_ms") or 0), sample_rate)
         merged_pcm[i] = aligned
         if cms2 != int(row.get("chunk_ms") or 0):
             row["chunk_ms"] = cms2
@@ -200,9 +178,7 @@ def _silence_phoneme_seg(ms: int, sample_rate: int) -> dict[str, Any]:
 
 
 def interleave_tts_phoneme_segs_with_servo_plan(
-    segs: list[dict[str, Any]],
-    servo_plan: list[dict[str, Any]] | None,
-    sample_rate: int,
+    segs: list[dict[str, Any]], servo_plan: list[dict[str, Any]] | None, sample_rate: int
 ) -> tuple[list[dict[str, Any]], list[dict[str, int] | None]]:
     """把 ``servo`` 计划（hold + 位移）与 TTS 音素分片按播放顺序交错。
 
@@ -270,10 +246,7 @@ def interleave_tts_phoneme_segs_with_servo_plan(
     return out_segs, parallel
 
 
-def apply_parallel_pb_servo(
-    anim_rows: list[dict[str, Any]],
-    parallel: list[dict[str, int] | None] | None,
-) -> int:
+def apply_parallel_pb_servo(anim_rows: list[dict[str, Any]], parallel: list[dict[str, int] | None] | None) -> int:
     """按与 ``anim_rows`` 等长的 ``parallel`` 写入 ``servo[]``；``None`` 表示该片不附加舵机。"""
     if not parallel:
         return 0
@@ -285,21 +258,14 @@ def apply_parallel_pb_servo(
         if not isinstance(cmd, dict):
             continue
         row.setdefault("servo", []).append(
-            {
-                "xm": int(cmd["xm"]),
-                "ym": int(cmd["ym"]),
-                "x": int(cmd["x"]),
-                "y": int(cmd["y"]),
-                "ms": int(cmd["ms"]),
-            }
+            {"xm": int(cmd["xm"]), "ym": int(cmd["ym"]), "x": int(cmd["x"]), "y": int(cmd["y"]), "ms": int(cmd["ms"])}
         )
         n += 1
     return n
 
 
 def apply_llm_pb_servo_actions(
-    pairs: list[tuple[dict[str, Any], bytes]],
-    servo_cmds: list[dict[str, Any]] | None,
+    pairs: list[tuple[dict[str, Any], bytes]], servo_cmds: list[dict[str, Any]] | None
 ) -> int:
     """将 LLM 给出的舵机序列按分片下标与 ``pairs`` 对齐，写入各 ``msg`` 的 ``servo`` 字段。
 
@@ -310,11 +276,7 @@ def apply_llm_pb_servo_actions(
         return 0
     n_pairs = len(pairs)
     if len(servo_cmds) > n_pairs:
-        logger.warning(
-            "[pb] LLM servo 条数 (%d) 多于音素分片 (%d)，已截断",
-            len(servo_cmds),
-            n_pairs,
-        )
+        logger.warning("[pb] LLM servo 条数 (%d) 多于音素分片 (%d)，已截断", len(servo_cmds), n_pairs)
     n = 0
     for i, (msg, _pcm) in enumerate(pairs):
         if i >= len(servo_cmds):
@@ -323,23 +285,14 @@ def apply_llm_pb_servo_actions(
         if not isinstance(cmd, dict):
             continue
         msg.setdefault("servo", []).append(
-            {
-                "xm": int(cmd["xm"]),
-                "ym": int(cmd["ym"]),
-                "x": int(cmd["x"]),
-                "y": int(cmd["y"]),
-                "ms": int(cmd["ms"]),
-            }
+            {"xm": int(cmd["xm"]), "ym": int(cmd["ym"]), "x": int(cmd["x"]), "y": int(cmd["y"]), "ms": int(cmd["ms"])}
         )
         n += 1
     return n
 
 
 def apply_random_pb_servo_actions(
-    pairs: list[tuple[dict[str, Any], list[bytes]]],
-    cfg: dict[str, Any] | None,
-    *,
-    rng: random.Random | None = None,
+    pairs: list[tuple[dict[str, Any], list[bytes]]], cfg: dict[str, Any] | None, *, rng: random.Random | None = None
 ) -> int:
     """在含 PCM 的 pb 分片上按概率附加 ``servo``（双轴相对位移，``xm=ym=1``）。
 
@@ -404,21 +357,13 @@ def apply_random_pb_servo_actions(
             else:
                 continue
         msg.setdefault("servo", []).append(
-            {
-                "xm": 1,
-                "ym": 1,
-                "x": int(dx),
-                "y": int(dy),
-                "ms": int(r.randint(ms_min, ms_max)),
-            }
+            {"xm": 1, "ym": 1, "x": int(dx), "y": int(dy), "ms": int(r.randint(ms_min, ms_max))}
         )
         added += 1
     return added
 
 
-def align_pcm_s16le_mono_to_chunk_ms(
-    pcm: bytes, chunk_ms: int, sample_rate: int
-) -> tuple[bytes, int]:
+def align_pcm_s16le_mono_to_chunk_ms(pcm: bytes, chunk_ms: int, sample_rate: int) -> tuple[bytes, int]:
     """把 mono s16le PCM 对齐到 ``chunk_ms * sample_rate // 1000 * 2`` 字节。
 
     与常见设备校验公式一致：``expect_len = chunk_ms * sr / 1000 * 2``（整除）。
@@ -475,10 +420,7 @@ def pb_device_hints_from_tts_cfg(tts_cfg: dict[str, Any] | None) -> int | None:
 
 
 def resolve_pb_device_hints(
-    tts_cfg: dict[str, Any] | None = None,
-    *,
-    volume: int | None = None,
-    device_id: str | None = None,
+    tts_cfg: dict[str, Any] | None = None, *, volume: int | None = None, device_id: str | None = None
 ) -> int | None:
     """显式 ``volume`` 优先；未设置则 ``None``（不下发、设备保持现状）。"""
     del device_id, tts_cfg  # 不再自动注入设备持久化音量
@@ -486,8 +428,7 @@ def resolve_pb_device_hints(
 
 
 def attach_pb_device_hints_from_config(
-    target: dict[str, Any] | list[dict[str, Any]],
-    tts_cfg: dict[str, Any] | None = None,
+    target: dict[str, Any] | list[dict[str, Any]], tts_cfg: dict[str, Any] | None = None
 ) -> None:
     """保留 API；不再自动注入 volume（须由 LLM/调用方显式指定）。"""
     del target, tts_cfg
@@ -586,12 +527,7 @@ def pb_json_messages(
             from deskbot_server.pb.llm_display import jpeg_blob_dimensions
 
             msg["assets"] = [
-                {
-                    "fmt": "jpeg",
-                    "next_bin_len": len(blob),
-                    "w": aw,
-                    "h": ah,
-                }
+                {"fmt": "jpeg", "next_bin_len": len(blob), "w": aw, "h": ah}
                 for blob in row_assets
                 for aw, ah in (jpeg_blob_dimensions(blob),)
             ]

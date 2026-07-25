@@ -1,0 +1,198 @@
+"""LLM 多轮 tool-call 循环：中间轮执行 tools，末轮走 TTS/pb。"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Optional
+
+from deskbot_server.dao.device_camera_frame_store import request_camera_uplink_boost
+from deskbot_server.infrastructure.llm.utils import parse_llm_reply
+from deskbot_server.pb.servo_pcm import parse_pb_cam_fps
+from deskbot_server.service.application.llm_tool_runner import execute_llm_tools
+from deskbot_server.service.application.tool_interim_tts import build_tool_interim_tts
+
+if TYPE_CHECKING:
+    from deskbot_server.service.application.chat_flow import _TtsPrefetch
+    from deskbot_server.service.application.chat_service import ChatService
+    from deskbot_server.ws.asr_chat_hub import AsrChatHub
+
+logger = logging.getLogger("deskbot-server")
+
+MAX_LLM_TOOL_ROUNDS = 8
+
+_CAPTURE_TOOLS = frozenset({"capture_camera", "get_camera_frame", "camera_capture"})
+_TOOL_RESULT_STRIP_KEYS = frozenset({"jpeg_base64", "image_display"})
+
+
+def is_llm_tool_call(parsed: dict[str, Any]) -> bool:
+    """解析结果是否仍含待执行的 tool call。"""
+    return bool(parsed.get("tools"))
+
+
+def _tool_result_for_llm(result: dict[str, Any]) -> dict[str, Any]:
+    out = dict(result)
+    for key in _TOOL_RESULT_STRIP_KEYS:
+        if key not in out:
+            continue
+        val = out.pop(key)
+        if isinstance(val, str) and val:
+            out[f"{key}_len"] = len(val)
+        elif isinstance(val, dict) and val:
+            out[f"{key}_ok"] = True
+    return out
+
+
+def _tools_need_camera(tools: list[dict[str, Any]]) -> bool:
+    for raw in tools:
+        if not isinstance(raw, dict):
+            continue
+        tool = str(raw.get("tool") or raw.get("name") or "").strip()
+        if tool in _CAPTURE_TOOLS:
+            return True
+    return False
+
+
+def build_llm_tool_followup_message(tool_results: list[dict[str, Any]]) -> str:
+    """工具执行后反馈给 LLM 的 user 消息。"""
+    slim = [_tool_result_for_llm(r) for r in tool_results]
+    payload = json.dumps(slim, ensure_ascii=False)
+    return (
+        "[工具执行结果]\n"
+        f"{payload}\n\n"
+        "请根据结果继续。若还需调用工具，请输出 JSON 且 ``tools`` 非空，"
+        "并在 ``tts`` 写一句口语化过渡语（如「稍等，我帮你查一下」）以便立刻播报；"
+        "若已完成，请输出最终 JSON，``tools`` 写 [] 并填写 ``tts`` 等字段。"
+    )
+
+
+async def _execute_tools_round(
+    tools: list[dict[str, Any]],
+    *,
+    device_id: str,
+    session_id: Optional[str],
+    asr_chat_hub: Optional["AsrChatHub"],
+    cam_fps: int | None,
+) -> list[dict[str, Any]]:
+    if cam_fps and asr_chat_hub:
+        await request_camera_uplink_boost(device_id, asr_chat_hub, cam_fps=cam_fps)
+
+    return await execute_llm_tools(
+        tools,
+        device_id=device_id,
+        session_id=session_id,
+        asr_chat_hub=asr_chat_hub,
+        cam_fps=cam_fps,
+    )
+
+async def complete_llm_with_tool_loop(
+    chat: "ChatService",
+    user_text: str,
+    *,
+    device_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    device_context: Optional[str] = None,
+    history_messages: Optional[list[dict[str, str]]] = None,
+    request_id: Optional[str] = None,
+    dp_broker: Optional[Any] = None,
+    pipeline_source: Optional[str] = None,
+    asr_chat_hub: Optional["AsrChatHub"] = None,
+    on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
+    tts_prefetch: Optional["_TtsPrefetch"] = None,
+    on_interim_tts_play: Optional[Callable[[str, int], Awaitable[None]]] = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str]:
+    """多轮 LLM：有 tools 则执行并继续，无 tools 则返回最终 parsed。
+
+    返回 ``(parsed, all_tools, all_tool_results, last_raw_answer)``。
+    """
+    extra_messages: list[dict[str, str]] = []
+    all_tools: list[dict[str, Any]] = []
+    all_tool_results: list[dict[str, Any]] = []
+    answer = ""
+    parsed: dict[str, Any] = parse_llm_reply("")
+
+    for round_idx in range(MAX_LLM_TOOL_ROUNDS):
+        answer = await chat.llm(
+            user_text,
+            device_context=device_context if round_idx == 0 else None,
+            device_id=device_id,
+            history_messages=history_messages if round_idx == 0 else None,
+            extra_messages=extra_messages or None,
+            on_tts_ready=on_tts_ready,
+        )
+        parsed = parse_llm_reply(answer)
+        tools = list(parsed.get("tools") or [])
+
+        if not tools:
+            break
+
+        if not device_id:
+            logger.warning(
+                "[LLM] tools 无 device_id，无法执行 device_id=%s req=%s tools=%s", device_id, request_id, tools
+            )
+            break
+
+        cam_fps = parse_pb_cam_fps(parsed.get("cam_fps"))
+        interim_text = (parsed.get("reply") or "").strip()
+        if not interim_text:
+            interim_text = build_tool_interim_tts(tools)
+            if interim_text:
+                logger.info(
+                    "[LLM] tool 轮兜底过渡 TTS device_id=%s req=%s text=%r", device_id, request_id, interim_text[:80]
+                )
+
+        # 拍照须先拿到帧再播过渡 TTS（播报期间固件暂停 camera 上行）
+        if _tools_need_camera(tools):
+            if interim_text and tts_prefetch is not None:
+                tts_prefetch.cancel()
+            tool_results = await _execute_tools_round(
+                tools, device_id=str(device_id), session_id=session_id, asr_chat_hub=asr_chat_hub, cam_fps=cam_fps
+            )
+            if interim_text and on_interim_tts_play is not None:
+                await on_interim_tts_play(interim_text, round_idx + 1)
+        else:
+            play_coro = None
+            if interim_text and on_interim_tts_play is not None:
+                play_coro = on_interim_tts_play(interim_text, round_idx + 1)
+            elif interim_text and tts_prefetch is not None:
+                tts_prefetch.cancel()
+
+            tool_coro = _execute_tools_round(
+                tools, device_id=str(device_id), session_id=session_id, asr_chat_hub=asr_chat_hub, cam_fps=cam_fps
+            )
+            if play_coro is not None:
+                tool_results, _ = await asyncio.gather(tool_coro, play_coro)
+            else:
+                tool_results = await tool_coro
+
+        all_tools.extend(tools)
+        all_tool_results.extend(tool_results)
+        logger.info(
+            "[LLM] tool round=%d device_id=%s req=%s tools=%s results=%s",
+            round_idx + 1,
+            device_id,
+            request_id,
+            tools,
+            [_tool_result_for_llm(r) for r in tool_results],
+        )
+        if dp_broker is not None and device_id and request_id:
+            tool_names = [str(t.get("tool") or "").strip() for t in tools if str(t.get("tool") or "").strip()]
+            await dp_broker.publish(
+                {
+                    "device_id": device_id,
+                    "request_id": request_id,
+                    "source": pipeline_source or "asr",
+                    "asr_text": user_text,
+                    "stage": f"llm_tool_{round_idx + 1}",
+                    "status": "running",
+                    "llm_text": (f"执行工具: {', '.join(tool_names)}" if tool_names else "执行工具"),
+                }
+            )
+        extra_messages.append({"role": "assistant", "content": answer})
+        extra_messages.append({"role": "user", "content": build_llm_tool_followup_message(tool_results)})
+    else:
+        logger.warning("[LLM] tool 循环达到上限 %d device_id=%s req=%s", MAX_LLM_TOOL_ROUNDS, device_id, request_id)
+
+    return parsed, all_tools, all_tool_results, answer

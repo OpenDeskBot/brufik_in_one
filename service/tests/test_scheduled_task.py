@@ -12,8 +12,8 @@ def temp_db(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "test.db"
         monkeypatch.setenv("DESKBOT_DB_PATH", str(db_path))
-        from deskbot_server.db.engine import init_engine, reset_engine
         from deskbot_server.db import init_database
+        from deskbot_server.db.engine import init_engine, reset_engine
 
         reset_engine()
         init_engine(db_path)
@@ -22,7 +22,7 @@ def temp_db(monkeypatch):
 
 
 def test_normalize_cron_and_next_run():
-    from deskbot_server.scheduled_task_service import compute_next_run, normalize_cron_expr
+    from deskbot_server.service.scheduled_task_service import compute_next_run, normalize_cron_expr
 
     assert normalize_cron_expr("0 9 * * *") == "0 9 * * *"
     nxt = compute_next_run("0 9 * * *")
@@ -31,7 +31,7 @@ def test_normalize_cron_and_next_run():
 
 
 def test_normalize_cron_repairs_llm_once_datetime():
-    from deskbot_server.scheduled_task_service import normalize_cron_expr
+    from deskbot_server.service.scheduled_task_service import normalize_cron_expr
 
     assert normalize_cron_expr("0 49 15 6 12") == "49 15 12 6 *"
     assert normalize_cron_expr("44 15 12 6 *") == "44 15 12 6 *"
@@ -39,19 +39,14 @@ def test_normalize_cron_repairs_llm_once_datetime():
 
 
 def test_create_list_delete_cron_task(temp_db):
-    from deskbot_server.scheduled_task_service import (
+    from deskbot_server.service.scheduled_task_service import (
         create_scheduled_task,
         delete_scheduled_task,
         execute_schedule_task_tool,
         list_scheduled_tasks_for_device,
     )
 
-    row = create_scheduled_task(
-        "deskbot_test",
-        "提醒主人喝水",
-        cron="0 9 * * *",
-        task_kind="recurring",
-    )
+    row = create_scheduled_task("deskbot_test", "提醒主人喝水", cron="0 9 * * *", task_kind="recurring")
     assert row["device_id"] == "deskbot_test"
     assert row["cron_expr"] == "0 9 * * *"
     assert row["task_kind"] == "recurring"
@@ -69,50 +64,44 @@ def test_create_list_delete_cron_task(temp_db):
 
 
 def test_schedule_task_crud_via_tool(temp_db):
-    from deskbot_server.application.llm_tool_runner import execute_llm_tools
-    from deskbot_server.scheduled_task_service import get_scheduled_task
+    import asyncio
 
-    created = execute_llm_tools(
-        [
-            {
-                "tool": "schedule_task",
-                "action": "create",
-                "task": "十分钟后提醒开会",
-                "delay_minutes": 10,
-                "task_kind": "once",
-            }
-        ],
-        device_id="deskbot_a",
-        session_id="sess_abc123",
+    from deskbot_server.service.application.llm_tool_runner import execute_llm_tools
+    from deskbot_server.service.scheduled_task_service import get_scheduled_task
+
+    created = asyncio.run(
+        execute_llm_tools(
+            [
+                {
+                    "tool": "schedule_task",
+                    "action": "create",
+                    "task": "十分钟后提醒开会",
+                    "delay_minutes": 10,
+                    "task_kind": "once",
+                }
+            ],
+            device_id="deskbot_a",
+            session_id="sess_abc123",
+        )
     )
     assert created[0]["ok"] is True
     tid = created[0]["id"]
     assert created[0]["task_kind"] == "once"
     assert created[0]["session_id"] == "sess_abc123"
 
-    got = execute_llm_tools(
-        [{"tool": "schedule_task", "action": "get", "id": tid}],
-        device_id="deskbot_a",
-    )
+    got = asyncio.run(execute_llm_tools([{"tool": "schedule_task", "action": "get", "id": tid}], device_id="deskbot_a"))
     assert got[0]["task"]["id"] == tid
 
-    updated = execute_llm_tools(
-        [
-            {
-                "tool": "schedule_task",
-                "action": "update",
-                "id": tid,
-                "task": "提醒喝水",
-            }
-        ],
-        device_id="deskbot_a",
+    updated = asyncio.run(
+        execute_llm_tools(
+            [{"tool": "schedule_task", "action": "update", "id": tid, "task": "提醒喝水"}], device_id="deskbot_a"
+        )
     )
     assert updated[0]["ok"] is True
     assert updated[0]["description"] == "提醒喝水"
 
-    deleted = execute_llm_tools(
-        [{"tool": "schedule_task", "action": "delete", "id": tid}],
-        device_id="deskbot_a",
+    deleted = asyncio.run(
+        execute_llm_tools([{"tool": "schedule_task", "action": "delete", "id": tid}], device_id="deskbot_a")
     )
     assert deleted[0]["ok"] is True
     assert get_scheduled_task(tid, device_id="deskbot_a") is None
@@ -121,11 +110,7 @@ def test_schedule_task_crud_via_tool(temp_db):
 def test_claim_due_tasks_lookback_window(temp_db):
     from deskbot_server.db.engine import get_session
     from deskbot_server.db.models import ScheduledTask, _new_id
-    from deskbot_server.scheduled_task_service import (
-        claim_due_tasks,
-        cst_now,
-        expire_overdue_active_tasks,
-    )
+    from deskbot_server.service.scheduled_task_service import claim_due_tasks, cst_now, expire_overdue_active_tasks
 
     now = cst_now()
     session = get_session()
@@ -166,9 +151,9 @@ def test_claim_due_tasks_lookback_window(temp_db):
 def test_migrate_legacy_run_at_column(temp_db, monkeypatch):
     from sqlalchemy import inspect, text
 
-    from deskbot_server.db.engine import get_session, init_engine
+    from deskbot_server.db.engine import init_engine
     from deskbot_server.db.init_db import _migrate_scheduled_tasks_drop_legacy_run_at
-    from deskbot_server.scheduled_task_service import create_scheduled_task
+    from deskbot_server.service.scheduled_task_service import create_scheduled_task
 
     engine = init_engine(temp_db)
     with engine.begin() as conn:
@@ -211,15 +196,13 @@ def test_migrate_legacy_run_at_column(temp_db, monkeypatch):
 
 
 def test_scheduled_reminder_tts_helpers():
-    from deskbot_server.application.chat_flow import (
+    from deskbot_server.service.application.chat_flow import (
         _scheduled_reminder_tts,
         _scheduled_task_description,
         _scheduled_tts_looks_like_meta_report,
     )
 
-    desc = _scheduled_task_description(
-        "[系统定时任务] 请向主人朗声提醒并执行以下任务：提醒喝水"
-    )
+    desc = _scheduled_task_description("[系统定时任务] 请向主人朗声提醒并执行以下任务：提醒喝水")
     assert desc == "提醒喝水"
     assert _scheduled_reminder_tts("提醒喝水") == "主人，该喝水啦。"
     assert _scheduled_tts_looks_like_meta_report("提醒已发送，小明记得喝水哦。")
@@ -229,7 +212,7 @@ def test_scheduled_reminder_tts_helpers():
 def test_finish_recurring_reschedules(temp_db):
     from deskbot_server.db.engine import get_session
     from deskbot_server.db.models import ScheduledTask, _new_id
-    from deskbot_server.scheduled_task_service import cst_now, finish_scheduled_task, get_scheduled_task
+    from deskbot_server.service.scheduled_task_service import cst_now, finish_scheduled_task, get_scheduled_task
 
     tid = _new_id()
     now = cst_now()

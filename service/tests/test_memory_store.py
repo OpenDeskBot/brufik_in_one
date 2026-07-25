@@ -8,15 +8,13 @@ def memory_file(monkeypatch, tmp_path):
     path = tmp_path / "user_memory.json"
     monkeypatch.setattr(
         "deskbot_server.memory_store.resolve_json_path",
-        lambda _default, device_id=None: str(
-            path if not device_id else tmp_path / device_id / "user_memory.json"
-        ),
+        lambda _default, device_id=None: str(path if not device_id else tmp_path / device_id / "user_memory.json"),
     )
     return "deskbot_a"
 
 
 def test_memory_crud(memory_file):
-    from deskbot_server.memory_store import (
+    from deskbot_server.dao.memory_store import (
         add_memory,
         delete_memory,
         get_memory,

@@ -118,7 +118,7 @@ require_python "$VPY" "venv python"
 
 if [[ "$FAST_START" == "1" ]]; then
   echo "FAST_START=1，跳过依赖安装。"
-  if ! "$VPY" -c "import numpy, websockets, yaml, webrtcvad, openai, opuslib_next, torch, torchaudio, funasr, croniter, deskbot_server" >/dev/null 2>&1; then
+  if ! "$VPY" -c "import numpy, websockets, yaml, webrtcvad, openai, opuslib_next, torch, torchaudio, funasr, croniter, fastapi, uvicorn, deskbot_server" >/dev/null 2>&1; then
     echo "当前 .venv 依赖不完整（常见是缺少 torch 或未 pip install -e .）。" >&2
     echo "请执行 ./start.sh（不设 FAST_START/SKIP_SETUP）后重试。" >&2
     exit 1

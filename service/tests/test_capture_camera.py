@@ -1,50 +1,42 @@
 from __future__ import annotations
 
 import asyncio
-import threading
-import time
 
-import pytest
-
-from deskbot_server.device_camera_frame_store import (
-    capture_camera_for_device_async,
-    get_device_camera_frame,
-    update_device_camera_frame,
-    wait_for_device_camera_frame,
-)
+from deskbot_server.dao.device_camera_frame_store import capture_camera_for_device_async
+from deskbot_server.infrastructure.llm.utils import parse_llm_reply
 from deskbot_server.pb.cam_signal import build_cam_fps_signal_pb
 from deskbot_server.pb.servo_pcm import make_anim_item, parse_pb_cam_fps, pb_json_messages
-from deskbot_server.llm.utils import parse_llm_reply
+from deskbot_server.service.camera_face_service import CameraFaceService
 
 
 def _fake_jpeg() -> bytes:
     return b"\xff\xd8\xff\xe0" + b"\x00" * 16 + b"\xff\xd9"
 
 
-def test_wait_for_device_camera_frame_notifies():
-    dev = "dev_wait_cam"
-    after = time.time()
-
-    def _late_update():
-        time.sleep(0.05)
-        update_device_camera_frame(dev, _fake_jpeg())
-
-    threading.Thread(target=_late_update, daemon=True).start()
-    row = wait_for_device_camera_frame(dev, after_ts=after, timeout=1.0)
-    assert row is not None
-    assert row["jpeg"].startswith(b"\xff\xd8")
-
-
-def test_capture_camera_for_device_async_uses_fresh_cache():
+def test_capture_camera_for_device_async_via_video_subscribe():
+    CameraFaceService.reset_instance()
+    svc = CameraFaceService()
+    # capture 不依赖 dp_broker；直接 _emit 模拟上行帧
     dev = "dev_async_cam"
-    update_device_camera_frame(dev, _fake_jpeg())
 
     async def _run():
-        return await capture_camera_for_device_async(dev, hub=None, wait_timeout_s=0.5)
+        async def _publisher():
+            await asyncio.sleep(0.05)
+            await svc.try_emit_video_frame(
+                dev,
+                _fake_jpeg(),
+                meta={"frame_w": 320, "frame_h": 240, "source": "test"},
+            )
+
+        pub = asyncio.create_task(_publisher())
+        cap = await capture_camera_for_device_async(dev, hub=None, wait_timeout_s=1.0)
+        await pub
+        return cap
 
     cap = asyncio.run(_run())
     assert cap["ok"] is True
     assert cap["jpeg_bytes"] > 0
+    assert len(svc._video_subs) == 0
 
 
 def test_parse_llm_reply_cam_fps():

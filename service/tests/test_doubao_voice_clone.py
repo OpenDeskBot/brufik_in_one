@@ -5,7 +5,7 @@ import json
 
 
 def test_clone_doubao_voice_posts_v3_payload(monkeypatch):
-    from deskbot_server.tts.voice_clone import (
+    from deskbot_server.infrastructure.tts.voice_clone import (
         DoubaoVoiceCloneConfig,
         clone_doubao_voice,
         custom_speaker_id_from_name,
@@ -63,7 +63,7 @@ def test_clone_doubao_voice_posts_v3_payload(monkeypatch):
 
 
 def test_get_doubao_voice_clone_status_normalizes_speaker_status(monkeypatch):
-    from deskbot_server.tts.voice_clone import DoubaoVoiceCloneConfig, get_doubao_voice_clone_status
+    from deskbot_server.infrastructure.tts.voice_clone import DoubaoVoiceCloneConfig, get_doubao_voice_clone_status
 
     captured = {}
 
@@ -78,8 +78,7 @@ def test_get_doubao_voice_clone_status_normalizes_speaker_status(monkeypatch):
 
         def read(self):
             return (
-                b'{"speaker_status":[{"speaker_id":"S_ready","status":4,'
-                b'"model_type":5,"available_training_times":8}]}'
+                b'{"speaker_status":[{"speaker_id":"S_ready","status":4,"model_type":5,"available_training_times":8}]}'
             )
 
     def fake_urlopen(req, timeout):

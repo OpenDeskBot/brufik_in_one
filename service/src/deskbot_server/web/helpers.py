@@ -4,13 +4,11 @@ import datetime as _dt
 import json
 import os
 import socket
-import time
 
-from flask import request
-
-from deskbot_server.config import load_config as _load_config_yaml, save_config as _save_config_yaml
-from deskbot_server.paths import DEFAULT_CONFIG_PATH
-from deskbot_server.util import pcm_to_wav_bytes
+from deskbot_server.config import load_config as _load_config_yaml
+from deskbot_server.config import save_config as _save_config_yaml
+from deskbot_server.utils.paths import DEFAULT_CONFIG_PATH
+from deskbot_server.web.flaskish import request
 
 try:
     from zoneinfo import ZoneInfo
@@ -40,7 +38,10 @@ def _prefer_access_host(raw_host: str) -> str:
     host = (raw_host or "").strip()
     if host and host not in ("0.0.0.0", "::", "127.0.0.1", "localhost"):
         return host
-    req_host = (request.host or "").split(":", 1)[0].strip()
+    try:
+        req_host = (request.host or "").split(":", 1)[0].strip()
+    except RuntimeError:
+        return "127.0.0.1"
     if req_host and req_host not in ("0.0.0.0", "::", "localhost"):
         return req_host
     return "127.0.0.1"
@@ -49,15 +50,11 @@ def _prefer_access_host(raw_host: str) -> str:
 def deskbot_ws_base() -> tuple[str, int]:
     cfg = load_config()
     srv = cfg.get("server") or {}
-    public = (os.environ.get("DESKBOT_WEB_PUBLIC_HOST") or "").strip() or str(
-        srv.get("web_public_host") or ""
-    ).strip()
+    public = (os.environ.get("DESKBOT_WEB_PUBLIC_HOST") or "").strip() or str(srv.get("web_public_host") or "").strip()
     if public:
         host = public
     else:
-        host = _prefer_access_host(
-            os.environ.get("DESKBOT_SERVER_HOST") or srv.get("host", "127.0.0.1")
-        )
+        host = _prefer_access_host(os.environ.get("DESKBOT_SERVER_HOST") or srv.get("host", "127.0.0.1"))
     port = int(os.environ.get("DESKBOT_SERVER_PORT") or srv.get("port", 9000))
     return host, port
 
@@ -101,7 +98,7 @@ def _fetch_upstream_devices(*, user_id: str | None = None, timeout: float = 1.5)
         tok = issue_debug_ws_token(uid).token
         query = urlparse.urlencode({"debug_token": tok})
     else:
-        from deskbot_server.auth.api_key_service import read_free_api_key_raw
+        from deskbot_server.dao.api_key_service import read_free_api_key_raw
 
         upstream_key = read_free_api_key_raw()
         if upstream_key:
@@ -127,10 +124,7 @@ def fetch_live_device_details(*, user_id: str | None = None, timeout: float = 1.
         did = str(row.get("device_id") or "").strip()
         if not did:
             continue
-        out[did] = {
-            "online": bool(row.get("online")),
-            "last_seen": str(row.get("last_seen") or "—"),
-        }
+        out[did] = {"online": bool(row.get("online")), "last_seen": str(row.get("last_seen") or "—")}
     return out
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from deskbot_server.llm.utils import parse_llm_reply
+from deskbot_server.infrastructure.llm.utils import parse_llm_reply
 from deskbot_server.pb.llm_plan import (
     expand_llm_anims,
     expand_llm_moves,
@@ -40,9 +40,7 @@ def test_expand_llm_moves_scales_preset_steps():
 
 
 def test_expand_llm_anims_bg_color():
-    frames = expand_llm_anims(
-        [{"anim": "default", "ms": 200, "bg": "#000000", "color": "yellow"}]
-    )
+    frames = expand_llm_anims([{"anim": "default", "ms": 200, "bg": "#000000", "color": "yellow"}])
     assert frames
     bg = frames[0]["elements"].get("bg") or []
     assert bg and bg[0]["shape"] == "rect"
@@ -149,7 +147,7 @@ def test_merge_llm_plan_anim_rows_keeps_phoneme_mouth():
 
 
 def test_llm_face_context_prompt_appendix():
-    from deskbot_server.llm.utils import llm_static_context_prompt_appendix
+    from deskbot_server.infrastructure.llm.utils import llm_static_context_prompt_appendix
 
     text = llm_static_context_prompt_appendix("test_device_faces_prompt")
     assert "register_face" in text
@@ -158,8 +156,8 @@ def test_llm_face_context_prompt_appendix():
 
 
 def test_build_llm_user_message():
-    from deskbot_server.face_snapshot_cache import update_device_faces
-    from deskbot_server.llm.user_message import build_llm_user_message
+    from deskbot_server.infrastructure.llm.user_message import build_llm_user_message
+    from deskbot_server.service.application.face_snapshot_cache import update_device_faces
 
     dev = "test_device_user_msg"
     update_device_faces(
@@ -174,8 +172,7 @@ def test_build_llm_user_message():
                 "image_w": 320,
                 "image_h": 240,
                 "landmarks": [{"name": "nose", "x": 200, "y": 140}],
-                "points": [],
-            },
+            }
         ],
     )
     ack = '{"type":"pb_ack","servo":{"x":90,"y":75}}'
@@ -224,20 +221,14 @@ def test_parse_llm_reply_images():
     import base64
 
     b64 = base64.standard_b64encode(b"\xff\xd8\xff\xe0" + b"\x00" * 8).decode()
-    raw = json.dumps(
-        {
-            "tts": "看",
-            "images": [{"b64": b64, "x": 0, "y": 0, "w": 100, "h": 80}],
-        },
-        ensure_ascii=False,
-    )
+    raw = json.dumps({"tts": "看", "images": [{"b64": b64, "x": 0, "y": 0, "w": 100, "h": 80}]}, ensure_ascii=False)
     parsed = parse_llm_reply(raw)
     assert parsed["json_ok"] is True
     assert len(parsed["images"]) == 1
 
 
 def test_device_volume_persist(tmp_path, monkeypatch):
-    from deskbot_server import device_volume_store as dvs
+    from deskbot_server.dao import device_volume_store as dvs
 
     vol_file = tmp_path / "device_volume.json"
 
@@ -258,10 +249,7 @@ def test_device_volume_persist(tmp_path, monkeypatch):
 
 
 def test_parse_llm_reply_empty_tts_not_raw_json():
-    raw = (
-        '{"need_reply": true, "tts": "", '
-        '"moves": [{"move": "shake_head", "ms": 1280}], "anims": []}'
-    )
+    raw = '{"need_reply": true, "tts": "", "moves": [{"move": "shake_head", "ms": 1280}], "anims": []}'
     parsed = parse_llm_reply(raw)
     assert parsed["json_ok"] is True
     assert parsed["reply"] == ""
@@ -269,7 +257,7 @@ def test_parse_llm_reply_empty_tts_not_raw_json():
 
 
 def test_memory_store_roundtrip(tmp_path, monkeypatch):
-    from deskbot_server import memory_store as ms
+    from deskbot_server.dao import memory_store as ms
 
     mem_file = tmp_path / "user_memory.json"
 

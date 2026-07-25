@@ -6,9 +6,10 @@ import logging
 import time
 from typing import Any, Optional
 
-from deskbot_server.util import _format_ts
+from deskbot_server.utils.util import _format_ts
 
 logger = logging.getLogger("deskbot-server")
+
 
 class DeviceRegistry:
     """维护当前通过 WebSocket 接入的设备会话，是 `/api/devices` 的唯一真源。
@@ -57,21 +58,14 @@ class DeviceRegistry:
             snapshot_ch,
             total_devices,
         )
-        from deskbot_server.device_data import ensure_device_data_initialized
+        from deskbot_server.utils.device_data import ensure_device_data_initialized
 
         try:
             initialized = await asyncio.to_thread(ensure_device_data_initialized, device_id)
             if initialized:
-                logger.info(
-                    "[DeviceRegistry] 已初始化设备数据目录 device_id=%s",
-                    device_id,
-                )
+                logger.info("[DeviceRegistry] 已初始化设备数据目录 device_id=%s", device_id)
         except Exception as exc:
-            logger.warning(
-                "[DeviceRegistry] 初始化设备数据目录失败 device_id=%s err=%s",
-                device_id,
-                exc,
-            )
+            logger.warning("[DeviceRegistry] 初始化设备数据目录失败 device_id=%s err=%s", device_id, exc)
         return dict(dev)
 
     async def disconnect(self, ws) -> Optional[dict]:
@@ -129,10 +123,7 @@ class DeviceRegistry:
         async with self._lock:
             dev = self._devices.get(device_id)
             if dev is None:
-                logger.warning(
-                    "[pb_ack] 设备未在注册表，忽略 device_id=%s",
-                    device_id,
-                )
+                logger.warning("[pb_ack] 设备未在注册表，忽略 device_id=%s", device_id)
                 return
             now = time.time()
             dev["last_pb_ack"] = dict(ack)
@@ -154,8 +145,5 @@ class DeviceRegistry:
 
     def snapshot(self) -> list:
         items = [dict(d) for d in self._devices.values()]
-        items.sort(
-            key=lambda d: float(d.get("last_seen_ts") or 0.0),
-            reverse=True,
-        )
+        items.sort(key=lambda d: float(d.get("last_seen_ts") or 0.0), reverse=True)
         return items

@@ -11,7 +11,8 @@
 #define WIFI_DEFAULT_SSID "Micband"
 #define WIFI_DEFAULT_PASSWORD "Xiaomi@2025"
 
-#define DESKBOT_WS_HOST "10.221.64.74"
+#define DESKBOT_WS_HOST "192.168.31.145" 
+// "10.220.138.26"
 #define DESKBOT_WS_PORT 9000
 
 /* 服务端 WebSocket 鉴权 Key（odk_... 或 odk_free_...）。留空则无法连接 /asr_chat。 */
@@ -25,9 +26,9 @@
 #define DESKBOT_CAMERA_WS_PATH "/camera_uplink"
 #endif
 
-/** 1 = 经独立 /camera_uplink 上传 camera_frame；0 = 暂停。 */
+/** 1 = 经独立 /camera_uplink 上传（camera_frame JSON + JPEG binary）；0 = 完全停用相机 WS。 */
 #ifndef DESKBOT_CAMERA_UPLINK_ENABLED
-#define DESKBOT_CAMERA_UPLINK_ENABLED 0
+#define DESKBOT_CAMERA_UPLINK_ENABLED 1
 #endif
 
 static inline bool deskbot_camera_uplink_enabled(void) {
@@ -45,44 +46,43 @@ static inline bool deskbot_api_key_configured(void) {
 /* ========== 硬件接线（Seeed XIAO ESP32S3 Sense）==========
  * 焊盘: D0=1 D1=2 D2=3 D3=4 D4=5 D5=6 D6=43 D7=44 D8=7 D9=8 D10=9
  * 图纸 IO8/IO3 = GPIO 编号，非丝印 D8/D3。
- * LCD：微雪 1.83" ST7789P 240×284，RST/BL 接 3.3V（不经 MCU GPIO）
+ * 显示屏：微雪 1.83" ST7789P 240×284，RST/BL 接 3.3V（不经 MCU GPIO）
  */
 
-#define DESKBOT_LCD_MOSI 9
-#define DESKBOT_LCD_SCK  7
-#define DESKBOT_LCD_CS   2
-#define DESKBOT_LCD_DC   3
+#define DESKBOT_DISPLAY_MOSI 9
+#define DESKBOT_DISPLAY_SCK  7
+#define DESKBOT_DISPLAY_CS   2
+#define DESKBOT_DISPLAY_DC   3
 
-#define DESKBOT_LCD_WIDTH 240
-#ifndef DESKBOT_LCD_HEIGHT
-#define DESKBOT_LCD_HEIGHT 284
+#define DESKBOT_DISPLAY_WIDTH 240
+#ifndef DESKBOT_DISPLAY_HEIGHT
+#define DESKBOT_DISPLAY_HEIGHT 284
 #endif
-#ifndef DESKBOT_LCD_ROW_OFFSET
-#define DESKBOT_LCD_ROW_OFFSET 36
+#ifndef DESKBOT_DISPLAY_ROW_OFFSET
+#define DESKBOT_DISPLAY_ROW_OFFSET 36
 #endif
-#ifndef DESKBOT_LCD_COL_OFFSET
-#define DESKBOT_LCD_COL_OFFSET 0
-#endif
-
-#ifndef DESKBOT_LCD_TOP_SAFE_PX
-#define DESKBOT_LCD_TOP_SAFE_PX 4
+#ifndef DESKBOT_DISPLAY_COL_OFFSET
+#define DESKBOT_DISPLAY_COL_OFFSET 0
 #endif
 
-#define DESKBOT_PB_COORD_W DESKBOT_LCD_HEIGHT
+#ifndef DESKBOT_DISPLAY_TOP_SAFE_PX
+#define DESKBOT_DISPLAY_TOP_SAFE_PX 4
+#endif
+
+#define DESKBOT_PB_COORD_W DESKBOT_DISPLAY_HEIGHT
 #define DESKBOT_PB_COORD_H 240
-#ifndef DESKBOT_LCD_CANVAS_X0
-#define DESKBOT_LCD_CANVAS_X0 ((DESKBOT_LCD_HEIGHT - DESKBOT_PB_COORD_W) / 2)
+#ifndef DESKBOT_DISPLAY_CANVAS_X0
+#define DESKBOT_DISPLAY_CANVAS_X0 ((DESKBOT_DISPLAY_HEIGHT - DESKBOT_PB_COORD_W) / 2)
 #endif
-#ifndef DESKBOT_LCD_ROT3_XSTART_ADJ
-#define DESKBOT_LCD_ROT3_XSTART_ADJ (-18)
+#ifndef DESKBOT_DISPLAY_ROT3_XSTART_ADJ
+#define DESKBOT_DISPLAY_ROT3_XSTART_ADJ (-18)
 #endif
 
 #define DESKBOT_DRAW_W DESKBOT_PB_COORD_W
 #define DESKBOT_DRAW_H DESKBOT_PB_COORD_H
 
-/* 舵机 PWM：丝印 D6=GPIO43，D7=GPIO44（芯片默认 UART0，Bootloader 日志易致误动作）
- * 左右(X) → D9/8 小舵机；上下(Y) → D3/4 大舵机
- * 保护：custom bootloader + servo_early_init constructor + setup claim LOW */
+/* 舵机 PWM（已避开 UART0 的 D6/D7）
+ * 左右(X) → D9/GPIO8 小舵机；上下(Y) → D3/GPIO4 大舵机 */
 #ifndef DESKBOT_ROM_X_PIN
 #define DESKBOT_ROM_X_PIN 8
 #endif
@@ -103,12 +103,12 @@ static inline bool deskbot_api_key_configured(void) {
 #define DESKBOT_PDM_MIC_CLK  GPIO_NUM_42
 #define DESKBOT_PDM_MIC_DATA GPIO_NUM_41
 
-/* 能量门控（enhanceVoice 后本地预处理，切句在服务端 Silero VAD） */
+/* 能量门控（enhance_voice 后本地预处理，切句在服务端 Silero VAD） */
 #define DESKBOT_PDM_VOICE_MARGIN             320
 #define DESKBOT_PDM_VOICE_HANGOVER_MARGIN    200
 #define DESKBOT_PDM_VOICE_TRIGGER_RATIO_NUM    130
 #define DESKBOT_PDM_VOICE_TRIGGER_RATIO_DEN  100
-/** 触发阈值绝对下限（enhanceVoice×5 后的 mean-abs）；防安静环境下 thr 过低。 */
+/** 触发阈值绝对下限（enhance_voice×5 后的 mean-abs）；防安静环境下 thr 过低。 */
 #define DESKBOT_PDM_VOICE_TRIGGER_FLOOR      140
 
 static inline size_t deskbot_pdm_voice_trigger_thr(size_t ema) {
@@ -143,24 +143,19 @@ static inline size_t deskbot_pdm_voice_hangover_thr(size_t ema) {
 #define DESKBOT_TAIL_SUPPRESS_MS               300
 #endif
 
-/** 相机 JPEG 上行最小间隔（ms，空闲时）。 */
+/** 相机 JPEG 上行最小间隔（ms）；持续上传，不因听音/播音降频或暂停。 */
 #ifndef DESKBOT_CAMERA_UPLINK_INTERVAL_MS
 #define DESKBOT_CAMERA_UPLINK_INTERVAL_MS      500
 #endif
 
-/** 连续听音期间相机 JPEG 上行最小间隔（ms）；与 Opus 并行时降低带宽争用。 */
-#ifndef DESKBOT_CAMERA_UPLINK_INTERVAL_DURING_LISTEN_MS
-#define DESKBOT_CAMERA_UPLINK_INTERVAL_DURING_LISTEN_MS  2000
+/** 设备状态（舵机角/音量等）上行最小间隔（ms）；仅对 go 通知生效，go_now 立即发。 */
+#ifndef DESKBOT_STATE_UPLINK_INTERVAL_MS
+#define DESKBOT_STATE_UPLINK_INTERVAL_MS      10000
 #endif
 
 /** 单轮连续 Opus 上行上限（秒）；正常由 pb_start 提前结束。 */
 #ifndef DESKBOT_UPLINK_MAX_SEC
 #define DESKBOT_UPLINK_MAX_SEC                 30
-#endif
-
-/** 下行 pb 等 BIN 超时（ms）；超时后 reset 序列并 flush defer 队列，防卡死。 */
-#ifndef DESKBOT_PB_EXPECT_BIN_TIMEOUT_MS
-#define DESKBOT_PB_EXPECT_BIN_TIMEOUT_MS       12000
 #endif
 
 /** WS TCP 握手 + upgrade 等待上限（ms）；重连时适当加长。 */

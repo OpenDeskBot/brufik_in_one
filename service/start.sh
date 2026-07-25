@@ -73,7 +73,7 @@ setup_venv() {
 venvs_look_ready() {
   local py
   py="$(platform_venv_python "$ROOT" 2>/dev/null)" || return 1
-  "$py" -c "import numpy, websockets, yaml, webrtcvad, openai, opuslib_next, torch, torchaudio, funasr, croniter, deskbot_server" >/dev/null 2>&1 || return 1
+  "$py" -c "import numpy, websockets, yaml, webrtcvad, openai, opuslib_next, torch, torchaudio, funasr, croniter, fastapi, uvicorn, deskbot_server" >/dev/null 2>&1 || return 1
 }
 
 ensure_local_scripts() {
@@ -204,9 +204,9 @@ ensure_models() {
 run_services() {
   trap 'trap - INT TERM EXIT; kill 0 2>/dev/null || true' INT TERM EXIT
 
-  if [[ "${DESKBOT_START_WEB:-1}" == "1" ]]; then
+  if [[ "${DESKBOT_START_WEB:-0}" == "1" ]]; then
     local web_port="${DESKBOT_WEB_PORT:-5050}"
-    echo "[web] 启动 Flask 调试台 0.0.0.0:${web_port}（局域网 http://<本机IP>:${web_port}/）"
+    echo "[web] 额外启动独立 Web 进程 0.0.0.0:${web_port}（主服务 :9000 已内置 FastAPI 控制台；通常无需再开）"
     (
       cd "$ROOT"
       # shellcheck source=/dev/null
@@ -216,6 +216,8 @@ run_services() {
       export DESKBOT_WEB_PORT="${DESKBOT_WEB_PORT:-5050}"
       exec "$web_py" -m deskbot_server.web
     ) &
+  else
+    echo "[web] 控制台已合并进主 FastAPI（默认 :9000）；需要独立进程时设 DESKBOT_START_WEB=1"
   fi
 
   echo "[1/1] 启动 deskbot-server ($ROOT) ..."
@@ -224,7 +226,7 @@ run_services() {
 }
 
 # --- main ---
-export DESKBOT_START_WEB="${DESKBOT_START_WEB:-1}"
+export DESKBOT_START_WEB="${DESKBOT_START_WEB:-0}"
 
 ensure_python
 platform_warn_system_deps

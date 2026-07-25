@@ -1,0 +1,271 @@
+{% extends "base_2c.html" %}
+{% block page_title %}固件烧录 · 小歪{% endblock %}
+{% block extra_head %}
+<script src="{{ url_for('static', filename='vendor/vue.global.prod.min.js') }}"></script>
+<style>
+.flash-grid{display:grid;grid-template-columns:minmax(280px,360px) 1fr;gap:16px;align-items:start}
+@media(max-width:960px){.flash-grid{grid-template-columns:1fr}}
+.flash-card{background:#12141a;border:1px solid #2a2d36;border-radius:12px;padding:14px 16px}
+.flash-card h3{margin:0 0 10px;font-size:14px;letter-spacing:.06em;color:#9a9a90}
+.flash-row{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.flash-row label{font-size:12px;color:#9a9a90;min-width:52px}
+.flash-select,.flash-input{flex:1;min-width:180px;background:#0d0f14;border:1px solid #333641;color:#f6f5ef;border-radius:8px;padding:8px 10px;font-family:inherit}
+.flash-log{background:#0a0b0f;border:1px solid #252830;border-radius:10px;padding:10px;height:360px;overflow:auto;font:12px/1.45 "Space Mono",monospace;color:#d8d6ce;white-space:pre-wrap;word-break:break-word}
+.flash-roms{display:flex;flex-direction:column;gap:8px;max-height:280px;overflow:auto}
+.flash-rom{border:1px solid #2a2d36;border-radius:10px;padding:10px 12px;cursor:pointer;background:#0d0f14}
+.flash-rom.on{border-color:#ff5a00;background:#17120e}
+.flash-rom b{display:block;font-size:13px}
+.flash-rom small{color:#9a9a90}
+.flash-meta{font-size:12px;color:#9a9a90;margin-top:8px}
+.flash-err{color:#ff6b6b;font-size:13px;margin-top:8px}
+.flash-hint{font-size:12px;color:#9a9a90;margin:0 0 12px;line-height:1.5}
+.flash-badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#1f232d;color:#c8c6be;font-size:11px;margin-left:6px}
+</style>
+{% endblock %}
+{% block content %}
+<div id="flashApp">
+  <div class="pagehd">
+    <div>
+      <div class="eyebrow">FIRMWARE · LOCAL FLASH</div>
+      <h1>固件烧录</h1>
+      <p>在运行本服务的电脑上，通过 USB 串口烧录小歪 ROM，并查看/发送串口指令。</p>
+    </div>
+    <div class="btngroup">
+      <button type="button" class="btn ghost" @click="refreshAll" :disabled="busy">刷新</button>
+    </div>
+  </div>
+
+  <p class="flash-hint">
+    本页依赖本机串口与 PlatformIO（<code>pio</code>）。请将设备 USB 接到<strong>运行 deskbot-server 的电脑</strong>，再选择串口与 ROM。
+    预编译包可放到 <code>hardware/releases/*.bin</code>。
+  </p>
+
+  <div class="flash-grid">
+    <div class="flash-side">
+      <div class="flash-card">
+        <h3>串口</h3>
+        <div class="flash-row">
+          <label>设备</label>
+          <select class="flash-select" v-model="port">
+            <option value="">请选择串口</option>
+            <option v-for="p in ports" :key="p.port" :value="p.port">[[ p.port ]]</option>
+          </select>
+          <button type="button" class="btn ghost" @click="loadPorts">扫描</button>
+        </div>
+        <p class="flash-meta">检测到 [[ ports.length ]] 个串口 · 监视 [[ monitorOn ? '已连接' : '未连接' ]]</p>
+      </div>
+
+      <div class="flash-card" style="margin-top:12px">
+        <h3>ROM 列表</h3>
+        <div class="flash-roms">
+          <div v-for="r in roms" :key="r.id" class="flash-rom" :class="{on: selectedRomId===r.id}" @click="selectedRomId=r.id">
+            <b>[[ r.label ]]<span class="flash-badge">[[ r.kind ]]</span></b>
+            <small>[[ romMeta(r) ]]</small>
+            <div v-if="r.downloadable" style="margin-top:6px">
+              <a class="btn ghost" style="padding:4px 8px;font-size:12px" :href="'/api/flash/roms/'+encodeURIComponent(r.id)+'/download'">下载</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flash-card" style="margin-top:12px">
+        <h3>操作</h3>
+        <div class="flash-row">
+          <button type="button" class="btn ghost" @click="doBuild" :disabled="busy">仅编译</button>
+          <button type="button" class="btn primary" @click="doUpload" :disabled="busy || !port">烧录</button>
+          <button type="button" class="btn ghost" @click="doCancel" :disabled="!jobRunning">取消</button>
+        </div>
+        <div class="flash-row">
+          <button type="button" class="btn ghost" @click="startMonitor" :disabled="!port">打开串口日志</button>
+          <button type="button" class="btn ghost" @click="stopMonitor" :disabled="!monitorOn">关闭串口</button>
+        </div>
+        <p class="flash-meta" v-if="status.job">任务 [[ status.job.action ]] · [[ status.job.status ]]</p>
+      </div>
+    </div>
+
+    <div class="flash-main">
+      <div class="flash-card">
+        <h3>输出日志</h3>
+        <div class="flash-log" ref="logBox">[[ logText ]]</div>
+        <div class="flash-row" style="margin-top:10px">
+          <input class="flash-input" v-model="cmdText" placeholder="发送串口指令，例如 help 或 pb status" @keyup.enter="sendCmd">
+          <button type="button" class="btn primary" @click="sendCmd" :disabled="!monitorOn && !status.serial_port">发送</button>
+        </div>
+        <p class="flash-err" v-if="err">[[ err ]]</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const { createApp } = Vue;
+createApp({
+  delimiters: ['[[', ']]'],
+  data(){
+    return {
+      ports: [],
+      roms: [],
+      selectedRomId: 'source',
+      port: '',
+      status: { running: false, job: null, serial_port: null },
+      logLines: [],
+      logSince: 0,
+      cmdText: '',
+      err: '',
+      monitorOn: false,
+      ws: null,
+      pollTimer: null,
+    };
+  },
+  computed:{
+    logText(){ return this.logLines.join('\n'); },
+    busy(){ return !!this.status.running; },
+    jobRunning(){ return !!this.status.running; },
+  },
+  methods:{
+    async api(url, opts){
+      const r = await fetch(url, Object.assign({ cache: 'no-store' }, opts || {}));
+      const data = await r.json().catch(() => ({}));
+      if(!r.ok || data.ok === false){
+        throw new Error(data.error || ('HTTP '+r.status));
+      }
+      return data;
+    },
+    romMeta(r){
+      const parts = [];
+      if(r.size != null) parts.push(Math.round(r.size/1024)+' KB');
+      if(r.mtime) parts.push(new Date(r.mtime*1000).toLocaleString());
+      if(r.flash_mode === 'download_only') parts.push('仅下载');
+      return parts.join(' · ') || r.id;
+    },
+    appendLog(lines){
+      if(!lines || !lines.length) return;
+      this.logLines.push(...lines);
+      if(this.logLines.length > 5000) this.logLines.splice(0, this.logLines.length - 5000);
+      this.$nextTick(() => {
+        const el = this.$refs.logBox;
+        if(el) el.scrollTop = el.scrollHeight;
+      });
+    },
+    async loadPorts(){
+      const d = await this.api('/api/flash/ports');
+      this.ports = d.ports || [];
+      if(!this.port && this.ports.length) this.port = this.ports[0].port;
+    },
+    async loadRoms(){
+      const d = await this.api('/api/flash/roms');
+      this.roms = d.roms || [];
+      if(!this.roms.find(x => x.id === this.selectedRomId)){
+        this.selectedRomId = (this.roms[0] && this.roms[0].id) || 'source';
+      }
+    },
+    async pollStatus(){
+      try{
+        const d = await this.api('/api/flash/status?since='+this.logSince);
+        this.status = d;
+        const chunk = (d.log && d.log.lines) || [];
+        if(chunk.length){
+          this.appendLog(chunk);
+          this.logSince = d.log.since + chunk.length;
+        }
+      }catch(e){
+        this.err = String(e.message || e);
+      }
+    },
+    async refreshAll(){
+      this.err = '';
+      await Promise.all([this.loadPorts(), this.loadRoms(), this.pollStatus()]);
+    },
+    async doBuild(){
+      this.err = '';
+      try{
+        await this.api('/api/flash/build', { method:'POST' });
+        await this.pollStatus();
+      }catch(e){ this.err = String(e.message || e); }
+    },
+    async doUpload(){
+      this.err = '';
+      if(!this.port){ this.err = '请选择串口'; return; }
+      try{
+        await this.api('/api/flash/upload', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ port: this.port, rom_id: this.selectedRomId }),
+        });
+        await this.pollStatus();
+      }catch(e){ this.err = String(e.message || e); }
+    },
+    async doCancel(){
+      this.err = '';
+      try{
+        await this.api('/api/flash/cancel', { method:'POST' });
+        await this.pollStatus();
+      }catch(e){ this.err = String(e.message || e); }
+    },
+    closeWs(){
+      if(this.ws){
+        try{ this.ws.close(); }catch(_e){}
+      }
+      this.ws = null;
+      this.monitorOn = false;
+    },
+    async startMonitor(){
+      this.err = '';
+      if(!this.port){ this.err = '请选择串口'; return; }
+      this.closeWs();
+      try{
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = proto + '//' + location.host + '/api/flash/serial/ws?port=' + encodeURIComponent(this.port);
+        const ws = new WebSocket(url);
+        ws.binaryType = 'arraybuffer';
+        ws.onopen = () => { this.monitorOn = true; this.appendLog(['==> 串口监视已连接 '+this.port]); };
+        ws.onclose = () => { this.monitorOn = false; this.appendLog(['==> 串口监视已断开']); };
+        ws.onerror = () => { this.err = '串口 WebSocket 连接失败'; };
+        ws.onmessage = (ev) => {
+          if(typeof ev.data === 'string'){
+            this.appendLog([ev.data]);
+          }else if(ev.data instanceof ArrayBuffer){
+            const dec = new TextDecoder('utf-8', { fatal:false });
+            this.appendLog([dec.decode(ev.data)]);
+          }
+        };
+        this.ws = ws;
+      }catch(e){ this.err = String(e.message || e); }
+    },
+    async stopMonitor(){
+      this.closeWs();
+      try{
+        await this.api('/api/flash/monitor/stop', { method:'POST' });
+      }catch(e){ this.err = String(e.message || e); }
+    },
+    async sendCmd(){
+      const text = (this.cmdText || '').trim();
+      if(!text) return;
+      this.err = '';
+      try{
+        if(this.ws && this.ws.readyState === WebSocket.OPEN){
+          this.ws.send(text);
+        }else{
+          await this.api('/api/flash/monitor/send', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ text }),
+          });
+        }
+        this.appendLog(['>> '+text]);
+        this.cmdText = '';
+      }catch(e){ this.err = String(e.message || e); }
+    },
+  },
+  mounted(){
+    this.refreshAll();
+    this.pollTimer = setInterval(() => this.pollStatus(), 1200);
+  },
+  beforeUnmount(){
+    if(this.pollTimer) clearInterval(this.pollTimer);
+    this.closeWs();
+  },
+}).mount('#flashApp');
+</script>
+{% endblock %}

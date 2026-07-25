@@ -3,16 +3,13 @@ from __future__ import annotations
 import json
 import logging
 
-from deskbot_server.auth.api_key_service import (
+from deskbot_server.auth.debug_ws_token import extract_debug_token_from_query, verify_debug_ws_token
+from deskbot_server.dao.api_key_service import (
     ApiKeyAuth,
     QuotaExceededError,
     authenticate_api_key,
     extract_api_key_from_headers,
     extract_api_key_from_query,
-)
-from deskbot_server.auth.debug_ws_token import (
-    extract_debug_token_from_query,
-    verify_debug_ws_token,
 )
 
 logger = logging.getLogger("deskbot-server")
@@ -29,11 +26,7 @@ def resolve_api_key(*, qargs: dict, headers) -> ApiKeyAuth | None:
 
 def ws_auth_failure_response(*, reason: str, message: str) -> tuple[int, list, bytes]:
     body = json.dumps({"ok": False, "error": reason, "message": message}, ensure_ascii=False)
-    return (
-        401,
-        [("Content-Type", "application/json"), ("Access-Control-Allow-Origin", "*")],
-        body.encode("utf-8"),
-    )
+    return (401, [("Content-Type", "application/json"), ("Access-Control-Allow-Origin", "*")], body.encode("utf-8"))
 
 
 def ws_quota_failure_response() -> tuple[int, list, bytes]:
@@ -41,11 +34,7 @@ def ws_quota_failure_response() -> tuple[int, list, bytes]:
 
 
 async def ws_require_debug_subscriber_auth(
-    websocket,
-    qargs: dict,
-    *,
-    device_id: str | None = None,
-    require_device: bool = False,
+    websocket, qargs: dict, *, device_id: str | None = None, require_device: bool = False
 ) -> bool:
     """调试订阅 WS：API Key 或已登录用户签发的 ``debug_token``。成功返回 True。"""
     headers = getattr(websocket, "request", None)
@@ -53,7 +42,7 @@ async def ws_require_debug_subscriber_auth(
     auth = resolve_api_key(qargs=qargs, headers=hdr_map)
     if auth is not None:
         try:
-            from deskbot_server.auth.api_key_service import check_quota
+            from deskbot_server.dao.api_key_service import check_quota
 
             check_quota(auth.api_key_id, 0)
         except QuotaExceededError:
@@ -84,19 +73,11 @@ async def ws_require_debug_subscriber_auth(
         try:
             allowed = user_owns_device(user_id, did)
         except Exception:
-            logger.exception(
-                "debug subscriber WS device ownership check failed user_id=%s device_id=%s",
-                user_id,
-                did,
-            )
+            logger.exception("debug subscriber WS device ownership check failed user_id=%s device_id=%s", user_id, did)
             await websocket.close(code=1008, reason="auth_db_error")
             return False
         if not allowed:
-            logger.warning(
-                "debug subscriber WS rejected: forbidden_device user_id=%s device_id=%s",
-                user_id,
-                did,
-            )
+            logger.warning("debug subscriber WS rejected: forbidden_device user_id=%s device_id=%s", user_id, did)
             await websocket.close(code=1008, reason="forbidden_device")
             return False
 
@@ -112,7 +93,7 @@ async def ws_require_api_key(websocket, qargs: dict) -> ApiKeyAuth | None:
         await websocket.close(code=1008, reason="api_key_required")
         return None
     try:
-        from deskbot_server.auth.api_key_service import check_quota
+        from deskbot_server.dao.api_key_service import check_quota
 
         check_quota(auth.api_key_id, 0)
     except QuotaExceededError:
@@ -124,7 +105,7 @@ async def ws_require_api_key(websocket, qargs: dict) -> ApiKeyAuth | None:
 def http_require_api_key(qargs: dict, headers) -> ApiKeyAuth:
     auth = resolve_api_key(qargs=qargs, headers=headers)
     if auth is not None:
-        from deskbot_server.auth.api_key_service import check_quota
+        from deskbot_server.dao.api_key_service import check_quota
 
         check_quota(auth.api_key_id, 0)
         return auth
@@ -185,7 +166,7 @@ def record_turn_usage(
     llm_bytes: int = 0,
     tts_bytes: int = 0,
 ) -> None:
-    from deskbot_server.auth.api_key_service import QuotaExceededError, record_usage_checked
+    from deskbot_server.dao.api_key_service import QuotaExceededError, record_usage_checked
 
     try:
         if asr_bytes:

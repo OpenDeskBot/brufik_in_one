@@ -6,18 +6,19 @@ from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
 
-from flask import Blueprint, Response, jsonify, request
-from flask_login import current_user, login_required
+from fastapi import APIRouter
+from fastapi.responses import Response
 
-from deskbot_server.auth.api_key_service import read_free_api_key_raw
 from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
 from deskbot_server.auth.device_service import device_ids_for_user, user_owns_device
+from deskbot_server.dao.api_key_service import read_free_api_key_raw
+from deskbot_server.web.flaskish import FlaskishAPIRoute, current_user, jsonify, login_required, request
 from deskbot_server.web.helpers import deskbot_upstream_base
 from deskbot_server.web.session_device import get_current_device_id
 
 logger = logging.getLogger("deskbot-server")
 
-bp = Blueprint("proxy", __name__, url_prefix="/proxy/deskbot")
+router = APIRouter(route_class=FlaskishAPIRoute, prefix="/proxy/deskbot", tags=["proxy"])
 
 _DEVICE_PARAM_KEYS = ("device_id", "deviceid", "device", "id")
 
@@ -55,14 +56,14 @@ def _requires_device_id(path: str) -> bool:
     return path in _device_scoped_paths()
 
 
-@bp.route("/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+@router.api_route("/{subpath:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 @login_required
 def proxy_deskbot(subpath: str):
     path = "/" + subpath.lstrip("/")
     method = request.method.upper()
 
     if method == "OPTIONS":
-        return Response(status=204)
+        return Response(status_code=204)
 
     allowed_ids = device_ids_for_user(current_user.id)
 
@@ -71,7 +72,7 @@ def proxy_deskbot(subpath: str):
         if upstream.status_code != 200:
             return upstream
         try:
-            data = upstream.get_json()
+            data = json.loads(upstream.body)
         except Exception:
             return upstream
         devices = data.get("devices") if isinstance(data, dict) else None
@@ -158,6 +159,11 @@ def _forward(
         ctype = exc.headers.get("Content-Type", "application/json")
     except Exception as exc:
         logger.warning("proxy 转发失败 %s %s: %s", method, url, exc)
-        return jsonify({"ok": False, "error": f"upstream error: {exc}"}), 502
+        err = jsonify({"ok": False, "error": f"upstream error: {exc}"})
+        err.status_code = 502
+        return err
 
-    return Response(body, status=status, content_type=ctype)
+    return Response(content=body, status_code=status, media_type=ctype)
+
+
+ENDPOINTS = {"proxy.proxy_deskbot": "/proxy/deskbot/{subpath}"}

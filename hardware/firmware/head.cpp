@@ -1,19 +1,16 @@
 #include "head.h"
 
 #include <ESP32Servo.h>
-#include <cstring>
+#include <math.h>
 #include <driver/gpio.h>
 #include <soc/gpio_periph.h>
 #include <soc/io_mux_reg.h>
 
+#include "logger.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
-#include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "servo_early_init.h"
-
-int X_CENTER = 90;
-int Y_CENTER = 90;
 
 Servo servo_x;
 Servo servo_y;
@@ -27,6 +24,8 @@ static bool s_servos_attached    = false;
 static bool s_servo_timers_ready = false;
 
 static void head_sync_logical_pos(int x, int y);
+static constexpr int kServoPulseMinUs = 1000;
+static constexpr int kServoPulseMaxUs = 2000;
 
 /** 把全部 4 个 LEDC 定时器标记为已占用，迫使 servo.attach() 走 MCPWM（避让 camera XCLK 的 LEDC timer0）。
  *  可在 setup_camera 之前调用（仅改 ESP32Servo 库记账；相机仍直接配 LEDC 硬件）。 */
@@ -43,9 +42,9 @@ static void head_servo_claim_mcpwm_once() {
 
 /** attach 单轴并立即 write，防止 attach 时输出默认脉冲导致舵机乱动。 */
 static bool head_servo_attach_axis(Servo& servo, int pin, int deg, const char* label) {
-  const int ch = servo.attach(pin);
-  if (ch == 0) {
-    log_error("[SERVO] attach %s pin=%d failed (ch=0)", label, pin);
+  const int ch = servo.attach(pin, kServoPulseMinUs, kServoPulseMaxUs);
+  if (!servo.attached()) {
+    log_error("[SERVO] attach %s pin=%d failed (ch=%d)", label, pin, ch);
     return false;
   }
   servo.write(deg);
@@ -53,28 +52,20 @@ static bool head_servo_attach_axis(Servo& servo, int pin, int deg, const char* l
   return true;
 }
 
-/** attach 单轴，defer write（boot 双轴 attach 完再统一回中）。 */
-static bool head_servo_attach_axis_defer_write(Servo& servo, int pin, const char* label) {
-  const int ch = servo.attach(pin);
-  if (ch == 0) {
-    log_error("[SERVO] attach %s pin=%d failed (ch=0)", label, pin);
-    return false;
-  }
-  log_info("[SERVO] attach %s pin=%d ok ch=%d", label, pin, ch);
-  return true;
-}
-
-/** boot：双轴 attach，不在 attach 时写 PWM。 */
+/** boot：双轴 attach 并立即写入已预归中的目标，避免库默认脉宽导致跳动。 */
 static bool head_servo_boot_attach_pins() {
   if (s_servos_attached) return true;
   head_servo_claim_mcpwm_once();
-  if (!head_servo_attach_axis_defer_write(servo_y, Y_PIN, "Y")) return false;
-  if (!head_servo_attach_axis_defer_write(servo_x, X_PIN, "X")) {
+  const int x = constrain(X_CENTER, X_MIN_LIMIT, X_MAX_LIMIT);
+  const int y = constrain(Y_CENTER, Y_MIN_LIMIT, Y_MAX_LIMIT);
+  if (!head_servo_attach_axis(servo_y, Y_PIN, y, "Y")) return false;
+  if (!head_servo_attach_axis(servo_x, X_PIN, x, "X")) {
     servo_y.detach();
     return false;
   }
+  head_sync_logical_pos(x, y);
   s_servos_attached = true;
-  log_info("[SERVO] attach ok (await center)");
+  log_info("[SERVO] attach ok pos=(%d,%d)", x, y);
   return true;
 }
 
@@ -106,19 +97,11 @@ static void head_servo_write_y(int deg) {
 /* ---------------------------------------------------------------
  * Motor task：把舵机斜坡推进搬到独立 FreeRTOS 任务里。
  *
- * 目的：让"播放音频 / 录音 / 刷动画"在等待头部动作完成期间不再被 delay()
- * 占满 CPU。head_move 等公开接口仍然是"同步语义"（返回时动作已完成），
- * 等待是 binary semaphore，调度器会把 CPU 让给音频等高优先级 task。
+ * 目的：让"播放音频 / 录音 / 刷动画"不被头部动作的 delay() 阻塞。
+ * 公开接口只负责异步入队；motor_task 是唯一执行舵机 PWM 的上下文。
  *
- * 与 asr_chat / pb 触发的 head_* 仍可能并发写舵机；head_*
- * 命令期间退让，命令结束后逻辑角由 motor_task 维护。
+ * 队列由 task_setup_head 启动；pb/cmd 经 head_servo_cmd_async / enqueue_motion 入队。
  * ------------------------------------------------------------- */
-
-struct HeadPbMotorAckMsg {
-  char req[40];
-  uint32_t idx;
-};
-static QueueHandle_t s_pb_motor_ack_q = nullptr;
 
 static void head_sync_logical_pos(int x, int y) {
   s_logical_x = constrain(x, X_MIN_LIMIT, X_MAX_LIMIT);
@@ -148,16 +131,10 @@ struct MotorCmd {
   uint16_t ms;       /**< 非 0：本段墙钟总预算（ms）；此时忽略 hold_ms。 */
   uint16_t hold_ms;
   uint8_t  step_deg;
-  SemaphoreHandle_t notify_sem;
-  bool     pb_ack_after_done;
-  uint32_t pb_ack_idx;
-  char     pb_ack_req[40];
 };
 
 QueueHandle_t     s_motor_queue       = nullptr;
 TaskHandle_t      s_motor_task        = nullptr;
-SemaphoreHandle_t s_motor_done_sem    = nullptr;
-SemaphoreHandle_t s_motor_caller_lock = nullptr;
 
 /** 根据 xm/ym 模式将命令值转换为目标角度。 */
 static int resolve_target(uint8_t mode, int cur, int val, int lo, int hi) {
@@ -182,9 +159,6 @@ void motor_task(void* /*arg*/) {
     int x = s_logical_x;
     int y = s_logical_y;
     if (!head_servo_ensure_attached(x, y)) {
-      if (cmd.notify_sem) {
-        xSemaphoreGive(cmd.notify_sem);
-      }
       continue;
     }
     const int x_target = resolve_target(cmd.xm, x, cmd.x, X_MIN_LIMIT, X_MAX_LIMIT);
@@ -221,73 +195,32 @@ void motor_task(void* /*arg*/) {
     }
 
     head_sync_logical_pos(x, y);
-
-    if (cmd.notify_sem) {
-      xSemaphoreGive(cmd.notify_sem);
-    } else if (cmd.pb_ack_after_done && cmd.pb_ack_req[0] && s_pb_motor_ack_q) {
-      HeadPbMotorAckMsg out{};
-      strncpy(out.req, cmd.pb_ack_req, sizeof(out.req) - 1);
-      out.idx = cmd.pb_ack_idx;
-      (void)xQueueSend(s_pb_motor_ack_q, &out, 0);
-    }
   }
 }
 
-/** 丢弃队列中尚未被 motor_task 取走的命令；对 sync cmd 补 give，防止调用方永久阻塞。 */
+/** 丢弃队列中尚未被 motor_task 取走的命令。 */
 void drain_motor_queue_nonblocking() {
   if (!s_motor_queue) return;
   MotorCmd dropped{};
-  while (xQueueReceive(s_motor_queue, &dropped, 0) == pdTRUE)
-    if (dropped.notify_sem) xSemaphoreGive(dropped.notify_sem);
+  while (xQueueReceive(s_motor_queue, &dropped, 0) == pdTRUE) {}
 }
 
-void ensure_motor_task() {
-  if (!s_pb_motor_ack_q)
-    s_pb_motor_ack_q = xQueueCreate(8, sizeof(HeadPbMotorAckMsg));
-  /* 快速路径：三个句柄均已就绪。 */
-  if (s_motor_queue && s_motor_task && s_motor_done_sem && s_motor_caller_lock) return;
-  if (!s_motor_queue)       s_motor_queue       = xQueueCreate(32, sizeof(MotorCmd));
-  if (!s_motor_done_sem)    s_motor_done_sem    = xSemaphoreCreateBinary();
-  if (!s_motor_caller_lock) s_motor_caller_lock = xSemaphoreCreateMutex();
-  if (!s_motor_task)
-    /* core 1 (APP_CPU)，优先级 3：高于 act/anim，低于音频（5），确保 I2S 不被抢占。
-     * 栈 8KB：servo.write + FreeRTOS 帧；FFat 已移出本任务。 */
-    xTaskCreatePinnedToCore(motor_task, "motor", 8 * 1024, nullptr, 3, &s_motor_task, APP_CPU_NUM);
+/** 非阻塞入队。队列满时保留既有动作，丢弃新命令而不破坏正在排队的手势序列。 */
+static bool enqueue_motor(const MotorCmd& cmd) {
+  task_setup_head();
+  if (!s_motor_queue || xQueueSend(s_motor_queue, &cmd, 0) != pdTRUE) {
+    log_warn("[HEAD] motor queue full; drop new command");
+    return false;
+  }
+  return true;
 }
 
-/** 队列满则丢最旧 async 命令，避免在 WS 回调里 portMAX_DELAY 卡死。 */
-static void enqueue_motor_async_drop_oldest(const MotorCmd& cmd) {
-  if (xQueueSend(s_motor_queue, &cmd, 0) == pdTRUE) return;
-  MotorCmd dropped{};
-  if (xQueueReceive(s_motor_queue, &dropped, 0) == pdTRUE && dropped.notify_sem)
-    xSemaphoreGive(dropped.notify_sem);
-  (void)xQueueSend(s_motor_queue, &cmd, 0);
-}
-
-/** 提交一条 MotorCmd；sync=true 时阻塞等待执行完成。 */
-void submit_motor(uint8_t xm, int x, uint8_t ym, int y,
-                  uint16_t hold_ms, uint8_t step_deg, uint16_t ms,
-                  bool sync,
-                  bool pb_ack = false, uint32_t pb_idx = 0, const char* pb_req = nullptr) {
-  ensure_motor_task();
+static bool enqueue_motion(uint8_t xm, int x, uint8_t ym, int y,
+                           uint16_t hold_ms = 0, uint8_t step_deg = 0, uint16_t ms = 0) {
   MotorCmd cmd{};
   cmd.xm = xm; cmd.x = x; cmd.ym = ym; cmd.y = y;
   cmd.ms = ms; cmd.hold_ms = hold_ms; cmd.step_deg = step_deg;
-  if (pb_ack && pb_req && pb_req[0]) {
-    cmd.pb_ack_after_done = true;
-    cmd.pb_ack_idx = pb_idx;
-    strncpy(cmd.pb_ack_req, pb_req, sizeof(cmd.pb_ack_req) - 1);
-  }
-  if (sync) {
-    xSemaphoreTake(s_motor_caller_lock, portMAX_DELAY);
-    xSemaphoreTake(s_motor_done_sem, 0); /* 清理可能残留的旧 give */
-    cmd.notify_sem = s_motor_done_sem;
-    xQueueSend(s_motor_queue, &cmd, portMAX_DELAY);
-    xSemaphoreTake(s_motor_done_sem, portMAX_DELAY);
-    xSemaphoreGive(s_motor_caller_lock);
-  } else {
-    enqueue_motor_async_drop_oldest(cmd);
-  }
+  return enqueue_motor(cmd);
 }
 
 }  // namespace
@@ -296,41 +229,134 @@ void submit_motor(uint8_t xm, int x, uint8_t ym, int y,
  * 公开接口实现
  * ================================================================ */
 
-void head_servo_cmd_async(uint8_t xm, uint8_t ym, int x, int y, uint8_t step_deg, uint16_t ms,
-                          bool pb_ack_after_done, uint32_t pb_ack_idx, const char* pb_ack_req) {
-  submit_motor(xm, x, ym, y, /*hold_ms=*/0, step_deg, ms, /*sync=*/false,
-               pb_ack_after_done, pb_ack_idx, pb_ack_req);
+void task_setup_head() {
+  if (s_motor_queue && s_motor_task) return;
+  if (!s_motor_queue)       s_motor_queue       = xQueueCreate(HEAD_MOTOR_QUEUE_DEPTH, sizeof(MotorCmd));
+  if (!s_motor_queue) {
+    log_error("[HEAD] motor queue create failed");
+    return;
+  }
+  if (!s_motor_task) {
+    /* core 1 (APP_CPU)，优先级 3：高于 act/anim，低于音频（5），确保 I2S 不被抢占。
+     * 栈 8KB：servo.write + FreeRTOS 帧；FFat 已移出本任务。 */
+    const BaseType_t rc =
+        xTaskCreatePinnedToCore(motor_task, "motor", 8 * 1024, nullptr, 3, &s_motor_task, APP_CPU_NUM);
+    if (rc != pdPASS) {
+      log_error("[HEAD] motor task create rc=%d", (int)rc);
+    } else {
+      log_info("[HEAD] motor task started");
+    }
+  }
 }
 
-/* ---- 中位（固定 90/90，仅内存；factory 命令可临时 offset） ---- */
-
-void adjust_x_center(int offset) {
-  X_CENTER = constrain(X_CENTER + offset, X_MIN_LIMIT, X_MAX_LIMIT);
-  log_info("[Factory] X_CENTER=%d (runtime only)", X_CENTER);
+void head_servo_cmd_async(uint8_t xm, uint8_t ym, int x, int y, uint8_t step_deg, uint16_t ms) {
+  (void)enqueue_motion(xm, x, ym, y, /*hold_ms=*/0, step_deg, ms);
 }
 
-void adjust_y_center(int offset) {
-  Y_CENTER = constrain(Y_CENTER + offset, Y_MIN_LIMIT, Y_MAX_LIMIT);
-  log_info("[Factory] Y_CENTER=%d (runtime only)", Y_CENTER);
+/* ---- pb 下行 servo[] 暂存（与 audio/anim 同 chunk 对齐 flush） ---- */
+
+namespace {
+constexpr size_t kHeadMaxPbServoSegs = 32;
+struct HeadPbServoSeg {
+  int xm = HEAD_SERVO_HOLD;
+  int ym = HEAD_SERVO_HOLD;
+  int x = 0;
+  int y = 0;
+  uint16_t ms = 0;
+};
+HeadPbServoSeg s_pb_servo_segs[kHeadMaxPbServoSegs]{};
+size_t s_pb_servo_count = 0;
+
+static int head_json_number_to_int(JsonVariantConst v, int defv) {
+  if (v.isNull()) {
+    return defv;
+  }
+  return (int)lround(v.as<double>());
+}
+}  // namespace
+
+void head_clear_pb_servo_pending() {
+  s_pb_servo_count = 0;
+}
+
+size_t head_pb_servo_pending_count() {
+  return s_pb_servo_count;
+}
+
+void head_stage_pb_servo(JsonVariantConst servo_field) {
+  s_pb_servo_count = 0;
+  if (servo_field.isNull()) {
+    return;
+  }
+  if (!servo_field.is<JsonArrayConst>()) {
+    log_warn("[HEAD] pb servo must be array; ignore");
+    return;
+  }
+  JsonArrayConst arr = servo_field.as<JsonArrayConst>();
+  for (JsonObjectConst item : arr) {
+    if (s_pb_servo_count >= kHeadMaxPbServoSegs) {
+      log_warn("[HEAD] pb servo[] truncated at %u", (unsigned)kHeadMaxPbServoSegs);
+      break;
+    }
+    HeadPbServoSeg& seg = s_pb_servo_segs[s_pb_servo_count++];
+    seg.xm = constrain(head_json_number_to_int(item["xm"], HEAD_SERVO_HOLD), 0, 2);
+    seg.ym = constrain(head_json_number_to_int(item["ym"], HEAD_SERVO_HOLD), 0, 2);
+    seg.x = head_json_number_to_int(item["x"], 0);
+    seg.y = head_json_number_to_int(item["y"], 0);
+    seg.ms = (uint16_t)constrain(head_json_number_to_int(item["ms"], 0), 0, 65535);
+  }
+  if (s_pb_servo_count > 0) {
+    log_info("[HEAD] pb servo[] staged segs=%u", (unsigned)s_pb_servo_count);
+  }
+}
+
+void head_stage_pb_servo_json(const String& servo_json) {
+  JsonDocument doc;
+  const DeserializationError err = deserializeJson(doc, servo_json);
+  if (err || !doc.is<JsonArray>()) {
+    head_clear_pb_servo_pending();
+    log_warn("[HEAD] pb servo JSON invalid: %s", err ? err.c_str() : "not array");
+    return;
+  }
+  head_stage_pb_servo(doc.as<JsonVariantConst>());
+}
+
+bool head_flush_pb_servo() {
+  if (s_pb_servo_count == 0) {
+    return false;
+  }
+  const size_t n = s_pb_servo_count;
+  for (size_t i = 0; i < n; i++) {
+    const HeadPbServoSeg& seg = s_pb_servo_segs[i];
+    const uint16_t ms = (seg.ms > 0) ? seg.ms : (uint16_t)SERVO_TICK_MS;
+    head_servo_cmd_async((uint8_t)seg.xm, (uint8_t)seg.ym, seg.x, seg.y, /*step_deg=*/0, ms);
+  }
+  s_pb_servo_count = 0;
+  return true;
+}
+
+void head_submit_pb_servo_frames(const pb_servo_frame* frames, size_t count) {
+  if (!frames || count == 0) {
+    return;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    const pb_servo_frame& frame = frames[i];
+    const uint16_t ms =
+        frame.ms > 0 ? (uint16_t)constrain(frame.ms, 0, 65535) : (uint16_t)SERVO_TICK_MS;
+    head_servo_cmd_async((uint8_t)constrain(frame.xm, 0, 2), (uint8_t)constrain(frame.ym, 0, 2),
+                         frame.x, frame.y, /*step_deg=*/0, ms);
+  }
+  if (count > 0) {
+    log_info("[HEAD] pb servo[] submitted segs=%u", (unsigned)count);
+  }
 }
 
 /* ---- 初始化 ---- */
 
 void head_servo_boot_attach() {
   if (!head_servo_boot_attach_pins()) {
-    log_error("[SERVO] boot: attach failed, motor_task starts without servo");
-    ensure_motor_task();
+    log_error("[SERVO] boot: attach failed");
     return;
-  }
-  ensure_motor_task();
-  /* 双轴 attach 完成后统一回中：优先 motor_task 缓动；逻辑角已在中位时直接写 PWM。 */
-  const int lx = s_logical_x;
-  const int ly = s_logical_y;
-  submit_motor(HEAD_SERVO_ABS, X_CENTER, HEAD_SERVO_ABS, Y_CENTER, 0, 0, 0, true);
-  if (lx == X_CENTER && ly == Y_CENTER) {
-    head_servo_write_y(Y_CENTER);
-    head_servo_write_x(X_CENTER);
-    head_sync_logical_pos(X_CENTER, Y_CENTER);
   }
   log_info("[SERVO] boot center (%d,%d)", X_CENTER, Y_CENTER);
 }
@@ -340,7 +366,7 @@ void head_servo_boot_attach() {
  */
 static int head_deg_to_pulse_us(int deg) {
   deg = constrain(deg, 0, 180);
-  return 1000 + (deg * 1000) / 180;
+  return kServoPulseMinUs + (deg * (kServoPulseMaxUs - kServoPulseMinUs)) / 180;
 }
 
 /**
@@ -397,55 +423,52 @@ void setup_head() {
 
   head_gpio_soft_center_axis(Y_PIN, y_us, kCenterPeriodMs, kCenterPulses, "Y");
   head_gpio_soft_center_axis(X_PIN, x_us, kCenterPeriodMs, kCenterPulses, "X");
-  deskbot_servo_pins_claim_low();
 
   s_logical_x = X_CENTER;
   s_logical_y = Y_CENTER;
-  log_info("[HEAD] gpio-center done (pins LOW, await camera then permanent attach)");
+  log_info("[HEAD] gpio-center done (await camera then permanent attach)");
 }
 
 /* ---- 运动接口 ---- */
 
-void head_move(int x_offset, int y_offset, int /*servo_delay*/) {
-  submit_motor(HEAD_SERVO_REL, x_offset, HEAD_SERVO_REL, y_offset, 0, 0, 0, true);
+void head_move(int x_offset, int y_offset) {
+  (void)enqueue_motion(HEAD_SERVO_REL, x_offset, HEAD_SERVO_REL, y_offset);
 }
 
-void head_move_abs(int x_deg, int y_deg, int /*servo_delay*/) {
-  submit_motor(HEAD_SERVO_ABS, x_deg, HEAD_SERVO_ABS, y_deg, 0, 0, 0, true);
+void head_move_abs(int x_deg, int y_deg) {
+  (void)enqueue_motion(HEAD_SERVO_ABS, x_deg, HEAD_SERVO_ABS, y_deg);
 }
 
 void head_move_ex(int x_offset, int y_offset, uint8_t step_deg, uint16_t hold_ms) {
-  submit_motor(HEAD_SERVO_REL, x_offset, HEAD_SERVO_REL, y_offset, hold_ms, step_deg, 0, true);
+  (void)enqueue_motion(HEAD_SERVO_REL, x_offset, HEAD_SERVO_REL, y_offset, hold_ms, step_deg);
 }
 
 void head_move_abs_ex(int x_deg, int y_deg, uint8_t step_deg, uint16_t hold_ms) {
-  submit_motor(HEAD_SERVO_ABS, x_deg, HEAD_SERVO_ABS, y_deg, hold_ms, step_deg, 0, true);
+  (void)enqueue_motion(HEAD_SERVO_ABS, x_deg, HEAD_SERVO_ABS, y_deg, hold_ms, step_deg);
 }
 
-void head_center(int /*servo_delay*/)  { head_move_abs(X_CENTER, Y_CENTER); }
-void head_right(int offset)            { submit_motor(HEAD_SERVO_REL,  offset, HEAD_SERVO_HOLD, 0, 0, 0, 0, true); }
-void head_left(int offset)             { submit_motor(HEAD_SERVO_REL, -offset, HEAD_SERVO_HOLD, 0, 0, 0, 0, true); }
-void head_down(int offset)             { submit_motor(HEAD_SERVO_HOLD, 0, HEAD_SERVO_REL,  offset, 0, 0, 0, true); }
-void head_up(int offset)               { submit_motor(HEAD_SERVO_HOLD, 0, HEAD_SERVO_REL, -offset, 0, 0, 0, true); }
+void head_center()                     { head_move_abs(X_CENTER, Y_CENTER); }
+void head_right(int offset)            { (void)enqueue_motion(HEAD_SERVO_REL,  offset, HEAD_SERVO_HOLD, 0); }
+void head_left(int offset)             { (void)enqueue_motion(HEAD_SERVO_REL, -offset, HEAD_SERVO_HOLD, 0); }
+void head_down(int offset)             { (void)enqueue_motion(HEAD_SERVO_HOLD, 0, HEAD_SERVO_REL,  offset); }
+void head_up(int offset)               { (void)enqueue_motion(HEAD_SERVO_HOLD, 0, HEAD_SERVO_REL, -offset); }
 
-void head_nod(int /*servo_delay*/) {
+void head_nod() {
   for (int i = 0; i < 2; i++) {
-    submit_motor(HEAD_SERVO_REL, 0, HEAD_SERVO_REL,  20, k_head_gesture_hold_ms, 0, 0, true);
-    submit_motor(HEAD_SERVO_REL, 0, HEAD_SERVO_REL, -20, k_head_gesture_hold_ms, 0, 0, true);
+    (void)enqueue_motion(HEAD_SERVO_REL, 0, HEAD_SERVO_REL,  20, k_head_gesture_hold_ms);
+    (void)enqueue_motion(HEAD_SERVO_REL, 0, HEAD_SERVO_REL, -20, k_head_gesture_hold_ms);
   }
 }
 
 void head_shake_async() {
-  ensure_motor_task();
   static const int8_t kSeq[] = {-10, 20, -20, 20, -10};
-  MotorCmd cmd{};
-  cmd.xm = HEAD_SERVO_REL; cmd.ym = HEAD_SERVO_HOLD;
-  cmd.hold_ms = k_head_gesture_hold_ms;
-  for (int dx : kSeq) { cmd.x = dx; enqueue_motor_async_drop_oldest(cmd); }
-  log_info("[HEAD] head_shake_async queued (%zu segments)", sizeof(kSeq));
+  for (int dx : kSeq)
+    (void)enqueue_motion(HEAD_SERVO_REL, dx, HEAD_SERVO_HOLD, 0, k_head_gesture_hold_ms);
+  log_info("[HEAD] head_shake_async queued (%u segments)",
+           (unsigned)(sizeof(kSeq) / sizeof(kSeq[0])));
 }
 
-void head_roll_left(int /*servo_delay*/) {
+void head_roll_left() {
   /* 画圈幅度按硬限位行程比例，勿用已废弃的 Y_OFFSET(45)。 */
   static constexpr int k_dip = (Y_MAX_LIMIT - Y_MIN_LIMIT) / 4 + 5;
   static constexpr int k_x_half = (X_MAX_LIMIT - X_MIN_LIMIT) / 2;
@@ -459,7 +482,7 @@ void head_roll_left(int /*servo_delay*/) {
   head_center();
 }
 
-void head_roll_right(int /*servo_delay*/) {
+void head_roll_right() {
   static constexpr int k_dip = (Y_MAX_LIMIT - Y_MIN_LIMIT) / 4 + 5;
   static constexpr int k_x_half = (X_MAX_LIMIT - X_MIN_LIMIT) / 2;
   static constexpr int k_y_quarter = (Y_MAX_LIMIT - Y_MIN_LIMIT) / 4;
@@ -475,27 +498,20 @@ void head_roll_right(int /*servo_delay*/) {
 /* ---- 任务管理 ---- */
 
 void head_clear_motor_pending() {
-  ensure_motor_task();
+  task_setup_head();
   drain_motor_queue_nonblocking();
 }
 
-bool head_take_pb_motor_ack_done(char* req_out, size_t req_cap, uint32_t* idx_out) {
-  if (!s_pb_motor_ack_q || !req_out || req_cap < 2 || !idx_out) return false;
-  HeadPbMotorAckMsg m{};
-  if (xQueueReceive(s_pb_motor_ack_q, &m, 0) != pdTRUE) return false;
-  strncpy(req_out, m.req, req_cap - 1);
-  req_out[req_cap - 1] = '\0';
-  *idx_out = m.idx;
+bool head_drop_oldest_motor_pending() {
+  task_setup_head();
+  if (!s_motor_queue) return false;
+  MotorCmd dropped{};
+  if (xQueueReceive(s_motor_queue, &dropped, 0) != pdTRUE) return false;
+  log_warn("[HEAD] drop oldest motor command for PB scheduler");
   return true;
 }
 
-void head_drain_pb_motor_ack_queue() {
-  if (!s_pb_motor_ack_q) return;
-  HeadPbMotorAckMsg m{};
-  while (xQueueReceive(s_pb_motor_ack_q, &m, 0) == pdTRUE) {}
-}
-
 unsigned head_motor_input_queue_depth() {
-  ensure_motor_task();
+  task_setup_head();
   return s_motor_queue ? (unsigned)uxQueueMessagesWaiting(s_motor_queue) : 0u;
 }

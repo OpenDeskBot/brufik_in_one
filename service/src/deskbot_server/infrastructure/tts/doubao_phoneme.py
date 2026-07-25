@@ -4,8 +4,8 @@ import logging
 
 from deskbot_server.core.ports.tts import PhonemeSegment
 from deskbot_server.core.settings import AppSettings
-from deskbot_server.tts.doubao import load_doubao_tts_config, synthesize_doubao_tts
-from deskbot_server.tts.doubao_phoneme_align import build_phoneme_segments
+from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config, synthesize_doubao_tts
+from deskbot_server.infrastructure.tts.doubao_phoneme_align import build_phoneme_segments
 
 logger = logging.getLogger("deskbot-server")
 
@@ -30,11 +30,7 @@ class DoubaoPhonemeTtsAdapter:
             raise RuntimeError(f"豆包 TTS 无 PCM: {clean!r}")
 
         segs = build_phoneme_segments(
-            text=clean,
-            pcm=pcm,
-            sample_rate=sr,
-            sentence_end=result.sentence_end,
-            subtitles=result.subtitles,
+            text=clean, pcm=pcm, sample_rate=sr, sentence_end=result.sentence_end, subtitles=result.subtitles
         )
         logger.info(
             "[TTS/doubao] 音素分片 n=%d pcm_bytes=%d elapsed_ms=%d text=%r",

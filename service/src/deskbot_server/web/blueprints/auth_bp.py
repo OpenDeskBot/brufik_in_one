@@ -2,19 +2,25 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
-from flask_login import current_user, login_required, login_user, logout_user
+from fastapi import APIRouter
 
 from deskbot_server.auth.flask_user import FlaskUser
-from deskbot_server.auth.service import (
-    create_user,
-    get_user_by_email,
-    normalize_email,
-    verify_password,
-)
+from deskbot_server.auth.service import create_user, get_user_by_email, normalize_email, verify_password
 from deskbot_server.db.engine import remove_session
+from deskbot_server.web.flaskish import (
+    FlaskishAPIRoute,
+    current_user,
+    flash,
+    login_required,
+    login_user,
+    logout_user,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 
-bp = Blueprint("auth", __name__)
+router = APIRouter(route_class=FlaskishAPIRoute, tags=["auth"])
 
 
 def _safe_next_url(raw: str | None) -> str:
@@ -28,14 +34,14 @@ def _safe_next_url(raw: str | None) -> str:
     return raw
 
 
-@bp.get("/login")
+@router.get("/login")
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("app2c.home"))
     return render_template("auth/login.html", next_url=_safe_next_url(request.args.get("next")))
 
 
-@bp.post("/login")
+@router.post("/login")
 def login_post():
     email = normalize_email(request.form.get("email") or "")
     password = request.form.get("password") or ""
@@ -51,14 +57,14 @@ def login_post():
     return redirect(next_url)
 
 
-@bp.get("/register")
+@router.get("/register")
 def register():
     if current_user.is_authenticated:
         return redirect(url_for("app2c.home"))
     return render_template("auth/register.html")
 
 
-@bp.post("/register")
+@router.post("/register")
 def register_post():
     email = normalize_email(request.form.get("email") or "")
     password = request.form.get("password") or ""
@@ -76,7 +82,7 @@ def register_post():
     remove_session()
     flash("注册成功，欢迎加入！", "success")
     # 新用户：若还没有可用的大模型（本地未配置 Ark/LLM 密钥），先进入统一模型配置页。
-    from deskbot_server.llm.runtime import resolve_system_llm_config
+    from deskbot_server.infrastructure.llm.runtime import resolve_system_llm_config
 
     key = str(resolve_system_llm_config().api_key or "").strip()
     if not key or "请替换" in key:
@@ -84,10 +90,19 @@ def register_post():
     return redirect(url_for("app2c.home"))
 
 
-@bp.post("/logout")
+@router.post("/logout")
 @login_required
 def logout():
     logout_user()
     remove_session()
     flash("已退出登录", "info")
     return redirect(url_for("site.index"))
+
+
+ENDPOINTS = {
+    "auth.login": "/login",
+    "auth.login_post": "/login",
+    "auth.register": "/register",
+    "auth.register_post": "/register",
+    "auth.logout": "/logout",
+}

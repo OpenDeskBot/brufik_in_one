@@ -42,12 +42,7 @@ _NAMED_RGB888: dict[str, tuple[int, int, int]] = {
 }
 
 
-def apply_pb_dispatch_fields(
-    frames: list[dict[str, Any]],
-    *,
-    action: str,
-    level: int,
-) -> None:
+def apply_pb_dispatch_fields(frames: list[dict[str, Any]], *, action: str, level: int) -> None:
     """为 pb 链各分片写入统一的 ``action`` / ``level``。"""
     for one in frames:
         one["action"] = action
@@ -58,11 +53,7 @@ _PB_HINT_TYPES = frozenset({"pb_start", "pb_chunk", "pb_end", "pb_single"})
 
 
 def attach_pb_device_hints(
-    msg: dict[str, Any],
-    *,
-    volume: int | None = None,
-    cam_fps: int | None = None,
-    mic: str | None = None,
+    msg: dict[str, Any], *, volume: int | None = None, cam_fps: int | None = None, mic: str | None = None
 ) -> None:
     """为 ``pb_start`` / ``pb_chunk`` / ``pb_end`` / ``pb_single`` 附加设备侧提示。"""
     if msg.get("type") not in _PB_HINT_TYPES:
@@ -76,11 +67,7 @@ def attach_pb_device_hints(
 
 
 def apply_pb_device_hints_to_frames(
-    frames: list[dict[str, Any]],
-    *,
-    volume: int | None = None,
-    cam_fps: int | None = None,
-    mic: str | None = None,
+    frames: list[dict[str, Any]], *, volume: int | None = None, cam_fps: int | None = None, mic: str | None = None
 ) -> None:
     """为 pb 链各分片写入统一的 ``volume`` / ``cam_fps`` / ``mic``（仅适用类型）。"""
     for one in frames:
@@ -194,9 +181,7 @@ def _legacy_default_mouth_rect_for_phoneme(ph: str) -> list[dict[str, Any]]:
     if ph in ("_", "sil"):
         w, h = 30, closed_h
         raw = [{"shape": "rect", "x": round(cx - w / 2), "y": 52, "w": w, "h": h}]
-    elif ph in (
-        "a", "o", "e", "ai", "ei", "ao", "ou", "er", "ua", "uo", "uai", "uei",
-    ):
+    elif ph in ("a", "o", "e", "ai", "ei", "ao", "ou", "er", "ua", "uo", "uai", "uei"):
         w, h = 40, open_h
         raw = [{"shape": "rect", "x": round(cx - w / 2), "y": y0, "w": w, "h": h}]
     elif ph.startswith(("i", "u", "v")) or ph in ("iu", "ui", "ve"):
@@ -230,9 +215,7 @@ def default_face_circles() -> dict[str, list[dict[str, Any]]]:
 
 def _default_mouth_fallback_shape() -> dict[str, Any]:
     return {
-        "elements": [
-            scale_primitive({"shape": "rect", "x": 46, "y": 46, "w": 36, "h": 9}),
-        ],
+        "elements": [scale_primitive({"shape": "rect", "x": 46, "y": 46, "w": 36, "h": 9})],
         "offset": {"x": 0, "y": 0},
     }
 
@@ -349,25 +332,11 @@ def normalize_primitive_for_wire(prim: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def apply_anim_bg_color_elements(
-    elements: dict[str, Any],
-    *,
-    bg: Any = None,
-    color: Any = None,
-) -> dict[str, Any]:
+def apply_anim_bg_color_elements(elements: dict[str, Any], *, bg: Any = None, color: Any = None) -> dict[str, Any]:
     """将 LLM ``anims[]`` 项上的 ``bg`` / ``color`` 并入 ``elements``（配置侧字符串，wire 前转 ``c``）。"""
     out = copy.deepcopy(elements)
     if bg is not None and str(bg).strip() != "":
-        out["bg"] = [
-            {
-                "shape": "rect",
-                "x": 0,
-                "y": 0,
-                "w": FACE_LCD_WIDTH,
-                "h": FACE_LCD_HEIGHT,
-                "color": bg,
-            }
-        ]
+        out["bg"] = [{"shape": "rect", "x": 0, "y": 0, "w": FACE_LCD_WIDTH, "h": FACE_LCD_HEIGHT, "color": bg}]
     if color is not None and str(color).strip() != "":
         for layer in ("extra", "mouth", "nose", "eye_l", "eye_r", "bg"):
             prims = out.get(layer)
@@ -457,9 +426,7 @@ def _add_offset_to_primitive_inplace(q: dict[str, Any], dx: int, dy: int) -> Non
         q["y"] = int(q.get("y", 0)) + dy
 
 
-def apply_offset_to_primitives(
-    primitives: list[dict[str, Any]], dx: int, dy: int
-) -> list[dict[str, Any]]:
+def apply_offset_to_primitives(primitives: list[dict[str, Any]], dx: int, dy: int) -> list[dict[str, Any]]:
     """对眼、鼻等图元做平移（嘴不调）；支持协议主名及别名（见 ``normalize_primitive_shape``）。"""
     if dx == 0 and dy == 0:
         return copy.deepcopy(primitives)
@@ -508,8 +475,7 @@ def is_mouth_phoneme_group_entry(val: Any) -> bool:
 
 
 def expand_mouth_by_phoneme(
-    mouth_by: dict[str, Any] | None,
-    groups: list[Any] | None = None,
+    mouth_by: dict[str, Any] | None, groups: list[Any] | None = None
 ) -> dict[str, dict[str, Any]]:
     """把口型配置展开为 音素 -> ``{elements, offset}``，供查表。
 
@@ -551,12 +517,7 @@ def collapse_mouth_by_phoneme(mouth_flat: dict[str, Any]) -> dict[str, Any]:
     sig_norm: dict[str, dict[str, Any]] = {}
     for ph, raw in mouth_flat.items():
         norm = _normalize_mouth_entry(raw)
-        sig = json.dumps(
-            [norm["elements"], norm["offset"]],
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        sig = json.dumps([norm["elements"], norm["offset"]], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         sig_to_phones.setdefault(sig, []).append(str(ph))
         sig_norm[sig] = norm
     singles: dict[str, Any] = {}
@@ -565,17 +526,10 @@ def collapse_mouth_by_phoneme(mouth_flat: dict[str, Any]) -> dict[str, Any]:
         phones = sorted(set(sig_to_phones[sig]))
         norm = sig_norm[sig]
         if len(phones) == 1:
-            singles[phones[0]] = {
-                "elements": copy.deepcopy(norm["elements"]),
-                "offset": dict(norm["offset"]),
-            }
+            singles[phones[0]] = {"elements": copy.deepcopy(norm["elements"]), "offset": dict(norm["offset"])}
         else:
             groups_out.append(
-                {
-                    "states": phones,
-                    "elements": copy.deepcopy(norm["elements"]),
-                    "offset": dict(norm["offset"]),
-                }
+                {"states": phones, "elements": copy.deepcopy(norm["elements"]), "offset": dict(norm["offset"])}
             )
     result: dict[str, Any] = {"mouth_by_phoneme": singles}
     if groups_out:
@@ -663,10 +617,7 @@ def expand_extra_part(raw: Any, groups: list[Any] | None) -> dict[str, list[dict
     return out
 
 
-def expand_eye_part(
-    raw: Any,
-    groups: list[Any] | None,
-) -> dict[str, list[dict[str, Any]]]:
+def expand_eye_part(raw: Any, groups: list[Any] | None) -> dict[str, list[dict[str, Any]]]:
     """展开 ``eye_*``：``*_groups`` 数组 + ``eye_*`` 对象上 ``default``/``open``/``close`` 图元列表（后者覆盖同态）。"""
     p = copy.deepcopy(raw) if isinstance(raw, dict) else {}
     out: dict[str, list[dict[str, Any]]] = {"default": [], "open": [], "close": []}
@@ -712,9 +663,7 @@ def expand_nose_part(raw: Any, groups: list[Any] | None) -> dict[str, list[dict[
     return out
 
 
-def collapse_eye_part(
-    norm: dict[str, Any],
-) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+def collapse_eye_part(norm: dict[str, Any]) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
     """导出眼图：统一写入 ``*_groups`` 数组（与鼻、口型组条排版一致）。
 
     - 图元序列相同的多个态合并为一条 ``states`` 多元素；否则每条 ``states`` 仅含一个态名。
@@ -745,9 +694,7 @@ def collapse_eye_part(
     return {}, groups_out
 
 
-def collapse_nose_part(
-    norm: dict[str, Any],
-) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+def collapse_nose_part(norm: dict[str, Any]) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
     """鼻仅 ``default``：导出为 ``nose: {}`` + ``nose_groups`` 单条（与 demo 口型排版一致）。"""
     d = _eye_primitives_list(norm.get("default") if isinstance(norm, dict) else None)
     if not d:
@@ -796,4 +743,3 @@ def _blink_eye_phase(elapsed_ms: int, blink_cfg: dict[str, Any]) -> str:
         return "default"
     pos = max(0, elapsed_ms) % cycle
     return "open" if pos < open_ms else "close"
-

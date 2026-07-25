@@ -6,102 +6,19 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Optional
 
-from websockets.exceptions import ConnectionClosed
-
-from deskbot_server.constants import (
-    PB_CHUNK_GAP_SEC,
-    PB_JSON_BIN_GAP_SEC,
-    PB_MAX_PCM_BIN_BYTES,
-    SAFE_SEND_TIMEOUT,
-)
-from deskbot_server.util import _peer_str
+from deskbot_server.constants import PB_CHUNK_GAP_SEC, PB_MAX_PCM_BIN_BYTES, SAFE_SEND_TIMEOUT
+from deskbot_server.service.application.asr_chat_uplink import pack_ws_downlink_frame
+from deskbot_server.utils.ws_utils import WsUtils
 from deskbot_server.ws.pb_idle_registry import note_pb_idle_after_successful_asr_send
 
 logger = logging.getLogger("deskbot-server")
 
-
-def _send_timeout_for_message(message, *, base: float = SAFE_SEND_TIMEOUT) -> float:
-    """大 binary 帧适当加长写超时，避免误判为对端挂死。"""
-    if isinstance(message, (bytes, bytearray)):
-        n = len(message)
-        if n > 0:
-            return min(60.0, max(base, n / 8000.0 + 2.0))
-    return base
-
-_WS_OUTBOUND_LOCK_ATTR = "_bot_outbound_send_lock"
-_PB_DEVICE_QUEUE_ATTR = "_bot_pb_device_downlink_queue"
-_PB_DEVICE_WORKER_ATTR = "_bot_pb_device_downlink_worker"
-_PB_WS_CHAIN_SERIAL_LOCK_ATTR = "_bot_pb_ws_chain_serial_lock"
-
-
-def _get_ws_send_lock(ws) -> asyncio.Lock:
-    lock = getattr(ws, _WS_OUTBOUND_LOCK_ATTR, None)
-    if lock is None:
-        lock = asyncio.Lock()
-        setattr(ws, _WS_OUTBOUND_LOCK_ATTR, lock)
-    return lock
-
-
-async def _safe_send_once(
-    websocket,
-    message,
-    *,
-    timeout: Optional[float] = None,
-) -> bool:
-    """对 ``websocket`` 执行单次 ``send``（**不**加锁；由调用方保证互斥或独占锁）。
-
-    返回是否成功写出（``True``）；连接已关/超时/其它异常返回 ``False``。
-    """
-    if timeout is None:
-        timeout = _send_timeout_for_message(message)
-    kind = "bytes" if isinstance(message, (bytes, bytearray)) else "text"
-    n = len(message) if isinstance(message, (bytes, bytearray, str)) else 0
-    try:
-        await asyncio.wait_for(websocket.send(message), timeout=timeout)
-        return True
-    except ConnectionClosed as exc:
-        code = getattr(exc, "code", None)
-        reason = getattr(exc, "reason", None)
-        logger.warning(
-            "[ws] send 失败 ConnectionClosed peer=%s kind=%s nbytes=%d code=%s reason=%r",
-            _peer_str(websocket),
-            kind,
-            n,
-            code,
-            reason,
-        )
-        if code == 1009:
-            logger.warning(
-                "[ws] 1009 message too big：单帧过大（TEXT 常见为 anim JSON 超 ESP32 上限，"
-                "binary 约 %d bytes）",
-                n,
-            )
-        return False
-    except asyncio.TimeoutError:
-        try:
-            await websocket.close(code=1011, reason="send timeout")
-        except Exception:
-            pass
-        try:
-            peer = _peer_str(websocket)
-        except Exception:
-            peer = "?"
-        logger.warning(
-            "[ws] _safe_send 超时 (>%.1fs)，主动关闭 ws peer=%s msg_kind=%s",
-            timeout,
-            peer,
-            "bytes" if isinstance(message, (bytes, bytearray)) else "text",
-        )
-        return False
-    except Exception as exc:
-        logger.warning(
-            "[ws] send 失败 %s peer=%s kind=%s nbytes=%d",
-            type(exc).__name__,
-            _peer_str(websocket),
-            kind,
-            n,
-        )
-        return False
+# 兼容旧调用名（实现已迁入 WsUtils）
+_peer_str = WsUtils.peer_str
+_safe_send = WsUtils.safe_send
+_safe_send_once = WsUtils.safe_send_once
+_get_ws_send_lock = WsUtils.get_ws_send_lock
+_send_timeout_for_message = WsUtils.send_timeout_for_message
 
 
 class _PerWsFireAndForget:
@@ -111,7 +28,7 @@ class _PerWsFireAndForget:
     - 任一订阅者写得慢/挂死，绝不会反压回到调用方协程
     - 慢订阅者代价是降帧（直到队列发完或超时关闭），但**生产端永远不卡**
     - 待发送队列有上限，避免慢订阅者无限堆积
-    - 配合 :func:`_safe_send` 内置 ``timeout`` 保底——单个 inflight 任务最坏
+    - 配合 :meth:`WsUtils.safe_send` 内置 ``timeout`` 保底——单个 inflight 任务最坏
       ``WS_SEND_TIMEOUT_SEC`` 秒后必然结束（超时则主动 close 该 ws，
       下一次 publish 直接 done）。
     """
@@ -124,7 +41,7 @@ class _PerWsFireAndForget:
 
     async def _drain(self, ws, message) -> None:
         while message is not None:
-            await _safe_send(ws, message)
+            await WsUtils.safe_send(ws, message)
             q = self._pending.get(ws)
             if q:
                 try:
@@ -158,54 +75,13 @@ class _PerWsFireAndForget:
             task.cancel()
 
 
-async def _safe_send(
-    websocket, message, *, timeout: Optional[float] = None
-) -> bool:
-    """往 WS 发一条消息；与同连接上其它发送共享互斥锁，保证帧顺序。
-
-    - 客户端已断开：吞掉 ConnectionClosed，避免 ERROR 日志刷屏。
-    - **写超时**：超过 ``timeout`` 秒（默认 10s，``WS_SEND_TIMEOUT_SEC``）视为对端反压/挂死，主动
-      ``close()`` 这条连接并返回，**绝不让一个慢/死的客户端把生产端的
-      协程整个卡住**（典型场景：ESP32 在播 TTS 时 RX 满，服务端 await
-      ws.send 卡 → 上行处理冻结 → 越来越多僵尸连接）。
-    - 其它异常（比如 RuntimeError）也被吞掉，默认行为不抛。
-    返回是否成功写出。
-    """
-    if timeout is None:
-        timeout = _send_timeout_for_message(message)
-    ok = False
-    async with _get_ws_send_lock(websocket):
-        ok = await _safe_send_once(websocket, message, timeout=timeout)
-    if ok:
-        note_pb_idle_after_successful_asr_send(websocket)
-    return ok
-
-
 async def _safe_send_pb_json_then_pcm(
-    websocket,
-    text_msg: str,
-    pcm: bytes,
-    *,
-    timeout: float = SAFE_SEND_TIMEOUT,
+    websocket, text_msg: str, pcm: bytes, *, timeout: float = SAFE_SEND_TIMEOUT
 ) -> tuple[bool, bool]:
-    """发送一条 pb 文本帧后发送紧随的 PCM binary（若有），中间不允许插入其它帧。
-
-    返回 ``(json_ok, pcm_ok)``；无 PCM 时 ``pcm_ok`` 为 True。
-    """
-    async with _get_ws_send_lock(websocket):
-        ok_t = await _safe_send_once(websocket, text_msg, timeout=timeout)
-        if ok_t:
-            note_pb_idle_after_successful_asr_send(websocket)
-        ok_p = True
-        if pcm:
-            if PB_JSON_BIN_GAP_SEC > 0:
-                await asyncio.sleep(PB_JSON_BIN_GAP_SEC)
-            ok_p = await _safe_send_once(
-                websocket, pcm, timeout=_send_timeout_for_message(pcm, base=timeout)
-            )
-            if ok_p:
-                note_pb_idle_after_successful_asr_send(websocket)
-        return ok_t, ok_p
+    """打包为单帧 BIN 下发（json + 可选 PCM）。返回 ``(ok, ok)``。"""
+    return await _safe_send_pb_json_then_binaries(
+        websocket, text_msg, [pcm] if pcm else [], timeout=timeout
+    )
 
 
 _PB_DEVICE_QUEUE_ATTR = "_bot_pb_device_downlink_queue"
@@ -261,28 +137,21 @@ def _expected_audio_bin_len(wire: str) -> int:
 
 
 async def _safe_send_pb_json_then_binaries(
-    websocket,
-    text_msg: str,
-    binaries: list[bytes],
-    *,
-    timeout: float = SAFE_SEND_TIMEOUT,
+    websocket, text_msg: str, binaries: list[bytes], *, timeout: float = SAFE_SEND_TIMEOUT
 ) -> tuple[bool, bool]:
-    """JSON 后按序发送 binary 列表（PCM + assets）。"""
-    async with _get_ws_send_lock(websocket):
-        ok_t = await _safe_send_once(websocket, text_msg, timeout=timeout)
-        if ok_t:
+    """单帧 BIN：``u32be(json_len)+json+concat(binaries)``（与上行对称）。"""
+    try:
+        frame = pack_ws_downlink_frame(text_msg, binaries)
+    except ValueError as exc:
+        logger.error("[pb TX] pack failed peer=%s err=%s", _peer_str(websocket), exc)
+        return False, False
+    async with WsUtils.get_ws_send_lock(websocket):
+        ok = await WsUtils.safe_send_once(
+            websocket, frame, timeout=WsUtils.send_timeout_for_message(frame, base=timeout)
+        )
+        if ok:
             note_pb_idle_after_successful_asr_send(websocket)
-        ok_all = True
-        for blob in binaries:
-            if PB_JSON_BIN_GAP_SEC > 0:
-                await asyncio.sleep(PB_JSON_BIN_GAP_SEC)
-            ok_b = await _safe_send_once(
-                websocket, blob, timeout=_send_timeout_for_message(blob, base=timeout)
-            )
-            if ok_b:
-                note_pb_idle_after_successful_asr_send(websocket)
-            ok_all = ok_all and ok_b
-        return ok_t, ok_all
+        return ok, ok
 
 
 async def _pb_device_downlink_worker(ws) -> None:
@@ -310,9 +179,7 @@ async def _pb_device_downlink_worker(ws) -> None:
                         PB_MAX_PCM_BIN_BYTES,
                         _peer_str(ws),
                     )
-                ok_t, ok_b = await _safe_send_pb_json_then_binaries(
-                    ws, job.wire, job.binaries
-                )
+                ok_t, ok_b = await _safe_send_pb_json_then_binaries(ws, job.wire, job.binaries)
                 job.ok_json, job.ok_bins = ok_t, ok_b
                 if not ok_t or not ok_b:
                     logger.warning(
@@ -326,21 +193,16 @@ async def _pb_device_downlink_worker(ws) -> None:
             else:
                 if expect_lens:
                     logger.warning(
-                        "[pb TX] JSON 声明 %d 个 binary 但 payload 为空 peer=%s",
-                        len(expect_lens),
-                        _peer_str(ws),
+                        "[pb TX] JSON 声明 %d 个 binary 但 payload 为空 peer=%s", len(expect_lens), _peer_str(ws)
                     )
-                job.ok_json = await _safe_send(ws, job.wire)
-                job.ok_bins = True
+                ok_t, ok_b = await _safe_send_pb_json_then_binaries(ws, job.wire, [])
+                job.ok_json, job.ok_bins = ok_t, ok_b
                 if not job.ok_json:
                     logger.warning("[pb TX] JSON 下发失败 peer=%s", _peer_str(ws))
             if PB_CHUNK_GAP_SEC > 0 and job.binaries:
                 await asyncio.sleep(PB_CHUNK_GAP_SEC)
         except Exception:
-            logger.exception(
-                "[pb TX] worker 异常 peer=%s",
-                _peer_str(ws),
-            )
+            logger.exception("[pb TX] worker 异常 peer=%s", _peer_str(ws))
         finally:
             if job is not None:
                 job.done.set()
@@ -426,7 +288,5 @@ async def _send_pb_wire_to_asr_device(
         await q.put(job)
         await job.done.wait()
         return bool(job.ok_json and job.ok_bins)
-    if bins:
-        ok_t, ok_b = await _safe_send_pb_json_then_binaries(websocket, wire, bins)
-        return bool(ok_t and ok_b)
-    return bool(await _safe_send(websocket, wire))
+    ok_t, ok_b = await _safe_send_pb_json_then_binaries(websocket, wire, bins)
+    return bool(ok_t and ok_b)

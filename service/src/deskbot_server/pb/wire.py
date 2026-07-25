@@ -10,19 +10,18 @@ import uuid
 from typing import Any, Optional
 
 from deskbot_server.constants import PB_MAX_WIRE_JSON_BYTES
-
 from deskbot_server.pb.face_bundle import resolve_pb_face_bundle
+from deskbot_server.pb.llm_display import apply_llm_display_to_rows
 from deskbot_server.pb.llm_plan import (
     build_anim_rows_for_llm_plan,
     expand_llm_anims,
     expand_llm_moves,
     interleave_tts_segs_with_llm_plan,
 )
-from deskbot_server.pb.llm_display import apply_llm_display_to_rows
 from deskbot_server.pb.phoneme_anim import phoneme_seq_to_anim_seq
 from deskbot_server.pb.servo_pcm import (
-    PB_CHUNK_MS_MAX,
     PB_ACTION_REPLACE,
+    PB_CHUNK_MS_MAX,
     align_pcm_s16le_mono_to_chunk_ms,
     apply_parallel_pb_servo,
     apply_random_pb_servo_actions,
@@ -34,25 +33,18 @@ from deskbot_server.pb.servo_pcm import (
 
 logger = logging.getLogger("deskbot-server")
 
+
 def pb_wire_json_bytes(payload: dict[str, Any]) -> int:
-    return len(
-        json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    )
+    return len(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
 
-def compact_pb_wire_payload(
-    msg: dict[str, Any], *, max_bytes: int | None = None
-) -> dict[str, Any]:
+def compact_pb_wire_payload(msg: dict[str, Any], *, max_bytes: int | None = None) -> dict[str, Any]:
     """设备 pb 下行：保留完整 ``anim[]`` 图元，不做裁剪（仅用于日志与测试）。"""
     out = copy.deepcopy(msg)
     limit = PB_MAX_WIRE_JSON_BYTES if max_bytes is None else max_bytes
     sz = pb_wire_json_bytes(out)
     if sz > limit:
-        logger.warning(
-            "[pb TX] wire JSON %d bytes 超过参考上限 %d（未裁剪 anim；请确认固件 WS TEXT 缓冲）",
-            sz,
-            limit,
-        )
+        logger.warning("[pb TX] wire JSON %d bytes 超过参考上限 %d（未裁剪 anim；请确认固件 WS TEXT 缓冲）", sz, limit)
     return out
 
 
@@ -111,11 +103,7 @@ def build_pb_wire_pairs(
             from deskbot_server.pb.servo_pcm import _silence_phoneme_seg
 
             prefix_segs = [
-                _silence_phoneme_seg(
-                    max(40, int(move_steps[i].get("ms", 40))),
-                    sample_rate,
-                )
-                for i in range(leading_n)
+                _silence_phoneme_seg(max(40, int(move_steps[i].get("ms", 40))), sample_rate) for i in range(leading_n)
             ]
             segs = prefix_segs + list(segs)
         segs, parallel_servo, parallel_anim = interleave_tts_segs_with_llm_plan(
@@ -132,18 +120,11 @@ def build_pb_wire_pairs(
             leading_n,
         )
     else:
-        segs, parallel_servo = interleave_tts_phoneme_segs_with_servo_plan(
-            segs, servo_plan, sample_rate
-        )
-        logger.info(
-            "[pb TX] 音素分片与 servo 计划交错后 segments=%d（含 hold/补静音承载的多余舵机）",
-            len(segs),
-        )
+        segs, parallel_servo = interleave_tts_phoneme_segs_with_servo_plan(segs, servo_plan, sample_rate)
+        logger.info("[pb TX] 音素分片与 servo 计划交错后 segments=%d（含 hold/补静音承载的多余舵机）", len(segs))
 
     if parallel_anim is not None:
-        anim_rows = build_anim_rows_for_llm_plan(
-            segs, parallel_anim, face_bundle, device_id=device_id
-        )
+        anim_rows = build_anim_rows_for_llm_plan(segs, parallel_anim, face_bundle, device_id=device_id)
     else:
         anim_rows = phoneme_seq_to_anim_seq(segs, face_bundle, device_id=device_id)
     pcm_list: list[bytes] = []
@@ -157,22 +138,15 @@ def build_pb_wire_pairs(
 
     n_llm_servo = apply_parallel_pb_servo(anim_rows, parallel_servo)
     if n_llm_servo:
-        logger.info(
-            "[pb TX] 已将 %d 条分片附上舵机/hold（parallel 与交错后分片对齐）",
-            n_llm_servo,
-        )
+        logger.info("[pb TX] 已将 %d 条分片附上舵机/hold（parallel 与交错后分片对齐）", n_llm_servo)
 
     if leading_n > 0 and leading_n < len(anim_rows):
         lead_rows = anim_rows[:leading_n]
         tail_rows = anim_rows[leading_n:]
         lead_pcm = pcm_list[:leading_n]
         tail_pcm = pcm_list[leading_n:]
-        merged_lead, merged_lead_pcm = merge_pb_subchunks(
-            lead_rows, lead_pcm, sample_rate=sample_rate
-        )
-        merged_tail, merged_tail_pcm = merge_pb_subchunks(
-            tail_rows, tail_pcm, sample_rate=sample_rate
-        )
+        merged_lead, merged_lead_pcm = merge_pb_subchunks(lead_rows, lead_pcm, sample_rate=sample_rate)
+        merged_tail, merged_tail_pcm = merge_pb_subchunks(tail_rows, tail_pcm, sample_rate=sample_rate)
         merged_rows = merged_lead + merged_tail
         merged_pcm = merged_lead_pcm + merged_tail_pcm
         logger.info(
@@ -184,19 +158,11 @@ def build_pb_wire_pairs(
             leading_n,
         )
     else:
-        merged_rows, merged_pcm = merge_pb_subchunks(
-            anim_rows, pcm_list, sample_rate=sample_rate
-        )
+        merged_rows, merged_pcm = merge_pb_subchunks(anim_rows, pcm_list, sample_rate=sample_rate)
         logger.info(
-            "[pb TX] 分片合并 %d → %d（单包 chunk_ms 上限 %d ms）",
-            len(anim_rows),
-            len(merged_rows),
-            PB_CHUNK_MS_MAX,
+            "[pb TX] 分片合并 %d → %d（单包 chunk_ms 上限 %d ms）", len(anim_rows), len(merged_rows), PB_CHUNK_MS_MAX
         )
-    apply_llm_display_to_rows(
-        merged_rows,
-        images=images,
-    )
+    apply_llm_display_to_rows(merged_rows, images=images)
 
     pb_req = request_id or uuid.uuid4().hex[:16]
     from deskbot_server.pb.servo_pcm import parse_pb_cam_fps
@@ -207,7 +173,7 @@ def build_pb_wire_pairs(
     audio_blobs: list[bytes] = list(merged_pcm)
     opus_frames: list[int] | None = None
     if output_fmt == "opus":
-        from deskbot_server.pipeline.opus_downlink import encode_pcm_s16le_to_opus_batch
+        from deskbot_server.service.pipeline.opus_downlink import encode_pcm_s16le_to_opus_batch
 
         audio_blobs = []
         opus_frames = []

@@ -8,10 +8,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Response
 from websockets.streams import StreamReader
 
-from deskbot_server.ws.http11_compat import (
-    parse_http_request_with_body,
-    patch_websockets_http11_for_rest_api,
-)
+from deskbot_server.ws.http11_compat import parse_http_request_with_body, patch_websockets_http11_for_rest_api
 
 
 def _drive(reader: StreamReader, gen):
@@ -28,17 +25,11 @@ def test_parse_post_json_body():
     raw = (
         b"POST /api/device_tts HTTP/1.1\r\n"
         b"Content-Type: application/json\r\n"
-        b"Content-Length: "
-        + str(len(body)).encode()
-        + b"\r\n\r\n"
-        + body
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
     )
     reader = StreamReader()
     reader.feed_data(raw)
-    req = _drive(
-        reader,
-        parse_http_request_with_body(reader.read_line, reader.read_exact),
-    )
+    req = _drive(reader, parse_http_request_with_body(reader.read_line, reader.read_exact))
     assert getattr(req, "method", None) == "POST"
     assert req.path == "/api/device_tts"
     assert json.loads(getattr(req, "body", b"").decode()) == payload
@@ -48,10 +39,7 @@ def test_parse_get_without_body():
     raw = b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n"
     reader = StreamReader()
     reader.feed_data(raw)
-    req = _drive(
-        reader,
-        parse_http_request_with_body(reader.read_line, reader.read_exact),
-    )
+    req = _drive(reader, parse_http_request_with_body(reader.read_line, reader.read_exact))
     assert getattr(req, "method", None) == "GET"
     assert req.path == "/health"
     assert getattr(req, "body", b"") == b""
@@ -71,12 +59,7 @@ def test_websockets_serve_accepts_post():
                 return make_resp()
             return make_resp()
 
-        async with websockets.serve(
-            lambda ws: None,
-            "127.0.0.1",
-            0,
-            process_request=process_request,
-        ) as server:
+        async with websockets.serve(lambda ws: None, "127.0.0.1", 0, process_request=process_request) as server:
             port = server.sockets[0].getsockname()[1]
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
             writer.write(b"POST /test HTTP/1.1\r\nContent-Length: 0\r\n\r\n")

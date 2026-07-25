@@ -1,10 +1,8 @@
 """network_connectivity_test 工具与 pb_ack 路径的单元测试。"""
+
 from __future__ import annotations
 
 import asyncio
-import time
-
-import pytest
 
 from deskbot_server.ws.pb_ack_waiter import PbAckGate
 

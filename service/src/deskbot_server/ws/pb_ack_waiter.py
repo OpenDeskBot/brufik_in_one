@@ -13,12 +13,7 @@ logger = logging.getLogger("deskbot-server")
 
 
 def pb_wait_ack_enabled() -> bool:
-    return os.environ.get("PB_WAIT_ACK", "1").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-        "off",
-    )
+    return os.environ.get("PB_WAIT_ACK", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def pb_wait_ack_timeout_sec() -> float:
@@ -74,14 +69,7 @@ class PbAckGate:
                 st.last_idx = idx
             st.cond.notify_all()
 
-    async def wait_idx(
-        self,
-        device_id: str,
-        req: str,
-        idx: int,
-        *,
-        timeout: Optional[float] = None,
-    ) -> bool:
+    async def wait_idx(self, device_id: str, req: str, idx: int, *, timeout: Optional[float] = None) -> bool:
         if not device_id or not req:
             return True
         if timeout is None:
@@ -111,13 +99,7 @@ class PbAckGate:
                         st.last_idx,
                     )
                     return False
-        logger.info(
-            "[pb_ack] 已确认 device_id=%s req=%s need_idx=%s last_idx=%s",
-            device_id,
-            req,
-            idx,
-            st.last_idx,
-        )
+        logger.info("[pb_ack] 已确认 device_id=%s req=%s need_idx=%s last_idx=%s", device_id, req, idx, st.last_idx)
         return True
 
 

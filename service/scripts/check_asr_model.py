@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """检查 ASR 模型目录是否就绪；退出码 0=已就绪，1=缺失。"""
+
 from __future__ import annotations
 
 import sys
@@ -8,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from deskbot_server.asr_model_dir import asr_model_dir_ready  # noqa: E402
+from deskbot_server.infrastructure.asr.model_dir import asr_model_dir_ready  # noqa: E402
 
 
 def main() -> None:

@@ -1,4 +1,5 @@
 """pb_idle_silence 去重逻辑单元测试。"""
+
 from __future__ import annotations
 
 import asyncio

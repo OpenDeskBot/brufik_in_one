@@ -24,6 +24,9 @@ parts/
 sdist/
 var/
 wheels/
+!src/deskbot_server/iotctl/wheels/
+!src/deskbot_server/iotctl/wheels/**
+src/deskbot_server/iotctl/wheels/*.whl
 share/python-wheels/
 *.egg-info/
 .installed.cfg
@@ -176,6 +179,7 @@ data/opendesk.db
 data/opendesk.db-shm
 data/opendesk.db-wal
 data/device/
+data/miot-cli/
 data/user_memory.json
 data/face_profiles.json
 data/face_live_snapshot.json

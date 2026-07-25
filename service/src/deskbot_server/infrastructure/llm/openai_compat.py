@@ -13,9 +13,9 @@ except ImportError:
     ZoneInfo = None  # type: ignore[misc, assignment]
 
 from deskbot_server.core.settings import AppSettings
-from deskbot_server.llm.runtime import chat_acompletion, resolve_llm_config
-from deskbot_server.llm.user_message import build_llm_user_message
-from deskbot_server.llm.utils import (
+from deskbot_server.infrastructure.llm.runtime import chat_acompletion, resolve_llm_config
+from deskbot_server.infrastructure.llm.user_message import build_llm_user_message
+from deskbot_server.infrastructure.llm.utils import (
     llm_device_screen_appendix,
     llm_pb_scenes_prompt_appendix,
     llm_static_context_prompt_appendix,
@@ -43,16 +43,7 @@ def _wrap_plain_text_llm_answer(text: str) -> str | None:
         return None
     if plain.startswith("{") or plain.startswith("["):
         return None
-    return json.dumps(
-        {
-            "need_reply": True,
-            "tts": plain,
-            "moves": [],
-            "anims": [],
-            "tools": [],
-        },
-        ensure_ascii=False,
-    )
+    return json.dumps({"need_reply": True, "tts": plain, "moves": [], "anims": [], "tools": []}, ensure_ascii=False)
 
 
 class OpenAiLlmAdapter:
@@ -74,15 +65,11 @@ class OpenAiLlmAdapter:
         return now.strftime("%Y-%m-%d %H:%M:%S") + " " + weekdays[now.weekday()]
 
     def _resolve_system_prompt(self, *, device_id: Optional[str] = None) -> str:
-        from deskbot_server.device_data import load_llm_system_prompt
+        from deskbot_server.utils.device_data import load_llm_system_prompt
 
         return load_llm_system_prompt(device_id) or self._default_system_prompt
 
-    def _build_system_prompt(
-        self,
-        *,
-        device_id: Optional[str] = None,
-    ) -> str:
+    def _build_system_prompt(self, *, device_id: Optional[str] = None) -> str:
         base = f"{self._resolve_system_prompt(device_id=device_id)}\n当前时间是: {self._beijing_time_str()}（北京时间，东八区）"
         base += "\n" + llm_device_screen_appendix(device_id)
         px = llm_pb_scenes_prompt_appendix(device_id=device_id)
@@ -128,14 +115,8 @@ class OpenAiLlmAdapter:
         use_stream_tts = bool(on_tts_ready) and llm_cfg.protocol != "ark_responses"
 
         system_content = self._build_system_prompt(device_id=device_id)
-        user_content = build_llm_user_message(
-            user_text,
-            device_id=device_id,
-            device_context=device_context,
-        )
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": system_content},
-        ]
+        user_content = build_llm_user_message(user_text, device_id=device_id, device_context=device_context)
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
         if history_messages:
             messages.extend(history_messages)
         messages.append({"role": "user", "content": user_content})
@@ -173,18 +154,12 @@ class OpenAiLlmAdapter:
             wrapped = _wrap_plain_text_llm_answer(answer)
             if wrapped:
                 logger.info(
-                    "[LLM] 首轮输出为纯文本，已包装为 JSON device_id=%s preview=%r",
-                    device_id,
-                    (answer or "")[:120],
+                    "[LLM] 首轮输出为纯文本，已包装为 JSON device_id=%s preview=%r", device_id, (answer or "")[:120]
                 )
                 answer = wrapped
                 parsed = parse_llm_reply(answer)
             else:
-                logger.warning(
-                    "[LLM] 首轮输出非 JSON，重试 device_id=%s preview=%r",
-                    device_id,
-                    (answer or "")[:120],
-                )
+                logger.warning("[LLM] 首轮输出非 JSON，重试 device_id=%s preview=%r", device_id, (answer or "")[:120])
                 retry_messages = list(messages)
                 retry_messages.append({"role": "assistant", "content": answer})
                 retry_messages.append(
@@ -192,18 +167,14 @@ class OpenAiLlmAdapter:
                         "role": "user",
                         "content": (
                             "上轮输出不是合法 JSON。请仅输出一个 JSON 对象（不要 markdown 代码围栏、不要解释），"
-                            '格式含 need_reply、tts、moves、anims、tools 等字段。'
+                            "格式含 need_reply、tts、moves、anims、tools 等字段。"
                         ),
                     }
                 )
                 answer = await _chat(retry_messages, stream_tts=False, first_token_timeout=0)
                 parsed = parse_llm_reply(answer)
         elif parsed.get("tools") and not (parsed.get("reply") or "").strip():
-            logger.info(
-                "[LLM] tools 轮无 tts，跳过过渡语重试 device_id=%s tools=%s",
-                device_id,
-                parsed.get("tools"),
-            )
+            logger.info("[LLM] tools 轮无 tts，跳过过渡语重试 device_id=%s tools=%s", device_id, parsed.get("tools"))
         if not use_stream_tts:
             await _prefetch_tts(parsed)
         return answer

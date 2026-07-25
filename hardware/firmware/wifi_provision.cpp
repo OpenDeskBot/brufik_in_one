@@ -4,9 +4,9 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include "common.h"
 #include "deskbot_config.h"
-#include "oled.h"
+#include "display.h"
+#include "utils/utils.h"
 
 namespace {
 
@@ -23,8 +23,9 @@ struct WifiCredential {
   String password;
 };
 
-static void oled_show_wifi_connected();
-bool try_connect_credential(const char* source_label, int max_attempts);
+static void display_show_wifi_connected();
+bool try_connect_credential(const char* source_label, int max_attempts,
+                            bool ssid_already_visible);
 int load_saved_wifi_list(WifiCredential* out, int max_out);
 int build_visible_saved_candidates(const WifiCredential* saved, int saved_count,
                                    WifiCredential* out, int max_out);
@@ -48,9 +49,9 @@ unsigned long s_wifi_quick_reconnect_start_ms = 0;
 volatile bool s_wifi_event_disconnected = false;
 volatile bool s_wifi_event_got_ip = false;
 
-static constexpr unsigned long kWifiCheckIntervalUpMs = 5000;
 static constexpr unsigned long kWifiCheckIntervalDownMs = 2000;
 static constexpr unsigned long kWifiQuickReconnectWaitMs = 8000;
+static constexpr unsigned long kConfigPortalTimeoutMs = 5UL * 60UL * 1000UL;
 static constexpr int kWifiMaintainConnectAttempts = 20;
 
 static bool wifi_link_up() {
@@ -78,7 +79,7 @@ static void notify_wifi_link_up() {
   s_wifi_quick_reconnect_active = false;
   s_wifi_reconnect_backoff_ms = 3000;
   apply_wifi_runtime_keepalive();
-  oled_show_wifi_connected();
+  display_show_wifi_connected();
   if (!s_wifi_was_up && s_link_up_handler != nullptr) {
     s_link_up_handler();
   }
@@ -124,7 +125,7 @@ static bool attempt_runtime_wifi_reconnect() {
     password = visible[i].password;
     Serial.printf("[wifi] maintain try saved visible [%d/%d] ssid=%s\r\n", i + 1,
                   visible_count, ssid.c_str());
-    if (try_connect_credential("maintain", kWifiMaintainConnectAttempts)) {
+    if (try_connect_credential("maintain", kWifiMaintainConnectAttempts, true)) {
       return true;
     }
   }
@@ -133,7 +134,7 @@ static bool attempt_runtime_wifi_reconnect() {
     ssid = WIFI_DEFAULT_SSID;
     password = WIFI_DEFAULT_PASSWORD;
     Serial.printf("[wifi] maintain try default ssid=%s\r\n", ssid.c_str());
-    if (try_connect_credential("maintain-default", kWifiMaintainConnectAttempts)) {
+    if (try_connect_credential("maintain-default", kWifiMaintainConnectAttempts, false)) {
       return true;
     }
   }
@@ -218,28 +219,28 @@ static bool scan_target_ssid_visible() {
   return found;
 }
 
-static void oled_wifi_ssid_line(char* out, size_t out_len) {
+static void display_wifi_ssid_line(char* out, size_t out_len) {
   snprintf(out, out_len, "SSID:%.20s", ssid.c_str());
 }
 
-static void oled_show_wifi_connecting() {
+static void display_show_wifi_connecting() {
   char line1[48];
   char line2[40];
   char line3[28];
   char ssid_line[28];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   snprintf(line3, sizeof(line3), "WiFi 连接中...");
-  oled_wifi_ssid_line(ssid_line, sizeof(ssid_line));
-  oled_boot_show4(line1, line2, line3, ssid_line);
+  display_wifi_ssid_line(ssid_line, sizeof(ssid_line));
+  display_boot_show4(line1, line2, line3, ssid_line);
 }
 
 /** 根据扫描与 WiFi.status() 在屏幕上展示失败原因。 */
-static void oled_show_wifi_fail(wl_status_t st, bool ssid_in_scan, const char* next_hint) {
+static void display_show_wifi_fail(wl_status_t st, bool ssid_in_scan, const char* next_hint) {
   char line1[48];
   char line2[40];
   char line3[28];
   char line4[40];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   const char* detail;
   if (st == WL_CONNECT_FAILED) {
     detail = "密码错误";
@@ -254,18 +255,18 @@ static void oled_show_wifi_fail(wl_status_t st, bool ssid_in_scan, const char* n
   } else {
     line4[0] = '\0';
   }
-  oled_boot_show4(line1, line2, line3, line4[0] != '\0' ? line4 : nullptr);
+  display_boot_show4(line1, line2, line3, line4[0] != '\0' ? line4 : nullptr);
 }
 
-static void oled_show_wifi_connected() {
+static void display_show_wifi_connected() {
   char line1[48];
   char line2[40];
   char line3[40];
   char line4[40];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   snprintf(line3, sizeof(line3), "WiFi:%.18s", WiFi.SSID().c_str());
   snprintf(line4, sizeof(line4), "IP:%s", WiFi.localIP().toString().c_str());
-  oled_boot_show4(line1, line2, line3, line4);
+  display_boot_show4(line1, line2, line3, line4);
 }
 
 String json_escape(const String& raw) {
@@ -666,6 +667,8 @@ void setup_http_server() {
   done_config = false;
 
   Serial.printf("[wifi] opening AP %s\r\n", kApSsid);
+  // AP+STA：配网页 /scan-wifi 需要 STA 扫描能力
+  WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(kApSsid);
 
   server.on("/", HTTP_GET, []() {
@@ -685,20 +688,61 @@ void setup_http_server() {
   });
 
   server.on("/scan-wifi", HTTP_GET, []() {
-    String json = "[";
-    int n = WiFi.scanNetworks();
+    constexpr int kMaxScanOut = 32;
+    String uniq_ssid[kMaxScanOut];
+    int uniq_rssi[kMaxScanOut];
+    int uniq_count = 0;
 
+    const int n = WiFi.scanNetworks();
     for (int i = 0; i < n; ++i) {
+      const String s = WiFi.SSID(i);
+      if (s.length() == 0) {
+        continue;
+      }
+      const int r = WiFi.RSSI(i);
+      int found = -1;
+      for (int j = 0; j < uniq_count; ++j) {
+        if (uniq_ssid[j] == s) {
+          found = j;
+          break;
+        }
+      }
+      if (found >= 0) {
+        if (r > uniq_rssi[found]) {
+          uniq_rssi[found] = r;
+        }
+      } else if (uniq_count < kMaxScanOut) {
+        uniq_ssid[uniq_count] = s;
+        uniq_rssi[uniq_count] = r;
+        uniq_count++;
+      }
+    }
+    WiFi.scanDelete();
+
+    for (int i = 0; i < uniq_count; ++i) {
+      for (int j = i + 1; j < uniq_count; ++j) {
+        if (uniq_rssi[j] > uniq_rssi[i]) {
+          const int tmp_r = uniq_rssi[i];
+          uniq_rssi[i] = uniq_rssi[j];
+          uniq_rssi[j] = tmp_r;
+          String tmp_s = uniq_ssid[i];
+          uniq_ssid[i] = uniq_ssid[j];
+          uniq_ssid[j] = tmp_s;
+        }
+      }
+    }
+
+    String json = "[";
+    for (int i = 0; i < uniq_count; ++i) {
       if (i > 0) json += ",";
       json += "{";
-      json += "\"ssid\":\"" + json_escape(WiFi.SSID(i)) + "\",";
-      json += "\"rssi\":" + String(WiFi.RSSI(i));
+      json += "\"ssid\":\"" + json_escape(uniq_ssid[i]) + "\",";
+      json += "\"rssi\":" + String(uniq_rssi[i]);
       json += "}";
     }
     json += "]";
 
     server.send(200, "application/json", json);
-    WiFi.scanDelete();
   });
 
   server.on("/save-wifi", HTTP_POST, []() {
@@ -734,10 +778,10 @@ void setup_http_server() {
   char line2[40];
   char line3[40];
   char line4[40];
-  oled_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
+  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   snprintf(line3, sizeof(line3), "连接热点 %s", kApSsid);
   snprintf(line4, sizeof(line4), "浏览器打开 http://%s", ip.toString().c_str());
-  oled_boot_show4(line1, line2, line3, line4);
+  display_boot_show4(line1, line2, line3, line4);
 }
 
 void config_wifi() {
@@ -746,8 +790,13 @@ void config_wifi() {
   delay(200);
   setup_http_server();
 
+  const unsigned long portal_start_ms = millis();
   while (!done_config) {
     server.handleClient();
+    if (millis() - portal_start_ms >= kConfigPortalTimeoutMs) {
+      Serial.println("[wifi] config portal timeout, retry connect");
+      break;
+    }
     delay(10);
   }
 
@@ -755,42 +804,48 @@ void config_wifi() {
   WiFi.softAPdisconnect(true);
   WiFi.disconnect(true, true);
   delay(200);
-  Serial.println("[wifi] config saved, reconnecting...");
+  if (done_config) {
+    Serial.println("[wifi] config saved, reconnecting...");
+  }
 }
 
-bool start_wifi_sta(const char* source_label, bool* out_ssid_in_scan) {
+bool start_wifi_sta(const char* source_label, bool* out_ssid_in_scan, bool ssid_already_visible) {
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   WiFi.disconnect(true, true);
   delay(300);
   WiFi.mode(WIFI_STA);
   delay(100);
-  const bool ssid_in_scan = scan_target_ssid_visible();
+  const bool ssid_in_scan = ssid_already_visible ? true : scan_target_ssid_visible();
   if (out_ssid_in_scan != nullptr) {
     *out_ssid_in_scan = ssid_in_scan;
   }
-  oled_show_wifi_connecting();
+  display_show_wifi_connecting();
   if (!ssid_in_scan) {
-    oled_show_wifi_fail(WL_NO_SSID_AVAIL, false, "重试中...");
+    display_show_wifi_fail(WL_NO_SSID_AVAIL, false, "重试中...");
   }
   WiFi.begin(ssid.c_str(), password.c_str());
-  WiFi.setSleep(false);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
-  esp_wifi_set_ps(WIFI_PS_NONE);
+  apply_wifi_runtime_keepalive();
   Serial.printf("[wifi] connecting ssid=%s pass_len=%u visible=%d (%s)\r\n", ssid.c_str(),
                 (unsigned)password.length(), (int)ssid_in_scan, source_label);
   return true;
 }
 
-bool try_connect_credential(const char* source_label, int max_attempts) {
+bool try_connect_credential(const char* source_label, int max_attempts, bool ssid_already_visible) {
   bool ssid_in_scan = false;
   wl_status_t last_status = WL_IDLE_STATUS;
-  wl_status_t last_oled_fail_status = WL_IDLE_STATUS;
-  bool last_oled_ssid_missing = false;
+  wl_status_t last_display_fail_status = WL_IDLE_STATUS;
+  bool last_display_ssid_missing = false;
 
-  start_wifi_sta(source_label, &ssid_in_scan);
+  start_wifi_sta(source_label, &ssid_in_scan, ssid_already_visible);
 
-  for (int connection_attempts = 1; connection_attempts <= max_attempts; ++connection_attempts) {
+  // 扫描已确认不可见时缩短等待；密码/SSID 错误则提前 abort
+  int attempts = max_attempts;
+  if (!ssid_in_scan && attempts > 8) {
+    attempts = 8;
+  }
+
+  for (int connection_attempts = 1; connection_attempts <= attempts; ++connection_attempts) {
     delay(1000);
     Serial.print(".");
 
@@ -807,20 +862,30 @@ bool try_connect_credential(const char* source_label, int max_attempts) {
       return true;
     }
 
-    if (st == WL_CONNECT_FAILED && last_oled_fail_status != WL_CONNECT_FAILED) {
-      oled_show_wifi_fail(st, ssid_in_scan, "检查密码");
-      last_oled_fail_status = WL_CONNECT_FAILED;
-    } else if (st == WL_NO_SSID_AVAIL && last_oled_fail_status != WL_NO_SSID_AVAIL) {
-      oled_show_wifi_fail(st, ssid_in_scan, "检查路由器");
-      last_oled_fail_status = WL_NO_SSID_AVAIL;
-    } else if (!ssid_in_scan && !last_oled_ssid_missing) {
-      oled_show_wifi_fail(WL_NO_SSID_AVAIL, false, "检查 SSID");
-      last_oled_ssid_missing = true;
+    if (st == WL_CONNECT_FAILED) {
+      if (last_display_fail_status != WL_CONNECT_FAILED) {
+        display_show_wifi_fail(st, ssid_in_scan, "检查密码");
+        last_display_fail_status = WL_CONNECT_FAILED;
+      }
+      Serial.println("\r\n[wifi] abort: auth failed");
+      break;
+    }
+    if (st == WL_NO_SSID_AVAIL) {
+      if (last_display_fail_status != WL_NO_SSID_AVAIL) {
+        display_show_wifi_fail(st, ssid_in_scan, "检查路由器");
+        last_display_fail_status = WL_NO_SSID_AVAIL;
+      }
+      Serial.println("\r\n[wifi] abort: ssid not available");
+      break;
+    }
+    if (!ssid_in_scan && !last_display_ssid_missing) {
+      display_show_wifi_fail(WL_NO_SSID_AVAIL, false, "检查 SSID");
+      last_display_ssid_missing = true;
     }
   }
 
   Serial.println("");
-  oled_show_wifi_fail(last_status, ssid_in_scan, nullptr);
+  display_show_wifi_fail(last_status, ssid_in_scan, nullptr);
   WiFi.disconnect(true, true);
   delay(200);
   return false;
@@ -847,12 +912,12 @@ bool wifi_provision_connect() {
       password = visible[i].password;
       Serial.printf("[wifi] try saved visible [%d/%d] ssid=%s\r\n", i + 1, visible_count,
                     ssid.c_str());
-      if (try_connect_credential("saved", kMaxReconnectAttempts)) {
+      if (try_connect_credential("saved", kMaxReconnectAttempts, true)) {
         Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
                       WiFi.RSSI());
         apply_wifi_runtime_keepalive();
         s_wifi_was_up = true;
-        oled_show_wifi_connected();
+        display_show_wifi_connected();
         return true;
       }
     }
@@ -861,12 +926,12 @@ bool wifi_provision_connect() {
       ssid = WIFI_DEFAULT_SSID;
       password = WIFI_DEFAULT_PASSWORD;
       Serial.printf("[wifi] try compile-time default ssid=%s\r\n", ssid.c_str());
-      if (try_connect_credential("defaults", kMaxReconnectAttempts)) {
+      if (try_connect_credential("defaults", kMaxReconnectAttempts, false)) {
         Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
                       WiFi.RSSI());
         apply_wifi_runtime_keepalive();
         s_wifi_was_up = true;
-        oled_show_wifi_connected();
+        display_show_wifi_connected();
         return true;
       }
     } else if (saved_count == 0) {
@@ -884,7 +949,7 @@ bool wifi_provision_connect() {
                 WiFi.RSSI());
   apply_wifi_runtime_keepalive();
   s_wifi_was_up = true;
-  oled_show_wifi_connected();
+  display_show_wifi_connected();
   return true;
 }
 
@@ -910,11 +975,6 @@ void wifi_provision_maintain() {
                     WiFi.localIP().toString().c_str(), WiFi.RSSI());
       notify_wifi_link_up();
     }
-    if (now - s_wifi_last_check_ms < kWifiCheckIntervalUpMs) {
-      return;
-    }
-    s_wifi_last_check_ms = now;
-    apply_wifi_runtime_keepalive();
     return;
   }
 

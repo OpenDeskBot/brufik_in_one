@@ -9,11 +9,11 @@ from typing import Any
 
 import numpy as np
 
-from deskbot_server.asr_model_dir import asr_model_dir_ready, ensure_asr_quant_onnx, has_quant_onnx
 from deskbot_server.core.concurrency import asr_infer_slot
 from deskbot_server.core.settings import AppSettings
-from deskbot_server.paths import MODELS_DIR, PROJECT_ROOT
-from deskbot_server.util import pcm_to_wav_bytes
+from deskbot_server.infrastructure.asr.model_dir import asr_model_dir_ready, ensure_asr_quant_onnx, has_quant_onnx
+from deskbot_server.utils.paths import MODELS_DIR, PROJECT_ROOT
+from deskbot_server.utils.util import pcm_to_wav_bytes
 
 logger = logging.getLogger("deskbot-server")
 
@@ -39,25 +39,14 @@ class FunAsrAdapter:
                 ensure_asr_quant_onnx(model_dir)
             if has_quant_onnx(model_dir):
                 self._onnx_model = self._load_onnx_model(model_dir)
-                logger.info(
-                    "[ASR] 使用量化 ONNX 推理 model_dir=%s threads=%d",
-                    model_dir,
-                    self._onnx_threads,
-                )
+                logger.info("[ASR] 使用量化 ONNX 推理 model_dir=%s threads=%d", model_dir, self._onnx_threads)
             else:
-                logger.warning(
-                    "[ASR] model_quant.onnx 不可用，回退 PyTorch model.pt model_dir=%s",
-                    model_dir,
-                )
+                logger.warning("[ASR] model_quant.onnx 不可用，回退 PyTorch model.pt model_dir=%s", model_dir)
 
         if self._onnx_model is None:
             from funasr import AutoModel
 
-            self._pt_model = AutoModel(
-                model=model_dir,
-                disable_update=True,
-                hub=settings.asr.hub,
-            )
+            self._pt_model = AutoModel(model=model_dir, disable_update=True, hub=settings.asr.hub)
             logger.info("[ASR] 使用 PyTorch 推理 model_dir=%s", model_dir)
 
     def _load_onnx_model(self, model_dir: str) -> Any:
@@ -70,12 +59,7 @@ class FunAsrAdapter:
                 threads = max(1, int(env_raw))
             except ValueError:
                 pass
-        return SenseVoiceSmall(
-            model_dir,
-            batch_size=1,
-            quantize=True,
-            intra_op_num_threads=threads,
-        )
+        return SenseVoiceSmall(model_dir, batch_size=1, quantize=True, intra_op_num_threads=threads)
 
     @staticmethod
     def _resolve_model_dir(config_model_dir: str) -> str:
@@ -131,17 +115,9 @@ class FunAsrAdapter:
     async def transcribe(self, pcm_bytes: bytes, sample_rate: int) -> str:
         async with asr_infer_slot():
             if self._onnx_model is not None:
-                lines = await asyncio.to_thread(
-                    self._transcribe_onnx,
-                    pcm_bytes,
-                    sample_rate,
-                )
+                lines = await asyncio.to_thread(self._transcribe_onnx, pcm_bytes, sample_rate)
             else:
-                lines = await asyncio.to_thread(
-                    self._transcribe_pytorch,
-                    pcm_bytes,
-                    sample_rate,
-                )
+                lines = await asyncio.to_thread(self._transcribe_pytorch, pcm_bytes, sample_rate)
         if not lines:
             return ""
         raw_text = str(lines[0] if isinstance(lines, list) else lines).strip()
@@ -150,20 +126,11 @@ class FunAsrAdapter:
     def _transcribe_onnx(self, pcm_bytes: bytes, sample_rate: int) -> list[str]:
         waveform = self._pcm_to_waveform(pcm_bytes, sample_rate)
         lang = self._language if self._language in ("auto", "zh", "en", "yue", "ja", "ko") else "zh"
-        return self._onnx_model(
-            waveform,
-            language=lang,
-            textnorm="withitn",
-        )
+        return self._onnx_model(waveform, language=lang, textnorm="withitn")
 
     def _transcribe_pytorch(self, pcm_bytes: bytes, sample_rate: int) -> list:
         wav_bytes = pcm_to_wav_bytes(pcm_bytes, sample_rate)
-        result = self._pt_model.generate(
-            input=wav_bytes,
-            cache={},
-            language=self._language,
-            use_itn=True,
-        )
+        result = self._pt_model.generate(input=wav_bytes, cache={}, language=self._language, use_itn=True)
         if not result:
             return []
         return [str(result[0].get("text", "")).strip()]
@@ -181,13 +148,9 @@ class FunAsrAdapter:
         return wave
 
     def is_valid_text(self, text: str) -> bool:
-        from deskbot_server.asr.text_filter import is_asr_text_acceptable
+        from deskbot_server.infrastructure.asr.text_filter import is_asr_text_acceptable
 
-        return is_asr_text_acceptable(
-            text,
-            min_len=self._min_text_len,
-            min_chinese_ratio=self._min_chinese_ratio,
-        )
+        return is_asr_text_acceptable(text, min_len=self._min_text_len, min_chinese_ratio=self._min_chinese_ratio)
 
     @staticmethod
     def _normalize_text(text: str) -> str:

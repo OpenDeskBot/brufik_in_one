@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import time
-
-import pytest
-
 from deskbot_server.auth.debug_ws_token import (
     extract_debug_token_from_query,
     issue_debug_ws_token,

@@ -1,25 +1,14 @@
 """人脸关键点几何：5 点/9 点坐标系与朝向估算。"""
+
 from __future__ import annotations
 
 import math
 from typing import Optional
 
-from deskbot_server.constants import (
-    CAMERA_VIEW_PATH,
-    DEVICE_PIPELINE_MAX_EVENTS,
-    DEVICE_PIPELINE_PATH,
-)
-
 FACE_FRAME_WIDTH = 320
 FACE_FRAME_HEIGHT = 240
-FACE_KEYPOINT_NAMES = (
-    "left_eye",
-    "right_eye",
-    "nose",
-    "mouth_left",
-    "mouth_right",
-)
-# 5 点 frontal_score 路径的正脸判定阈值（仅供老 face_pos / camera_ack 使用，
+FACE_KEYPOINT_NAMES = ("left_eye", "right_eye", "nose", "mouth_left", "mouth_right")
+# 9 点 landmarks → 派生 5 点后的正脸判定阈值（仅供老 face_pos / camera_ack 使用，
 # 前端调试页面对照该字段；不参与下发给机器人的 face_info）。
 FRONTAL_THRESHOLD = 0.4
 # 9 点 yaw_deg 路径的正脸判定阈值（°）：|yaw_deg| < 该值视为正脸——
@@ -78,23 +67,73 @@ MP_FACE_DETAIL_NAMES: tuple = (
     "mouth_right",
 )
 
-def compute_frontal_score(points: list) -> float:
-    """根据 5 点人脸关键点估算正脸朝向摄像头的程度，返回 [0, 1]。
 
-    输入 ``points`` 形如 ``[{"name": "left_eye", "x": ..., "y": ...}, ...]``，
-    5 个点齐全才能打出有意义的分。判定分解为 5 个子维度后加权：
-
-    - 眼睛水平（roll）：双眼连线越水平越好
-    - 鼻子横向（yaw）：鼻尖 x 坐标越靠近两眼中点越好
-    - 嘴部对齐：嘴中点 x 与双眼中点 x 越接近越好（对抗 yaw）
-    - 嘴部水平：嘴部连线是否近似水平
-    - 纵向比例：鼻尖到眼中点的距离 / 眼距 在 ~0.55 附近最正
-    """
-    by_name = {
-        p["name"]: p
-        for p in (points or [])
+def landmarks_by_name(landmarks: list) -> dict[str, dict]:
+    return {
+        str(p["name"]): p
+        for p in (landmarks or [])
         if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p
     }
+
+
+def _midpoint(a: dict, b: dict) -> Optional[tuple[float, float]]:
+    try:
+        return (float(a["x"]) + float(b["x"])) * 0.5, (float(a["y"]) + float(b["y"])) * 0.5
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def eye_centers_from_landmarks(landmarks: list) -> tuple[Optional[tuple[float, float]], Optional[tuple[float, float]]]:
+    """从 9 点 landmarks 得到左右眼中心（优先虹膜，否则内外眼角中点）。"""
+    by = landmarks_by_name(landmarks)
+    left = None
+    right = None
+    for iris_name, outer_name, inner_name, slot in (
+        ("left_eye_iris", "left_eye_outer", "left_eye_inner", "left"),
+        ("right_eye_iris", "right_eye_outer", "right_eye_inner", "right"),
+    ):
+        iris = by.get(iris_name)
+        if iris is not None:
+            try:
+                xy = (float(iris["x"]), float(iris["y"]))
+            except (TypeError, ValueError, KeyError):
+                xy = None
+        else:
+            xy = None
+        if xy is None:
+            outer, inner = by.get(outer_name), by.get(inner_name)
+            if outer and inner:
+                xy = _midpoint(outer, inner)
+        if slot == "left":
+            left = xy
+        else:
+            right = xy
+    return left, right
+
+
+def kps5_from_landmarks(landmarks: list) -> Optional[list[dict]]:
+    """InsightFace 对齐用：从 landmarks 派生 5 点 ``{name,x,y}``（不对外暴露为 points）。"""
+    by = landmarks_by_name(landmarks)
+    left, right = eye_centers_from_landmarks(landmarks)
+    ns, ml, mr = by.get("nose"), by.get("mouth_left"), by.get("mouth_right")
+    if not (left and right and ns and ml and mr):
+        return None
+    try:
+        return [
+            {"name": "left_eye", "x": float(left[0]), "y": float(left[1])},
+            {"name": "right_eye", "x": float(right[0]), "y": float(right[1])},
+            {"name": "nose", "x": float(ns["x"]), "y": float(ns["y"])},
+            {"name": "mouth_left", "x": float(ml["x"]), "y": float(ml["y"])},
+            {"name": "mouth_right", "x": float(mr["x"]), "y": float(mr["y"])},
+        ]
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def compute_frontal_score(landmarks: list) -> float:
+    """根据 9 点 landmarks 估算正脸朝向摄像头的程度，返回 [0, 1]。"""
+    kps = kps5_from_landmarks(landmarks) or []
+    by_name = {p["name"]: p for p in kps if isinstance(p, dict) and p.get("name")}
     le = by_name.get("left_eye")
     re_ = by_name.get("right_eye")
     ns = by_name.get("nose")
@@ -132,6 +171,7 @@ def compute_frontal_score(points: list) -> float:
     mouth_off = abs(mouth_cx - eye_cx) / eye_dist
     s_mouth_align = max(0.0, 1.0 - mouth_off * 2.5)
 
+
     # 4) 嘴部水平（roll 的辅助信号）
     mouth_dx = mrx - mlx
     mouth_dy = mry - mly
@@ -150,13 +190,7 @@ def compute_frontal_score(points: list) -> float:
         ratio = nose_to_eye / eye_dist
         s_ratio = max(0.0, 1.0 - abs(ratio - 0.55) * 2.5)
 
-    score = (
-        0.25 * s_roll
-        + 0.30 * s_yaw
-        + 0.15 * s_mouth_align
-        + 0.10 * s_mouth_level
-        + 0.20 * s_ratio
-    )
+    score = 0.25 * s_roll + 0.30 * s_yaw + 0.15 * s_mouth_align + 0.10 * s_mouth_level + 0.20 * s_ratio
     return round(max(0.0, min(1.0, score)), 3)
 
 
@@ -202,11 +236,7 @@ def compute_face_yaw_deg(landmarks: list) -> Optional[float]:
     MediaPipe 自身在外眼角检测上已不稳，返回值仅作"方向 + 幅度"参考，
     不宜直接当硬阈值。
     """
-    by = {
-        p["name"]: p
-        for p in (landmarks or [])
-        if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p
-    }
+    by = {p["name"]: p for p in (landmarks or []) if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p}
     L_out = by.get("left_eye_outer")
     R_out = by.get("right_eye_outer")
     NS = by.get("nose")
@@ -282,11 +312,7 @@ def compute_face_pitch_deg(landmarks: list) -> Optional[float]:
     幅度仍然准确，足够驱动机器人云台跟随。如需更准，可在 ESP32 端做
     一次"正对镜头几秒、记录 t 均值当作 REF"的标定。
     """
-    by = {
-        p["name"]: p
-        for p in (landmarks or [])
-        if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p
-    }
+    by = {p["name"]: p for p in (landmarks or []) if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p}
     L_out = by.get("left_eye_outer")
     R_out = by.get("right_eye_outer")
     NS = by.get("nose")
@@ -357,14 +383,10 @@ def compute_eye_iris_offsets(landmarks: list) -> dict:
     iris 索引（468 / 473）仅在带 iris 的 face_landmarker 模型上才会输出；
     没有 iris 的旧模型下两只眼都会是 ``None``。
     """
-    by = {
-        p["name"]: p
-        for p in (landmarks or [])
-        if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p
-    }
+    by = {p["name"]: p for p in (landmarks or []) if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p}
     out: dict = {"left_eye": None, "right_eye": None}
     for eye_key, outer_name, inner_name, iris_name in (
-        ("left_eye",  "left_eye_outer",  "left_eye_inner",  "left_eye_iris"),
+        ("left_eye", "left_eye_outer", "left_eye_inner", "left_eye_iris"),
         ("right_eye", "right_eye_outer", "right_eye_inner", "right_eye_iris"),
     ):
         O = by.get(outer_name)
@@ -397,55 +419,29 @@ def compute_eye_iris_offsets(landmarks: list) -> dict:
 
 
 def compute_face_score(
-    points: list,
-    landmarks: list,
-    *,
-    image_w: int = FACE_FRAME_WIDTH,
-    image_h: int = FACE_FRAME_HEIGHT,
+    landmarks: list, *, image_w: int = FACE_FRAME_WIDTH, image_h: int = FACE_FRAME_HEIGHT
 ) -> float:
-    """人脸检测质量分 [0, 1]：细化 landmark 完整度 + 脸在画面中的尺寸。
+    """人脸检测质量分 [0, 1]：9 点 landmark 完整度 + 脸在画面中的尺寸。
 
     MediaPipe FaceLandmarker 不对外暴露逐脸 detection confidence；此处用
     可观测质量作代理：关键点越全、眼距越大（脸越近/越大），分数越高。
     """
-    by_detail = {
-        p["name"]: p
-        for p in (landmarks or [])
-        if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p
-    }
+    by_detail = landmarks_by_name(landmarks)
     n_detail = len(MP_FACE_DETAIL_NAMES)
-    completeness = (
-        sum(1 for name in MP_FACE_DETAIL_NAMES if name in by_detail) / n_detail
-        if n_detail
-        else 0.0
-    )
+    completeness = sum(1 for name in MP_FACE_DETAIL_NAMES if name in by_detail) / n_detail if n_detail else 0.0
 
-    by5 = {
-        p["name"]: p
-        for p in (points or [])
-        if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p
-    }
-    le = by5.get("left_eye")
-    re_ = by5.get("right_eye")
+    left, right = eye_centers_from_landmarks(landmarks)
     size_score = 0.0
-    if le and re_:
-        try:
-            lex, ley = float(le["x"]), float(le["y"])
-            rex, rey = float(re_["x"]), float(re_["y"])
-            eye_dist = math.hypot(rex - lex, rey - ley)
-            ref = max(float(image_w), 1.0) * 0.12
-            size_score = min(1.0, eye_dist / ref)
-        except (TypeError, ValueError):
-            size_score = 0.0
+    if left and right:
+        eye_dist = math.hypot(right[0] - left[0], right[1] - left[1])
+        ref = max(float(image_w), 1.0) * 0.12
+        size_score = min(1.0, eye_dist / ref)
 
     score = 0.55 * completeness + 0.45 * size_score
     return round(max(0.0, min(1.0, score)), 3)
 
 
-def compute_frontal_angle_deg(
-    yaw_deg: Optional[float],
-    pitch_deg: Optional[float],
-) -> Optional[float]:
+def compute_frontal_angle_deg(yaw_deg: Optional[float], pitch_deg: Optional[float]) -> Optional[float]:
     """正脸角度（°）：头部相对镜头轴线的偏差，取 ``max(|yaw|, |pitch|)``。
 
     正对镜头 → 0°；转头/抬头幅度越大值越大。与 ``frontal_score``（几何分）不同，
@@ -459,10 +455,7 @@ def compute_frontal_angle_deg(
 
 
 def compute_is_frontal_by_angle(
-    yaw_deg: Optional[float],
-    pitch_deg: Optional[float],
-    *,
-    threshold_deg: float = FRONTAL_ANGLE_THRESHOLD_DEG,
+    yaw_deg: Optional[float], pitch_deg: Optional[float], *, threshold_deg: float = FRONTAL_ANGLE_THRESHOLD_DEG
 ) -> Optional[bool]:
     """按正脸角度阈值判定是否正对镜头。"""
     angle = compute_frontal_angle_deg(yaw_deg, pitch_deg)
@@ -485,7 +478,7 @@ def decompose_facial_transform_matrix(matrix: list | tuple) -> Optional[dict[str
     if len(m) != 16:
         return None
 
-    r00, r01, r02 = m[0], m[1], m[2]
+    r00 = m[0]
     r10, r11, r12 = m[4], m[5], m[6]
     r20, r21, r22 = m[8], m[9], m[10]
 
@@ -510,11 +503,7 @@ def decompose_facial_transform_matrix(matrix: list | tuple) -> Optional[dict[str
     }
 
 
-def compute_eye_yaw_offset_deg(
-    iris_offsets: dict,
-    *,
-    eye_yaw_range_deg: float = EYE_YAW_RANGE_DEG,
-) -> Optional[float]:
+def compute_eye_yaw_offset_deg(iris_offsets: dict, *, eye_yaw_range_deg: float = EYE_YAW_RANGE_DEG) -> Optional[float]:
     """瞳孔相对人脸的左右偏角（°）：虹膜在眼角连线 0.5 为 0，向图像 x 大侧为正。"""
     vals: list[float] = []
     for key in ("left_eye", "right_eye"):
@@ -544,20 +533,14 @@ def compute_gaze_angles(
 
     当前模型仅有虹膜横向 offset，pitch 方向暂只用 head pitch。
     """
-    eye_yaw = compute_eye_yaw_offset_deg(
-        iris_offsets, eye_yaw_range_deg=eye_yaw_range_deg
-    )
+    eye_yaw = compute_eye_yaw_offset_deg(iris_offsets, eye_yaw_range_deg=eye_yaw_range_deg)
     gaze_yaw: Optional[float] = None
     if face_yaw_deg is not None:
         gaze_yaw = round(float(face_yaw_deg) + (eye_yaw or 0.0), 1)
     elif eye_yaw is not None:
         gaze_yaw = eye_yaw
     gaze_pitch = face_pitch_deg
-    return {
-        "eye_yaw_offset_deg": eye_yaw,
-        "gaze_yaw_deg": gaze_yaw,
-        "gaze_pitch_deg": gaze_pitch,
-    }
+    return {"eye_yaw_offset_deg": eye_yaw, "gaze_yaw_deg": gaze_yaw, "gaze_pitch_deg": gaze_pitch}
 
 
 def compute_is_looking_at_camera(
@@ -577,11 +560,7 @@ def compute_is_looking_at_camera(
     return True
 
 
-def estimate_camera_matrix_from_fov(
-    width: int,
-    height: int,
-    horizontal_fov_deg: float,
-) -> list[list[float]]:
+def estimate_camera_matrix_from_fov(width: int, height: int, horizontal_fov_deg: float) -> list[list[float]]:
     """由水平 FOV 与分辨率估计 pinhole 内参 3×3（fx=fy，主点在中心）。"""
     w = max(int(width), 1)
     h = max(int(height), 1)
@@ -591,8 +570,4 @@ def estimate_camera_matrix_from_fov(
     fy = fx
     cx = w / 2.0
     cy = h / 2.0
-    return [
-        [fx, 0.0, cx],
-        [0.0, fy, cy],
-        [0.0, 0.0, 1.0],
-    ]
+    return [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]]

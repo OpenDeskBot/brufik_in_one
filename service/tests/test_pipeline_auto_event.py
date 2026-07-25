@@ -35,18 +35,10 @@ def test_publish_auto_dispatch_event():
         assert items[0]["summary"] == "idle 低头沉默 舵机 (90, 80) 更新"
 
         await publish_auto_dispatch_event(
-            broker,
-            device_id="dev1",
-            request_id="req_chat_1",
-            source="asr",
-            summary="用户说了 hello",
+            broker, device_id="dev1", request_id="req_chat_1", source="asr", summary="用户说了 hello"
         )
         await publish_auto_dispatch_event(
-            broker,
-            device_id="dev1",
-            request_id="req_auto_3",
-            source="auto_idle_silence",
-            summary="idle 再次",
+            broker, device_id="dev1", request_id="req_auto_3", source="auto_idle_silence", summary="idle 再次"
         )
         items = broker.snapshot_events("dev1")
         assert len(items) == 2

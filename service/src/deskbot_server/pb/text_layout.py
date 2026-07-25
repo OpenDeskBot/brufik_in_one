@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
@@ -25,12 +24,7 @@ def _line_width_px(line: str, *, size: int) -> int:
     return sum(_char_display_width(ch, size=size) for ch in line)
 
 
-def wrap_text_lines(
-    text: str,
-    *,
-    max_width_px: int,
-    size: int = _DEFAULT_SIZE,
-) -> list[str]:
+def wrap_text_lines(text: str, *, max_width_px: int, size: int = _DEFAULT_SIZE) -> list[str]:
     """按像素宽度软换行；保留 ``\\n`` 硬断行。"""
     max_w = max(16, int(max_width_px))
     out: list[str] = []
@@ -69,18 +63,10 @@ def text_primitives_from_block(
         return []
     margin_x = _DEFAULT_MARGIN_X if x is None else int(x)
     margin_bottom = _DEFAULT_MARGIN_Y if y is None else int(y)
-    max_w = (
-        FACE_LCD_WIDTH - margin_x * 2
-        if max_width_px is None
-        else int(max_width_px)
-    )
+    max_w = FACE_LCD_WIDTH - margin_x * 2 if max_width_px is None else int(max_width_px)
     line_h = max(8, _LINE_HEIGHT_MUL * max(1, int(size)))
     top_safe = _DEFAULT_MARGIN_X
-    max_h = (
-        FACE_LCD_HEIGHT - margin_bottom - top_safe
-        if max_height_px is None
-        else int(max_height_px)
-    )
+    max_h = FACE_LCD_HEIGHT - margin_bottom - top_safe if max_height_px is None else int(max_height_px)
     max_lines = max(1, max_h // line_h)
 
     lines = [ln for ln in wrap_text_lines(text, max_width_px=max_w, size=size)[:max_lines] if ln]

@@ -1,7 +1,8 @@
 """tool 兜底过渡 TTS。"""
+
 from __future__ import annotations
 
-from deskbot_server.application.tool_interim_tts import build_tool_interim_tts
+from deskbot_server.service.application.tool_interim_tts import build_tool_interim_tts
 
 
 def test_build_tool_interim_tts_single():
@@ -10,11 +11,7 @@ def test_build_tool_interim_tts_single():
 
 
 def test_build_tool_interim_tts_merge_dedupe():
-    tools = [
-        {"tool": "websearch", "query": "a"},
-        {"tool": "capture_camera"},
-        {"name": "websearch", "query": "b"},
-    ]
+    tools = [{"tool": "websearch", "query": "a"}, {"tool": "capture_camera"}, {"name": "websearch", "query": "b"}]
     text = build_tool_interim_tts(tools)
     assert "搜一下" in text
     assert "看一下" in text

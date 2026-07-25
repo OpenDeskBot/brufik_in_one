@@ -1,11 +1,12 @@
 """boot_wake 开机苏醒场景下发。"""
+
 from __future__ import annotations
 
 import asyncio
 
 
 def test_deliver_boot_wake_scene_finds_wake(monkeypatch):
-    from deskbot_server.application import boot_wake
+    from deskbot_server.service.application import boot_wake
 
     sent: list = []
 
@@ -25,11 +26,7 @@ def test_deliver_boot_wake_scene_finds_wake(monkeypatch):
         "load_face_expr_scenes_file",
         lambda **_: [{"name": "wake", "title": "苏醒", "frames": [{"ms": 100, "elements": {}}]}],
     )
-    monkeypatch.setattr(
-        boot_wake,
-        "design_frames_to_pb_chain",
-        lambda frames, **_: [({"type": "pb_single"}, [])],
-    )
+    monkeypatch.setattr(boot_wake, "design_frames_to_pb_chain", lambda frames, **_: [({"type": "pb_single"}, [])])
     monkeypatch.setattr(boot_wake, "attach_pb_device_hints_from_config", lambda frames: None)
 
     n = asyncio.run(boot_wake.deliver_boot_wake_scene(FakeHub(), "deskbot_test"))
@@ -40,7 +37,7 @@ def test_deliver_boot_wake_scene_finds_wake(monkeypatch):
 
 
 def test_deliver_boot_wake_scene_missing_scene(monkeypatch):
-    from deskbot_server.application import boot_wake
+    from deskbot_server.service.application import boot_wake
 
     monkeypatch.setattr(boot_wake, "load_face_expr_scenes_file", lambda **_: [])
 

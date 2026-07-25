@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
-from pathlib import Path
 
 import pytest
 
@@ -10,7 +8,7 @@ import pytest
 @pytest.fixture()
 def session_env(tmp_path, monkeypatch):
     from deskbot_server import device_data as dd
-    from deskbot_server import session_store as ss
+    from deskbot_server.dao import session_store as ss
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -50,10 +48,7 @@ def test_session_history_for_llm(session_env):
     ss.append_turn(dev, session["session_id"], "你好", "你好呀")
 
     history = ss.session_history_for_llm(dev, session["session_id"])
-    assert history == [
-        {"role": "user", "content": "你好"},
-        {"role": "assistant", "content": "你好呀"},
-    ]
+    assert history == [{"role": "user", "content": "你好"}, {"role": "assistant", "content": "你好呀"}]
 
 
 def test_new_session_after_idle(session_env):
@@ -117,10 +112,7 @@ def test_execute_session_tool(session_env):
     assert listed["ok"] is True
     assert listed["count"] == 1
 
-    got = ss.execute_session_tool(
-        {"action": "get", "session_id": session["session_id"]},
-        device_id=dev,
-    )
+    got = ss.execute_session_tool({"action": "get", "session_id": session["session_id"]}, device_id=dev)
     assert got["session"]["messages"][0]["message"] == "问题"
 
 
@@ -131,17 +123,16 @@ def test_session_tool_requires_device_id(session_env):
 
 
 def test_llm_tool_runner_session_tool(session_env):
-    from deskbot_server.application.llm_tool_runner import execute_llm_tools
+    import asyncio
+
+    from deskbot_server.service.application.llm_tool_runner import execute_llm_tools
 
     _, ss = session_env
     dev = "deskbot_test"
     session = ss.create_session(dev, title="工具测试")
     ss.append_turn(dev, session["session_id"], "你好", "嗨")
 
-    results = execute_llm_tools(
-        [{"tool": "session", "action": "current"}],
-        device_id=dev,
-    )
+    results = asyncio.run(execute_llm_tools([{"tool": "session", "action": "current"}], device_id=dev))
     assert len(results) == 1
     assert results[0]["ok"] is True
     assert results[0]["session"]["session_id"] == session["session_id"]

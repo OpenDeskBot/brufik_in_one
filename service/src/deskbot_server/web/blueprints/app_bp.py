@@ -1,38 +1,16 @@
 from __future__ import annotations
 
-from flask import Blueprint, flash, jsonify, redirect, request, session, url_for
-from flask_login import current_user, login_required
+from fastapi import APIRouter
 
-from deskbot_server.auth.api_key_service import (
-    create_api_key,
-    revoke_api_key,
-)
-from deskbot_server.web.helpers import fetch_live_device_details
-from deskbot_server.auth.device_service import (
-    bind_device,
-    list_devices_for_user,
-    unbind_device,
-    user_owns_device,
-)
+from deskbot_server.auth.device_service import bind_device, list_devices_for_user, unbind_device, user_owns_device
 from deskbot_server.auth.service import change_password, update_display_name
-from deskbot_server.face_profiles_store import (
+from deskbot_server.dao.api_key_service import create_api_key, revoke_api_key
+from deskbot_server.dao.face_profiles_store import (
     delete_face_profile,
     list_face_profiles_summary,
     update_face_profile_name,
 )
-from deskbot_server.memory_store import (
-    add_memory,
-    delete_memory,
-    get_memory,
-    list_memory_entries_for_device,
-    update_memory,
-)
-from deskbot_server.scheduled_task_service import (
-    count_scheduled_tasks_for_device,
-    delete_scheduled_task,
-    list_scheduled_tasks_for_device,
-)
-from deskbot_server.llm_config_store import (
+from deskbot_server.dao.llm_config_store import (
     SUPPORTED_PROTOCOLS,
     add_llm_model,
     delete_llm_model,
@@ -42,20 +20,51 @@ from deskbot_server.llm_config_store import (
     set_active_llm_model,
     update_llm_model,
 )
-from deskbot_server.llm.runtime import (
+from deskbot_server.dao.memory_store import (
+    add_memory,
+    delete_memory,
+    get_memory,
+    list_memory_entries_for_device,
+    update_memory,
+)
+from deskbot_server.infrastructure.llm.runtime import (
     ResolvedLlmConfig,
     build_chat_model,
     chat_completion,
     resolve_llm_config,
     resolve_system_llm_config,
 )
-from deskbot_server.web.session_device import (
-    clear_current_device,
-    get_current_device_id,
-    set_current_device_id,
+from deskbot_server.service.miot_service import (
+    authorize_and_sync,
+    error_payload,
+    get_bind_url,
+    get_status,
+    load_homes_cache,
+    miot_sdk_available,
+    parse_auth_payload,
+    sync_homes,
 )
+from deskbot_server.service.miot_service import unbind as miot_unbind
+from deskbot_server.service.scheduled_task_service import (
+    count_scheduled_tasks_for_device,
+    delete_scheduled_task,
+    list_scheduled_tasks_for_device,
+)
+from deskbot_server.web.flaskish import (
+    FlaskishAPIRoute,
+    current_user,
+    flash,
+    jsonify,
+    login_required,
+    redirect,
+    request,
+    session,
+    url_for,
+)
+from deskbot_server.web.helpers import fetch_live_device_details
+from deskbot_server.web.session_device import clear_current_device, get_current_device_id, set_current_device_id
 
-bp = Blueprint("app", __name__, url_prefix="/app")
+router = APIRouter(route_class=FlaskishAPIRoute, prefix="/app", tags=["app"])
 
 
 def _fmt_bytes(n: int) -> str:
@@ -69,17 +78,12 @@ def _fmt_bytes(n: int) -> str:
     return f"{n} B"
 
 
-@bp.app_template_filter("fmt_bytes")
 def fmt_bytes_filter(n):
     return _fmt_bytes(n)
 
 
 def _flatten_usage_daily_rows(
-    stats: list[dict],
-    *,
-    label_key: str,
-    sub_id_key: str,
-    sub_label_key: str | None = None,
+    stats: list[dict], *, label_key: str, sub_id_key: str, sub_label_key: str | None = None
 ) -> list[dict]:
     rows: list[dict] = []
     for item in stats:
@@ -106,7 +110,7 @@ def _flatten_usage_daily_rows(
     return rows
 
 
-@bp.post("/settings/profile")
+@router.post("/settings/profile")
 @login_required
 def update_profile_post():
     try:
@@ -118,7 +122,7 @@ def update_profile_post():
     return redirect(url_for("app2c.advanced"))
 
 
-@bp.post("/settings/password")
+@router.post("/settings/password")
 @login_required
 def change_password_post():
     old_password = request.form.get("old_password") or ""
@@ -136,7 +140,7 @@ def change_password_post():
     return redirect(url_for("app2c.advanced"))
 
 
-@bp.post("/settings/api-keys")
+@router.post("/settings/api-keys")
 @login_required
 def create_api_key_post():
     name = (request.form.get("key_name") or "default").strip()
@@ -150,7 +154,7 @@ def create_api_key_post():
     return redirect(url_for("app2c.advanced"))
 
 
-@bp.post("/settings/api-keys/<key_id>/revoke")
+@router.post("/settings/api-keys/{key_id}/revoke")
 @login_required
 def revoke_api_key_post(key_id: str):
     if not revoke_api_key(current_user.id, key_id):
@@ -160,7 +164,7 @@ def revoke_api_key_post(key_id: str):
     return redirect(url_for("app2c.advanced"))
 
 
-@bp.get("/api/devices")
+@router.get("/api/devices")
 @login_required
 def api_list_devices():
     devices = list_devices_for_user(current_user.id)
@@ -186,7 +190,7 @@ def api_list_devices():
     )
 
 
-@bp.post("/api/devices")
+@router.post("/api/devices")
 @login_required
 def api_bind_device():
     payload = request.get_json(silent=True) or {}
@@ -202,7 +206,7 @@ def api_bind_device():
     return jsonify({"ok": True, "device": {"device_id": device.device_id}, "current_device_id": device.device_id})
 
 
-@bp.post("/api/devices/select")
+@router.post("/api/devices/select")
 @login_required
 def api_select_device():
     payload = request.get_json(silent=True) or {}
@@ -216,7 +220,7 @@ def api_select_device():
     return jsonify({"ok": True, "current_device_id": device_id})
 
 
-@bp.delete("/api/devices/<device_id>")
+@router.delete("/api/devices/{device_id}")
 @login_required
 def api_unbind_device(device_id: str):
     if not unbind_device(current_user.id, device_id):
@@ -226,7 +230,7 @@ def api_unbind_device(device_id: str):
     return jsonify({"ok": True})
 
 
-@bp.get("/api/scheduled-tasks")
+@router.get("/api/scheduled-tasks")
 @login_required
 def api_list_scheduled_tasks():
     device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
@@ -257,7 +261,7 @@ def api_list_scheduled_tasks():
     )
 
 
-@bp.get("/api/face-profiles")
+@router.get("/api/face-profiles")
 @login_required
 def api_list_face_profiles():
     device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
@@ -269,7 +273,7 @@ def api_list_face_profiles():
     return jsonify({"ok": True, "device_id": device_id, "profiles": profiles})
 
 
-@bp.delete("/api/face-profiles/<int:person_id>")
+@router.delete("/api/face-profiles/{person_id}")
 @login_required
 def api_delete_face_profile(person_id: int):
     device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
@@ -282,8 +286,8 @@ def api_delete_face_profile(person_id: int):
     return jsonify({"ok": True})
 
 
-@bp.put("/api/face-profiles/<int:person_id>")
-@bp.patch("/api/face-profiles/<int:person_id>")
+@router.put("/api/face-profiles/{person_id}")
+@router.patch("/api/face-profiles/{person_id}")
 @login_required
 def api_update_face_profile(person_id: int):
     device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
@@ -314,7 +318,7 @@ def _require_owned_device_id() -> tuple[str | None, tuple | None]:
 
 
 def _consume_settings_test_quota():
-    from deskbot_server.application.settings_test_limit import (
+    from deskbot_server.service.application.settings_test_limit import (
         SETTINGS_TEST_DAILY_LIMIT,
         SettingsTestLimitExceeded,
         check_and_consume_settings_test,
@@ -322,21 +326,9 @@ def _consume_settings_test_quota():
     )
 
     try:
-        snap = check_and_consume_settings_test(
-            user_id=current_user.id,
-            client_ip=client_ip_from_request(request),
-        )
+        snap = check_and_consume_settings_test(user_id=current_user.id, client_ip=client_ip_from_request(request))
     except SettingsTestLimitExceeded as exc:
-        return None, (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": str(exc),
-                    "daily_limit": SETTINGS_TEST_DAILY_LIMIT,
-                }
-            ),
-            429,
-        )
+        return None, (jsonify({"ok": False, "error": str(exc), "daily_limit": SETTINGS_TEST_DAILY_LIMIT}), 429)
     return {
         "daily_limit": SETTINGS_TEST_DAILY_LIMIT,
         "user_remaining": snap.user_remaining,
@@ -344,7 +336,7 @@ def _consume_settings_test_quota():
     }, None
 
 
-@bp.get("/api/memories")
+@router.get("/api/memories")
 @login_required
 def api_list_memories():
     device_id, err = _require_owned_device_id()
@@ -355,7 +347,7 @@ def api_list_memories():
     return jsonify({"ok": True, "device_id": device_id, "memories": entries, "count": len(entries)})
 
 
-@bp.post("/api/memories")
+@router.post("/api/memories")
 @login_required
 def api_create_memory():
     device_id, err = _require_owned_device_id()
@@ -373,7 +365,7 @@ def api_create_memory():
     return jsonify({"ok": True, "memory": entry})
 
 
-@bp.get("/api/memories/<entry_id>")
+@router.get("/api/memories/{entry_id}")
 @login_required
 def api_get_memory(entry_id: str):
     device_id, err = _require_owned_device_id()
@@ -386,8 +378,8 @@ def api_get_memory(entry_id: str):
     return jsonify({"ok": True, "memory": entry})
 
 
-@bp.put("/api/memories/<entry_id>")
-@bp.patch("/api/memories/<entry_id>")
+@router.put("/api/memories/{entry_id}")
+@router.patch("/api/memories/{entry_id}")
 @login_required
 def api_update_memory(entry_id: str):
     device_id, err = _require_owned_device_id()
@@ -407,7 +399,7 @@ def api_update_memory(entry_id: str):
     return jsonify({"ok": True, "memory": entry})
 
 
-@bp.delete("/api/memories/<entry_id>")
+@router.delete("/api/memories/{entry_id}")
 @login_required
 def api_delete_memory(entry_id: str):
     device_id, err = _require_owned_device_id()
@@ -419,7 +411,7 @@ def api_delete_memory(entry_id: str):
     return jsonify({"ok": True})
 
 
-@bp.get("/api/llm-models")
+@router.get("/api/llm-models")
 @login_required
 def api_list_llm_models():
     device_id, err = _require_owned_device_id()
@@ -456,7 +448,7 @@ def api_list_llm_models():
     )
 
 
-@bp.post("/api/llm-models")
+@router.post("/api/llm-models")
 @login_required
 def api_create_llm_model():
     device_id, err = _require_owned_device_id()
@@ -478,7 +470,7 @@ def api_create_llm_model():
     return jsonify({"ok": True, "model": model})
 
 
-@bp.post("/api/llm-models/test")
+@router.post("/api/llm-models/test")
 @login_required
 def api_test_llm_model():
     device_id, err = _require_owned_device_id()
@@ -527,10 +519,7 @@ def api_test_llm_model():
             display_name=name or model_name,
         )
         reply, meta = chat_completion(
-            [{"role": "user", "content": prompt}],
-            config=config,
-            json_mode=False,
-            temperature=0.7,
+            [{"role": "user", "content": prompt}], config=config, json_mode=False, temperature=0.7
         )
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -541,17 +530,13 @@ def api_test_llm_model():
         {
             "ok": True,
             "reply": reply,
-            "meta": {
-                "model": meta.get("model"),
-                "display_name": meta.get("display_name"),
-                "usage": meta.get("usage"),
-            },
+            "meta": {"model": meta.get("model"), "display_name": meta.get("display_name"), "usage": meta.get("usage")},
             "quota": quota,
         }
     )
 
 
-@bp.put("/api/llm-models/<model_id>")
+@router.put("/api/llm-models/{model_id}")
 @login_required
 def api_update_llm_model(model_id: str):
     device_id, err = _require_owned_device_id()
@@ -576,7 +561,7 @@ def api_update_llm_model(model_id: str):
     return jsonify({"ok": True, "model": model})
 
 
-@bp.delete("/api/llm-models/<model_id>")
+@router.delete("/api/llm-models/{model_id}")
 @login_required
 def api_delete_llm_model(model_id: str):
     device_id, err = _require_owned_device_id()
@@ -588,7 +573,7 @@ def api_delete_llm_model(model_id: str):
     return jsonify({"ok": True})
 
 
-@bp.post("/api/llm-models/select")
+@router.post("/api/llm-models/select")
 @login_required
 def api_select_llm_model():
     device_id, err = _require_owned_device_id()
@@ -607,7 +592,11 @@ def api_select_llm_model():
 
 
 def _tts_cfg_from_payload(payload: dict):
-    from deskbot_server.tts.doubao import DoubaoTtsConfig, load_doubao_tts_config, resolve_optional_secret
+    from deskbot_server.infrastructure.tts.doubao import (
+        DoubaoTtsConfig,
+        load_doubao_tts_config,
+        resolve_optional_secret,
+    )
 
     base = load_doubao_tts_config()
     api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
@@ -627,26 +616,26 @@ def _tts_cfg_from_payload(payload: dict):
     )
 
 
-@bp.get("/api/tts/config")
+@router.get("/api/tts/config")
 @login_required
 def api_tts_config_get():
-    from deskbot_server.tts.doubao import load_doubao_tts_config
+    from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config
 
     cfg = load_doubao_tts_config()
     return jsonify({"ok": True, "config": cfg.masked()})
 
 
-@bp.post("/api/tts/config")
+@router.post("/api/tts/config")
 @login_required
 def api_tts_config_post():
-    from deskbot_server.tts.doubao import load_doubao_tts_config
-    from deskbot_server.tts.env_store import save_doubao_tts_env
+    from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config
+    from deskbot_server.infrastructure.tts.env_store import save_doubao_tts_env
 
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
 
-    from deskbot_server.tts.doubao import load_doubao_tts_config, resolve_optional_secret
+    from deskbot_server.infrastructure.tts.doubao import resolve_optional_secret
 
     base = load_doubao_tts_config()
     api_key = resolve_optional_secret(payload.get("api_key"), base.api_key)
@@ -660,22 +649,22 @@ def api_tts_config_post():
     return jsonify({"ok": True, "config": cfg.masked()})
 
 
-@bp.get("/api/tts/speakers")
+@router.get("/api/tts/speakers")
 @login_required
 def api_tts_speakers():
-    from deskbot_server.tts.speakers import list_doubao_tts_speaker_presets
+    from deskbot_server.infrastructure.tts.speakers import list_doubao_tts_speaker_presets
 
     return jsonify({"ok": True, "speakers": list_doubao_tts_speaker_presets()})
 
 
-@bp.post("/api/tts/preview")
+@router.post("/api/tts/preview")
 @login_required
 def api_tts_preview():
     import asyncio
     import base64
 
-    from deskbot_server.tts.doubao import synthesize_doubao_tts
-    from deskbot_server.util import pcm_to_wav_bytes
+    from deskbot_server.infrastructure.tts.doubao import synthesize_doubao_tts
+    from deskbot_server.utils.util import pcm_to_wav_bytes
 
     quota, limit_err = _consume_settings_test_quota()
     if limit_err:
@@ -706,7 +695,7 @@ def api_tts_preview():
     )
 
 
-@bp.delete("/api/scheduled-tasks/<task_id>")
+@router.delete("/api/scheduled-tasks/{task_id}")
 @login_required
 def api_delete_scheduled_task(task_id: str):
     device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
@@ -717,3 +706,175 @@ def api_delete_scheduled_task(task_id: str):
     if not delete_scheduled_task(task_id, device_id=device_id):
         return jsonify({"ok": False, "error": "任务不存在"}), 404
     return jsonify({"ok": True})
+
+
+# ----- 米家 IoT -----
+
+
+@router.get("/api/miot/status")
+@login_required
+def api_miot_status():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    ok_sdk, sdk_err = miot_sdk_available()
+    if not ok_sdk:
+        return jsonify({"ok": False, "error": sdk_err, "sdk_ok": False}), 503
+    refresh = str(request.args.get("refresh") or "").strip().lower() in ("1", "true", "yes")
+    try:
+        status = get_status(device_id, refresh=refresh)
+    except Exception as exc:
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    homes = load_homes_cache(device_id)
+    return jsonify(
+        {
+            "ok": True,
+            "sdk_ok": True,
+            "device_id": device_id,
+            "status": status,
+            "homes": homes,
+            "device_count": homes.get("device_count") or len(homes.get("devices") or []),
+            "scene_count": homes.get("scene_count") or len(homes.get("scenes") or []),
+        }
+    )
+
+
+@router.post("/api/miot/bind-url")
+@login_required
+def api_miot_bind_url():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    ok_sdk, sdk_err = miot_sdk_available()
+    if not ok_sdk:
+        return jsonify({"ok": False, "error": sdk_err}), 503
+    try:
+        url = get_bind_url(device_id)
+    except Exception as exc:
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    return jsonify(
+        {
+            "ok": True,
+            "auth_url": url,
+            "hint": (
+                "请在浏览器打开授权链接并登录小米账号。"
+                "授权完成后会进入「小米账号授权完成」页面，"
+                "点击「复制授权码」，回到本页粘贴即可（也可粘贴完整回调 URL）。"
+            ),
+        }
+    )
+
+
+@router.post("/api/miot/authorize")
+@login_required
+def api_miot_authorize():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    payload = request.get_json(silent=True) or {}
+    code = str(payload.get("code") or "").strip()
+    state = str(payload.get("state") or "").strip()
+    callback = str(payload.get("callback_url") or payload.get("url") or payload.get("payload") or "").strip()
+    try:
+        if code and state:
+            auth_code, auth_state = code, state
+        elif callback:
+            auth_code, auth_state = parse_auth_payload(callback)
+        else:
+            raise ValueError("请粘贴授权回调完整 URL，或提供 code 与 state")
+        result = authorize_and_sync(device_id, auth_code, auth_state)
+    except Exception as exc:
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    return jsonify(result)
+
+
+@router.post("/api/miot/sync")
+@login_required
+def api_miot_sync():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    try:
+        homes = sync_homes(device_id)
+        status = get_status(device_id, refresh=True)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger("deskbot-server").exception("[miot] sync failed device_id=%s", device_id)
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    return jsonify(
+        {
+            "ok": True,
+            "status": status,
+            "homes": homes,
+            "device_count": homes.get("device_count"),
+            "scene_count": homes.get("scene_count"),
+        }
+    )
+
+
+@router.post("/api/miot/unbind")
+@login_required
+def api_miot_unbind():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    try:
+        miot_unbind(device_id)
+    except Exception as exc:
+        return jsonify({"ok": False, **error_payload(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@router.get("/api/miot/homes")
+@login_required
+def api_miot_homes():
+    device_id, err = _require_owned_device_id()
+    if err:
+        return err
+    assert device_id is not None
+    homes = load_homes_cache(device_id)
+    return jsonify({"ok": True, "homes": homes})
+
+
+ENDPOINTS = {
+    "app.update_profile_post": "/app/settings/profile",
+    "app.change_password_post": "/app/settings/password",
+    "app.create_api_key_post": "/app/settings/api-keys",
+    "app.revoke_api_key_post": "/app/settings/api-keys/{key_id}/revoke",
+    "app.api_list_devices": "/app/api/devices",
+    "app.api_bind_device": "/app/api/devices",
+    "app.api_select_device": "/app/api/devices/select",
+    "app.api_unbind_device": "/app/api/devices/{device_id}",
+    "app.api_list_scheduled_tasks": "/app/api/scheduled-tasks",
+    "app.api_list_face_profiles": "/app/api/face-profiles",
+    "app.api_delete_face_profile": "/app/api/face-profiles/{person_id}",
+    "app.api_update_face_profile": "/app/api/face-profiles/{person_id}",
+    "app.api_list_memories": "/app/api/memories",
+    "app.api_create_memory": "/app/api/memories",
+    "app.api_get_memory": "/app/api/memories/{entry_id}",
+    "app.api_update_memory": "/app/api/memories/{entry_id}",
+    "app.api_delete_memory": "/app/api/memories/{entry_id}",
+    "app.api_list_llm_models": "/app/api/llm-models",
+    "app.api_create_llm_model": "/app/api/llm-models",
+    "app.api_test_llm_model": "/app/api/llm-models/test",
+    "app.api_update_llm_model": "/app/api/llm-models/{model_id}",
+    "app.api_delete_llm_model": "/app/api/llm-models/{model_id}",
+    "app.api_select_llm_model": "/app/api/llm-models/select",
+    "app.api_tts_config_get": "/app/api/tts/config",
+    "app.api_tts_config_post": "/app/api/tts/config",
+    "app.api_tts_speakers": "/app/api/tts/speakers",
+    "app.api_tts_preview": "/app/api/tts/preview",
+    "app.api_delete_scheduled_task": "/app/api/scheduled-tasks/{task_id}",
+    "app.api_miot_status": "/app/api/miot/status",
+    "app.api_miot_bind_url": "/app/api/miot/bind-url",
+    "app.api_miot_authorize": "/app/api/miot/authorize",
+    "app.api_miot_sync": "/app/api/miot/sync",
+    "app.api_miot_unbind": "/app/api/miot/unbind",
+    "app.api_miot_homes": "/app/api/miot/homes",
+}

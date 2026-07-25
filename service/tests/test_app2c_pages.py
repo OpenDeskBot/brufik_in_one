@@ -21,17 +21,7 @@ def temp_db(monkeypatch):
         yield db_path
 
 
-PAGES = [
-    "/home",
-    "/voice",
-    "/expr",
-    "/lab",
-    "/my/memories",
-    "/my/reminders",
-    "/my/people",
-    "/my/devices",
-    "/advanced",
-]
+PAGES = ["/home", "/voice", "/expr", "/lab", "/my/memories", "/my/reminders", "/my/people", "/my/devices", "/advanced"]
 
 
 @pytest.mark.parametrize("path", PAGES)
@@ -101,10 +91,9 @@ def test_2c_advanced_json_apis(temp_db):
     )
     assert model.status_code == 200
     model_id = model.get_json()["model"]["id"]
-    assert client.post(
-        "/app/api/llm-models/select?device_id=deskbot_adv",
-        json={"model_id": model_id},
-    ).status_code == 200
+    assert (
+        client.post("/app/api/llm-models/select?device_id=deskbot_adv", json={"model_id": model_id}).status_code == 200
+    )
     configured = client.get("/api/advanced").get_json()["llm"]
     assert configured["needs_config"] is False
     assert configured["active"]["api_key_set"] is True
@@ -409,12 +398,7 @@ def test_2c_home_integrates_robot_motion_preview(temp_db):
     assert "updateHomeRobotFace" in html
 
     css = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "deskbot_server"
-        / "web"
-        / "static"
-        / "theme_2c.css"
+        Path(__file__).resolve().parents[1] / "src" / "deskbot_server" / "web" / "static" / "theme_2c.css"
     ).read_text(encoding="utf-8")
     assert ".home-media" in css
     assert ".home-robot-host" in css
@@ -559,12 +543,7 @@ def test_2c_voice_page_collapses_doubao_voice_library_by_default(temp_db):
     assert "收起音色" in html
 
     css = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "deskbot_server"
-        / "web"
-        / "static"
-        / "theme_2c.css"
+        Path(__file__).resolve().parents[1] / "src" / "deskbot_server" / "web" / "static" / "theme_2c.css"
     ).read_text(encoding="utf-8")
     assert ".voice-expand-row" in css
     assert ".voice-expand-btn" in css
@@ -589,12 +568,7 @@ def test_2c_voice_preview_plays_inline_without_visible_audio_bar(temp_db):
     assert "preview-audio-hidden" in html
 
     css = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "deskbot_server"
-        / "web"
-        / "static"
-        / "theme_2c.css"
+        Path(__file__).resolve().parents[1] / "src" / "deskbot_server" / "web" / "static" / "theme_2c.css"
     ).read_text(encoding="utf-8")
     assert ".preview-audio-hidden" in css
     assert ".voice-preview-row.compact-preview" not in css
@@ -673,13 +647,11 @@ def test_2c_voice_page_separates_library_and_clone_tabs_with_progress(temp_db):
     assert "cloneProgressLabel" in html
 
 
-def test_2c_voice_clone_upload_endpoint_uses_configured_volcengine_credentials(
-    temp_db, monkeypatch
-):
+def test_2c_voice_clone_upload_endpoint_uses_configured_volcengine_credentials(temp_db, monkeypatch):
     from io import BytesIO
 
     from deskbot_server.auth.service import create_user
-    from deskbot_server.tts.voice_clone import DoubaoVoiceCloneResult
+    from deskbot_server.infrastructure.tts.voice_clone import DoubaoVoiceCloneResult
     from deskbot_server.web.app import create_app
 
     monkeypatch.setenv("DOUBAO_TTS_APP_ID", "app-id")
@@ -687,14 +659,7 @@ def test_2c_voice_clone_upload_endpoint_uses_configured_volcengine_credentials(
     captured = {}
 
     def fake_clone(
-        cfg,
-        *,
-        audio_bytes,
-        audio_format,
-        language=0,
-        display_name="",
-        custom_speaker_id="",
-        prompt_text="",
+        cfg, *, audio_bytes, audio_format, language=0, display_name="", custom_speaker_id="", prompt_text=""
     ):
         captured["cfg"] = cfg
         captured["audio_bytes"] = audio_bytes
@@ -704,9 +669,7 @@ def test_2c_voice_clone_upload_endpoint_uses_configured_volcengine_credentials(
         captured["custom_speaker_id"] = custom_speaker_id
         captured["prompt_text"] = prompt_text
         return DoubaoVoiceCloneResult(
-            speaker_id=custom_speaker_id,
-            status=1,
-            raw={"status": 1, "speaker_id": custom_speaker_id},
+            speaker_id=custom_speaker_id, status=1, raw={"status": 1, "speaker_id": custom_speaker_id}
         )
 
     monkeypatch.setattr("deskbot_server.tts.voice_clone.clone_doubao_voice", fake_clone)
@@ -745,7 +708,7 @@ def test_2c_voice_clone_upload_endpoint_uses_configured_volcengine_credentials(
 
 def test_2c_voice_clone_status_endpoint_reports_ready(temp_db, monkeypatch):
     from deskbot_server.auth.service import create_user
-    from deskbot_server.tts.voice_clone import DoubaoVoiceCloneResult
+    from deskbot_server.infrastructure.tts.voice_clone import DoubaoVoiceCloneResult
     from deskbot_server.web.app import create_app
 
     monkeypatch.setenv("DOUBAO_TTS_APP_ID", "app-id")
@@ -756,10 +719,7 @@ def test_2c_voice_clone_status_endpoint_reports_ready(temp_db, monkeypatch):
         captured["cfg"] = cfg
         captured["speaker_id"] = speaker_id
         return DoubaoVoiceCloneResult(
-            speaker_id=speaker_id,
-            status=4,
-            raw={"status": 4, "speaker_id": speaker_id, "model_type": 5},
-            model_type=5,
+            speaker_id=speaker_id, status=4, raw={"status": 4, "speaker_id": speaker_id, "model_type": 5}, model_type=5
         )
 
     monkeypatch.setattr("deskbot_server.tts.voice_clone.get_doubao_voice_clone_status", fake_status)
@@ -859,7 +819,7 @@ def test_2c_voice_no_longer_owns_tts_config_panel(temp_db):
 
 def test_2c_voice_tts_synthesize_endpoint_returns_wav(temp_db, monkeypatch):
     from deskbot_server.auth.service import create_user
-    from deskbot_server.tts.doubao import DoubaoTtsResult
+    from deskbot_server.infrastructure.tts.doubao import DoubaoTtsResult
     from deskbot_server.web.app import create_app
 
     async def fake_synthesize(text, cfg):
@@ -877,12 +837,7 @@ def test_2c_voice_tts_synthesize_endpoint_returns_wav(temp_db, monkeypatch):
 
     resp = client.post(
         "/api/doubao_tts/synthesize",
-        json={
-            "text": "试听",
-            "api_key": "tts-key",
-            "speaker": "voice-id",
-            "resource_id": "seed-tts-2.0",
-        },
+        json={"text": "试听", "api_key": "tts-key", "speaker": "voice-id", "resource_id": "seed-tts-2.0"},
     )
 
     assert resp.status_code == 200
@@ -911,8 +866,8 @@ def test_2c_expr_page_exposes_real_face_editor_controls(temp_db):
     assert "VisemeSync DIY / PIXEL" not in html
     assert 'class="diy-canvas"' not in html
     # 左侧大预览保留在统一位置，但表情数据源必须和首页当前表情一致
-    assert ':class="{\'editor-only\': exprTab===\'face\'}"' not in html
-    assert 'v-show="exprTab!==\'face\'"' not in html
+    assert ":class=\"{'editor-only': exprTab==='face'}\"" not in html
+    assert "v-show=\"exprTab!=='face'\"" not in html
     assert "homePreviewScene()" in html
     assert "preview.pickScene(this.scenes, this.map, 'idle')" in html
     assert "this.exprTab === 'image' && this.generatedPreviewScene" not in html
@@ -973,7 +928,7 @@ def test_2c_expr_keeps_svg_library_features_global_above_left_preview(temp_db):
     assert "diy-canvas" not in html
 
     static = client.get("/static/face_preview_2c.js").get_data(as_text=True)
-    assert "shape === \"svg_path\"" in static
+    assert 'shape === "svg_path"' in static
     assert "rotateTransform" in static
 
 
@@ -1031,8 +986,8 @@ def test_2c_expr_basic_tab_keeps_left_drag_editor_visible(temp_db):
     html = resp.get_data(as_text=True)
     assert "@click=\"setExprTab('face')\"" in html
     assert "isFaceEditorEditable()" in html
-    assert ":class=\"{editable: isFaceEditorEditable, dragging: !!shapeDrag}\"" in html
-    assert "v-if=\"isFaceEditorEditable\"" in html
+    assert ':class="{editable: isFaceEditorEditable, dragging: !!shapeDrag}"' in html
+    assert 'v-if="isFaceEditorEditable"' in html
     assert "ensureCustomEditingForFaceTab" in html
     assert ".face-editor-svg.editable .face-editor-handle{opacity:.85}" in html
     assert ".face-editor-svg.editable .face-editor-hit{opacity:.35}" in html
@@ -1131,9 +1086,7 @@ def test_2c_expr_page_exposes_professional_design_tab(temp_db):
     assert "/api/face_mouth_by_phoneme" in html
 
 
-def test_2c_face_config_apis_are_available_to_regular_user(
-    temp_db, tmp_path, monkeypatch
-):
+def test_2c_face_config_apis_are_available_to_regular_user(temp_db, tmp_path, monkeypatch):
     import json
 
     from deskbot_server.auth.device_service import bind_device
@@ -1145,10 +1098,9 @@ def test_2c_face_config_apis_are_available_to_regular_user(
     global_dir = tmp_path / "global"
     global_dir.mkdir()
     (global_dir / "deskbot-face.json").write_text(
-        json.dumps({"name": "qa", "phonemes": [], "emotions": []}, ensure_ascii=False),
-        encoding="utf-8",
+        json.dumps({"name": "qa", "phonemes": [], "emotions": []}, ensure_ascii=False), encoding="utf-8"
     )
-    from deskbot_server.face_design_store import clear_face_design_cache
+    from deskbot_server.dao.face_design_store import clear_face_design_cache
 
     clear_face_design_cache()
     create_user("face-admin2c@example.com", "password1234")
@@ -1166,17 +1118,9 @@ def test_2c_face_config_apis_are_available_to_regular_user(
     scene = {
         "name": "happy",
         "title": "开心",
-        "frames": [
-            {
-                "ms": 300,
-                "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []},
-            }
-        ],
+        "frames": [{"ms": 300, "elements": {"mouth": [], "nose": [], "eye_l": [], "eye_r": [], "extra": []}}],
     }
-    save_scenes = client.post(
-        "/api/face_expr_scenes",
-        json={"device_id": "deskbot_face_api", "scenes": [scene]},
-    )
+    save_scenes = client.post("/api/face_expr_scenes", json={"device_id": "deskbot_face_api", "scenes": [scene]})
     assert save_scenes.status_code == 200
     assert save_scenes.get_json()["config"][0]["name"] == "happy"
 
@@ -1187,9 +1131,7 @@ def test_2c_face_config_apis_are_available_to_regular_user(
             "mouth_by_phoneme_groups": [
                 {
                     "states": ["a"],
-                    "elements": [
-                        {"shape": "round_rect_outline", "x": 112, "y": 148, "w": 60, "h": 28}
-                    ],
+                    "elements": [{"shape": "round_rect_outline", "x": 112, "y": 148, "w": 60, "h": 28}],
                     "offset": {"x": 0, "y": 0},
                 }
             ],
@@ -1214,10 +1156,10 @@ def test_2c_advanced_keeps_heavy_features_collapsed(temp_db):
     html = resp.get_data(as_text=True)
     assert "advancedOpen" in html
     assert "toggleAdvanced" in html
-    assert "v-show=\"advancedOpen.keys\"" in html
-    assert "v-show=\"advancedOpen.llm\"" in html
-    assert "v-show=\"advancedOpen.account\"" in html
-    assert "v-show=\"advancedOpen.debug\"" in html
+    assert 'v-show="advancedOpen.keys"' in html
+    assert 'v-show="advancedOpen.llm"' in html
+    assert 'v-show="advancedOpen.account"' in html
+    assert 'v-show="advancedOpen.debug"' in html
     assert "展开配置" in html
     assert "收起配置" in html
     assert "/api/tts/phoneme_tts" in html
@@ -1248,12 +1190,7 @@ def test_2c_advanced_model_config_has_clear_primary_secondary_hierarchy(temp_db)
     assert "声音高级参数" in html
 
     css = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "deskbot_server"
-        / "web"
-        / "static"
-        / "theme_2c.css"
+        Path(__file__).resolve().parents[1] / "src" / "deskbot_server" / "web" / "static" / "theme_2c.css"
     ).read_text(encoding="utf-8")
     assert ".primary-model-card" in css
     assert ".secondary-model-card" in css
@@ -1280,27 +1217,19 @@ def test_2c_consumer_apis_are_not_developer_locked(temp_db, monkeypatch):
     bind_device(user.id, "deskbot_consumer_api")
     app = create_app()
     client = app.test_client()
-    client.post(
-        "/login",
-        data={"email": "consumer-member2c@example.com", "password": "password1234"},
-    )
+    client.post("/login", data={"email": "consumer-member2c@example.com", "password": "password1234"})
     client.post("/app/api/devices/select", json={"device_id": "deskbot_consumer_api"})
 
     assert client.get("/api/health").status_code == 200
     assert client.get("/api/debug/ws_token").status_code == 200
     assert client.get("/api/doubao_tts/speakers?scope=consumer").status_code == 200
 
-    ai = client.post(
-        "/api/face_design/generate",
-        json={"device_id": "deskbot_consumer_api", "prompt": "生成开心表情"},
-    )
+    ai = client.post("/api/face_design/generate", json={"device_id": "deskbot_consumer_api", "prompt": "生成开心表情"})
     assert ai.status_code == 200
     assert ai.get_json()["ok"] is True
 
 
-def test_2c_debug_phoneme_endpoint_returns_json_when_tts_adapter_fails(
-    temp_db, monkeypatch
-):
+def test_2c_debug_phoneme_endpoint_returns_json_when_tts_adapter_fails(temp_db, monkeypatch):
     from deskbot_server.auth.service import create_user
     from deskbot_server.infrastructure.tts import factory
     from deskbot_server.web.app import create_app
@@ -1350,8 +1279,7 @@ def test_face_design_generate_endpoint_uses_llm_and_returns_design(temp_db, monk
     client.post("/login", data={"email": "face-ai2c@example.com", "password": "password1234"})
 
     resp = client.post(
-        "/api/face_design/generate",
-        json={"device_id": "deskbot_ai", "prompt": "做一个开心、圆润、适合儿童的表情包"},
+        "/api/face_design/generate", json={"device_id": "deskbot_ai", "prompt": "做一个开心、圆润、适合儿童的表情包"}
     )
 
     assert resp.status_code == 200
@@ -1401,12 +1329,7 @@ def test_face_design_generate_endpoint_allows_browsing_without_device(temp_db, m
 
 def test_2c_face_preview_helper_exposes_frame_reader():
     helper = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "deskbot_server"
-        / "web"
-        / "static"
-        / "face_preview_2c.js"
+        Path(__file__).resolve().parents[1] / "src" / "deskbot_server" / "web" / "static" / "face_preview_2c.js"
     ).read_text(encoding="utf-8")
 
     assert "frameElements," in helper
@@ -1503,7 +1426,17 @@ def test_old_app_pages_removed_but_apis_kept(temp_db):
     client.post("/login", data={"email": "retire-app@example.com", "password": "password1234"})
     client.post("/app/api/devices/select", json={"device_id": "deskbot_retire"})
 
-    for page in ["/app/", "/app/usage", "/app/settings", "/app/llm-models", "/app/scheduled-tasks", "/app/face-profiles", "/app/configure", "/app/memories", "/app/devices"]:
+    for page in [
+        "/app/",
+        "/app/usage",
+        "/app/settings",
+        "/app/llm-models",
+        "/app/scheduled-tasks",
+        "/app/face-profiles",
+        "/app/configure",
+        "/app/memories",
+        "/app/devices",
+    ]:
         assert client.get(page).status_code == 404, page
 
     assert client.get("/app/api/scheduled-tasks").status_code == 200

@@ -29,9 +29,7 @@ class User(Base):
     is_developer: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     devices: Mapped[list[Device]] = relationship(back_populates="owner")
     api_keys: Mapped[list[ApiKey]] = relationship(back_populates="user")
@@ -76,9 +74,7 @@ class UsageDaily(Base):
 
 class UsageDailyDevice(Base):
     __tablename__ = "usage_daily_device"
-    __table_args__ = (
-        UniqueConstraint("api_key_id", "device_id", "usage_date", name="uq_usage_device_key_date"),
-    )
+    __table_args__ = (UniqueConstraint("api_key_id", "device_id", "usage_date", name="uq_usage_device_key_date"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     api_key_id: Mapped[str] = mapped_column(String(36), ForeignKey("api_keys.id"), nullable=False, index=True)
@@ -133,9 +129,7 @@ class SettingsTestDaily(Base):
     """设置页 LLM/TTS 测试每日配额（按用户与 IP 分别计数）。"""
 
     __tablename__ = "settings_test_daily"
-    __table_args__ = (
-        UniqueConstraint("scope", "scope_key", "usage_date", name="uq_settings_test_daily"),
-    )
+    __table_args__ = (UniqueConstraint("scope", "scope_key", "usage_date", name="uq_settings_test_daily"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     scope: Mapped[str] = mapped_column(String(16), nullable=False, index=True)

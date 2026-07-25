@@ -3,8 +3,9 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Optional
 
-from deskbot_server.util import _format_ts, _json_msg
-from deskbot_server.ws.ws_send import _safe_send
+from deskbot_server.service.application.asr_chat_uplink import pack_ws_downlink_frame
+from deskbot_server.utils.util import _format_ts, _json_msg
+from deskbot_server.utils.ws_utils import WsUtils
 
 if TYPE_CHECKING:
     from deskbot_server.ws.device_pipeline import DevicePipelineBroker
@@ -38,7 +39,7 @@ async def _emit_stage(
         if client_fields:
             for k, v in client_fields.items():
                 msg[k] = v
-        await _safe_send(websocket, _json_msg(msg))
+        await WsUtils.safe_send(websocket, pack_ws_downlink_frame(_json_msg(msg)))
     if dp_broker is not None and device_id and request_id:
         event = {
             "device_id": device_id,
@@ -54,9 +55,7 @@ async def _emit_stage(
                     event[k] = v
         if event_fields:
             event.update(event_fields)
-        await dp_broker.broadcast_to_device(
-            device_id, {"type": "pipeline_stage", "event": event}
-        )
+        await dp_broker.broadcast_to_device(device_id, {"type": "pipeline_stage", "event": event})
         progress = dict(event)
         progress.setdefault("status", "running")
         await dp_broker.publish(progress)

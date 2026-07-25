@@ -4,31 +4,31 @@ import asyncio
 import logging
 import os
 
-import websockets
+import uvicorn
 
 from deskbot_server.config import load_config
-from deskbot_server.debug_prefs_store import apply_debug_prefs_from_config
 from deskbot_server.constants import CAMERA_VIEW_PATH, DEVICE_PIPELINE_PATH
+from deskbot_server.controller.app import create_fastapi_app
+from deskbot_server.controller.runtime import AppRuntime
+from deskbot_server.core.concurrency import configure_concurrency
 from deskbot_server.core.settings import AppSettings
-from deskbot_server.env import load_dotenv
-from deskbot_server.pipeline.audio import AudioConfig
-from deskbot_server.vision.undistort import build_camera_face_runtime
-from deskbot_server.application.camera_broker import CameraImageBroker
+from deskbot_server.dao.debug_prefs_store import apply_debug_prefs_from_config
+from deskbot_server.infrastructure.bootstrap import build_chat_service
+from deskbot_server.service.application.scheduled_task_scheduler import ScheduledTaskScheduler
+from deskbot_server.service.camera_face_service import CameraFaceService, build_camera_face_runtime
+from deskbot_server.service.pipeline.audio import AudioConfig
+from deskbot_server.service.pipeline_service import PipelineService
+from deskbot_server.service.vad_service import VadService
+from deskbot_server.utils.env import load_dotenv
 from deskbot_server.ws.asr_chat_hub import AsrChatHub, PbIdleSilenceServoAfterDownlink
 from deskbot_server.ws.device_pipeline import DevicePipelineBroker
-from deskbot_server.ws.http11_compat import patch_websockets_http11_for_rest_api
-from deskbot_server.ws.http_api import _build_http_request_handler
-from deskbot_server.ws.registry import DeviceRegistry
-from deskbot_server.core.concurrency import configure_concurrency
-from deskbot_server.application.scheduled_task_scheduler import ScheduledTaskScheduler
-from deskbot_server.infrastructure.bootstrap import build_chat_service
 from deskbot_server.ws.pb_idle_registry import set_pb_idle_hub
-from deskbot_server.ws.router import handle_client
-from deskbot_server.ws.ws_send import _safe_send
+from deskbot_server.ws.registry import DeviceRegistry
 
 logger = logging.getLogger("deskbot-server")
 
-async def main():
+
+def build_runtime() -> AppRuntime:
     load_dotenv()
     from deskbot_server.db import init_database
     from deskbot_server.db.engine import default_db_path
@@ -70,116 +70,85 @@ async def main():
         max_concurrent_face_infer=app_settings.server.max_concurrent_face_infer,
     )
     pipeline = build_chat_service(config)
+    VadService().configure(audio_cfg)
     device_pipeline_broker = DevicePipelineBroker()
+    PipelineService().bind(device_pipeline_broker)
     registry = DeviceRegistry()
-    asr_chat_hub = AsrChatHub(
-        device_pb_only=pipeline.asr_chat_device_pb_only,
-        pipeline_broker=device_pipeline_broker,
-    )
-    # 自动休眠（sleep_snore 场景）暂关闭；恢复时取消下方注释块。
-    # idle_snore_sec = app_settings.server.pb_idle_snore_sec
-    # sn_scene = app_settings.server.pb_idle_snore_scene
-    # if idle_snore_sec > 0:
-    #     if not sn_scene:
-    #         sn_scene = "sleep_snore"
-    #     asr_chat_hub.pb_idle_snore = PbIdleSnoreAfterDownlink(
-    #         asr_chat_hub,
-    #         idle_sec=idle_snore_sec,
-    #         scene_name=sn_scene,
-    #     )
-    #     logger.info(
-    #         "[server] pb_idle_snore: 距上次成功下行 %.1fs 无新数据则 opportunistic 下发场景 %r",
-    #         idle_snore_sec,
-    #         sn_scene,
-    #     )
+    asr_chat_hub = AsrChatHub(device_pb_only=pipeline.asr_chat_device_pb_only, pipeline_broker=device_pipeline_broker)
     idle_silence_sec = app_settings.server.pb_idle_silence_sec
     if idle_silence_sec > 0:
-        asr_chat_hub.pb_idle_silence = PbIdleSilenceServoAfterDownlink(
-            asr_chat_hub,
-            idle_sec=idle_silence_sec,
-        )
+        asr_chat_hub.pb_idle_silence = PbIdleSilenceServoAfterDownlink(asr_chat_hub, idle_sec=idle_silence_sec)
         logger.info(
             "[server] pb_idle_silence: 距上次 pb 下行 %.1fs 无新数据则下发低头沉默 x=90 y=80 xm=0 ym=0",
             idle_silence_sec,
         )
     set_pb_idle_hub(asr_chat_hub)
-    camera_image_broker = CameraImageBroker(send_fn=_safe_send)
     camera_face_runtime = build_camera_face_runtime(config)
+    CameraFaceService().configure(camera_face_runtime)
     logger.info(
-        "[server] send_face_info_to_asr_chat=%s（device_pb_only 为 true 时强制关闭；"
-        "仅经 /asr_chat camera_frame 生效）",
+        "[server] send_face_info_to_asr_chat=%s（device_pb_only 为 true 时强制关闭；仅经 /asr_chat camera_frame 生效）",
         app_settings.server.send_face_info_to_asr_chat,
     )
 
-    host = app_settings.server.host
-    port = app_settings.server.port
     ws_path = app_settings.server.ws_path
     if not ws_path.startswith("/"):
         ws_path = f"/{ws_path}"
-    loop = asyncio.get_running_loop()
-    loop.set_exception_handler(
-        lambda _loop, context: logger.error(
-            "未捕获事件循环异常: %s",
-            context.get("message", "unknown"),
-            exc_info=context.get("exception"),
-        )
-    )
-    # 保活：ESP32/弱网若未及时回复协议层 ping，会触发 1011 keepalive ping timeout
-    # DESKBOT_WS_PING_INTERVAL=0 或 none 表示关闭服务端主动 ping
-    # 默认 20s/20s：过长 ping 超时会让僵尸 WS 长时间占位（含懒加载 MediaPipe）。
-    ping_interval = app_settings.server.ws_ping_interval
-    if ping_interval is not None:
-        ping_interval = int(max(5, ping_interval))
-
-    ping_timeout = int(max(5, app_settings.server.ws_ping_timeout))
-
-    patch_websockets_http11_for_rest_api()
-
-    http_handler = _build_http_request_handler(
-        device_pipeline_broker,
-        registry,
-        asr_chat_hub=asr_chat_hub,
-        chat=pipeline,
-    )
 
     scheduler = ScheduledTaskScheduler(
-        chat=pipeline,
-        asr_chat_hub=asr_chat_hub,
-        registry=registry,
-        dp_broker=device_pipeline_broker,
+        chat=pipeline, asr_chat_hub=asr_chat_hub, registry=registry, dp_broker=device_pipeline_broker
     )
     scheduler.start()
 
+    return AppRuntime(
+        settings=app_settings,
+        chat=pipeline,
+        audio_cfg=audio_cfg,
+        ws_path=ws_path,
+        device_pipeline_broker=device_pipeline_broker,
+        registry=registry,
+        asr_chat_hub=asr_chat_hub,
+        scheduler=scheduler,
+    )
+
+
+async def main():
+    runtime = build_runtime()
+    app = create_fastapi_app(runtime)
+    host = runtime.settings.server.host
+    port = runtime.settings.server.port
+    ping_interval = runtime.settings.server.ws_ping_interval
+    if ping_interval is not None:
+        ping_interval = float(max(5, ping_interval))
+    ping_timeout = float(max(5, runtime.settings.server.ws_ping_timeout))
+
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(
+        lambda _loop, context: logger.error(
+            "未捕获事件循环异常: %s", context.get("message", "unknown"), exc_info=context.get("exception")
+        )
+    )
+
     logger.info(
-        "deskbot-server started on ws://%s:%s (asr=%s, camera_view=%s, "
-        "device_pipeline=%s; "
-        "ping_interval=%s ping_timeout=%s)",
+        "deskbot-server FastAPI/uvicorn on http://%s:%s (asr=%s, camera_view=%s, "
+        "device_pipeline=%s; ws_ping_interval=%s ws_ping_timeout=%s)",
         host,
         port,
-        ws_path,
+        runtime.ws_path,
         CAMERA_VIEW_PATH,
         DEVICE_PIPELINE_PATH,
         ping_interval,
         ping_timeout,
     )
-    async with websockets.serve(
-        lambda ws: handle_client(
-            ws,
-            pipeline,
-            audio_cfg,
-            ws_path,
-            device_pipeline_broker,
-            registry,
-            asr_chat_hub,
-            camera_image_broker,
-            camera_face_runtime,
-        ),
-        host,
-        port,
-        max_size=None,
-        max_queue=128,
-        ping_interval=ping_interval,
-        ping_timeout=ping_timeout,
-        process_request=http_handler,
-    ):
-        await asyncio.Future()
+
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        ws_ping_interval=ping_interval,
+        ws_ping_timeout=ping_timeout,
+        # ESP32 可能推较大 JPEG / PCM 帧
+        ws_max_size=None,
+    )
+    server = uvicorn.Server(config)
+    await server.serve()

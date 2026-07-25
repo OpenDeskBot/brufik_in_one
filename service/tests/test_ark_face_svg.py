@@ -66,7 +66,7 @@ def temp_db(monkeypatch):
 
 
 def test_generate_face_svg_from_image_calls_ark_responses_and_sanitizes_svg(monkeypatch):
-    from deskbot_server.ark_face_svg import generate_face_svg_from_image
+    from deskbot_server.vision.ark_face_svg import generate_face_svg_from_image
 
     captured = {}
 
@@ -94,7 +94,16 @@ def test_generate_face_svg_from_image_calls_ark_responses_and_sanitizes_svg(monk
                                 "elements": {
                                     "eye_l": [{"shape": "ellipse_fill", "x": 96, "y": 92, "rw": 16, "rh": 6}],
                                     "eye_r": [{"shape": "ellipse_fill", "x": 188, "y": 92, "rw": 16, "rh": 6}],
-                                    "mouth": [{"shape": "round_rect_outline", "x": 104, "y": 148, "w": 76, "h": 18, "radius": 9}],
+                                    "mouth": [
+                                        {
+                                            "shape": "round_rect_outline",
+                                            "x": 104,
+                                            "y": 148,
+                                            "w": 76,
+                                            "h": 18,
+                                            "radius": 9,
+                                        }
+                                    ],
                                     "nose": [],
                                     "extra": [],
                                 },
@@ -109,10 +118,7 @@ def test_generate_face_svg_from_image_calls_ark_responses_and_sanitizes_svg(monk
     monkeypatch.setenv("ARK_API_KEY", "test-key")
 
     result = generate_face_svg_from_image(
-        b"\x89PNG\r\n\x1a\nfake",
-        "image/png",
-        prompt="做成坏笑表情",
-        transport=fake_transport,
+        b"\x89PNG\r\n\x1a\nfake", "image/png", prompt="做成坏笑表情", transport=fake_transport
     )
 
     assert result["model"] == "doubao-seed-2-1-pro-260628"
@@ -138,7 +144,7 @@ def test_generate_face_svg_from_image_calls_ark_responses_and_sanitizes_svg(monk
 def test_generate_face_svg_from_image_preprocesses_upload_to_black_white_face_input(monkeypatch):
     from PIL import Image
 
-    from deskbot_server.ark_face_svg import generate_face_svg_from_image
+    from deskbot_server.vision.ark_face_svg import generate_face_svg_from_image
 
     captured = {}
 
@@ -175,12 +181,7 @@ def test_generate_face_svg_from_image_preprocesses_upload_to_black_white_face_in
 
     monkeypatch.setenv("ARK_API_KEY", "test-key")
 
-    result = generate_face_svg_from_image(
-        _rgb_png_bytes(),
-        "image/png",
-        prompt="保留眯笑",
-        transport=fake_transport,
-    )
+    result = generate_face_svg_from_image(_rgb_png_bytes(), "image/png", prompt="保留眯笑", transport=fake_transport)
 
     header, encoded = captured["image_url"].split(",", 1)
     assert header == "data:image/png;base64"
@@ -199,7 +200,7 @@ def test_generate_face_svg_from_image_preprocesses_upload_to_black_white_face_in
 
 
 def test_generate_face_svg_from_image_coerces_flat_model_scene(monkeypatch):
-    from deskbot_server.ark_face_svg import generate_face_svg_from_image
+    from deskbot_server.vision.ark_face_svg import generate_face_svg_from_image
 
     def fake_transport(_url, _payload, _api_key, _timeout):
         return {
@@ -221,10 +222,22 @@ def test_generate_face_svg_from_image_coerces_flat_model_scene(monkeypatch):
                             {
                                 "ms": 500,
                                 "elements": [
-                                    {"type": "ellipse_fill", "params": {"cx": 142, "cy": 120, "rx": 138, "ry": 118, "fill": "#fff"}},
-                                    {"type": "ellipse_fill", "params": {"cx": 90, "cy": 80, "rx": 18, "ry": 22, "fill": "#000"}},
-                                    {"type": "ellipse_fill", "params": {"cx": 196, "cy": 80, "rx": 18, "ry": 22, "fill": "#000"}},
-                                    {"type": "ellipse_fill", "params": {"cx": 142, "cy": 160, "rx": 34, "ry": 24, "fill": "#000"}},
+                                    {
+                                        "type": "ellipse_fill",
+                                        "params": {"cx": 142, "cy": 120, "rx": 138, "ry": 118, "fill": "#fff"},
+                                    },
+                                    {
+                                        "type": "ellipse_fill",
+                                        "params": {"cx": 90, "cy": 80, "rx": 18, "ry": 22, "fill": "#000"},
+                                    },
+                                    {
+                                        "type": "ellipse_fill",
+                                        "params": {"cx": 196, "cy": 80, "rx": 18, "ry": 22, "fill": "#000"},
+                                    },
+                                    {
+                                        "type": "ellipse_fill",
+                                        "params": {"cx": 142, "cy": 160, "rx": 34, "ry": 24, "fill": "#000"},
+                                    },
                                 ],
                             }
                         ],
@@ -236,11 +249,7 @@ def test_generate_face_svg_from_image_coerces_flat_model_scene(monkeypatch):
 
     monkeypatch.setenv("ARK_API_KEY", "test-key")
 
-    result = generate_face_svg_from_image(
-        b"\x89PNG\r\n\x1a\nfake",
-        "image/png",
-        transport=fake_transport,
-    )
+    result = generate_face_svg_from_image(b"\x89PNG\r\n\x1a\nfake", "image/png", transport=fake_transport)
 
     elements = result["scene"]["frames"][0]["elements"]
     assert result["scene"]["name"] == "panda_shock"
@@ -252,7 +261,7 @@ def test_generate_face_svg_from_image_coerces_flat_model_scene(monkeypatch):
 
 
 def test_generate_face_svg_from_image_coerces_grouped_svg_coordinates(monkeypatch):
-    from deskbot_server.ark_face_svg import generate_face_svg_from_image
+    from deskbot_server.vision.ark_face_svg import generate_face_svg_from_image
 
     def fake_transport(_url, _payload, _api_key, _timeout):
         return {
@@ -270,7 +279,9 @@ def test_generate_face_svg_from_image_coerces_grouped_svg_coordinates(monkeypatc
                                 "elements": {
                                     "eye_l": [{"shape": "ellipse_fill", "cx": 98, "cy": 78, "rx": 26, "ry": 22}],
                                     "eye_r": [{"shape": "ellipse_fill", "cx": 186, "cy": 78, "rx": 26, "ry": 22}],
-                                    "mouth": [{"shape": "round_rect_fill", "x": 108, "y": 122, "w": 68, "h": 72, "r": 30}],
+                                    "mouth": [
+                                        {"shape": "round_rect_fill", "x": 108, "y": 122, "w": 68, "h": 72, "r": 30}
+                                    ],
                                     "nose": [],
                                     "extra": [],
                                 },
@@ -284,11 +295,7 @@ def test_generate_face_svg_from_image_coerces_grouped_svg_coordinates(monkeypatc
 
     monkeypatch.setenv("ARK_API_KEY", "test-key")
 
-    result = generate_face_svg_from_image(
-        b"\x89PNG\r\n\x1a\nfake",
-        "image/png",
-        transport=fake_transport,
-    )
+    result = generate_face_svg_from_image(b"\x89PNG\r\n\x1a\nfake", "image/png", transport=fake_transport)
 
     elements = result["scene"]["frames"][0]["elements"]
     assert elements["eye_l"][0] == {"shape": "ellipse_fill", "x": 98, "y": 78, "rw": 26, "rh": 22}
@@ -298,11 +305,8 @@ def test_generate_face_svg_from_image_coerces_grouped_svg_coordinates(monkeypatc
 
 
 def test_generate_face_svg_from_image_outputs_multiframe_main_compatible_scene(monkeypatch):
-    from deskbot_server.ark_face_svg import generate_face_svg_from_image
-    from deskbot_server.face_expr_scenes_store import (
-        design_frames_to_pb_chain,
-        normalize_face_expr_scenes,
-    )
+    from deskbot_server.dao.face_expr_scenes_store import design_frames_to_pb_chain, normalize_face_expr_scenes
+    from deskbot_server.vision.ark_face_svg import generate_face_svg_from_image
 
     def fake_transport(_url, _payload, _api_key, _timeout):
         return {
@@ -320,7 +324,9 @@ def test_generate_face_svg_from_image_outputs_multiframe_main_compatible_scene(m
                                 "elements": {
                                     "eye_l": [{"shape": "circle_fill", "cx": 98, "cy": 78, "r": 10}],
                                     "eye_r": [{"shape": "circle_fill", "cx": 186, "cy": 78, "r": 10}],
-                                    "mouth": [{"shape": "round_rect_fill", "x": 108, "y": 122, "w": 68, "h": 72, "r": 30}],
+                                    "mouth": [
+                                        {"shape": "round_rect_fill", "x": 108, "y": 122, "w": 68, "h": 72, "r": 30}
+                                    ],
                                     "nose": [{"shape": "circle_fill", "cx": 142, "cy": 118, "r": 5}],
                                     "extra": [],
                                 },
@@ -334,11 +340,7 @@ def test_generate_face_svg_from_image_outputs_multiframe_main_compatible_scene(m
 
     monkeypatch.setenv("ARK_API_KEY", "test-key")
 
-    result = generate_face_svg_from_image(
-        b"\x89PNG\r\n\x1a\nfake",
-        "image/png",
-        transport=fake_transport,
-    )
+    result = generate_face_svg_from_image(b"\x89PNG\r\n\x1a\nfake", "image/png", transport=fake_transport)
 
     scene = result["scene"]
     normalize_face_expr_scenes([scene])
@@ -355,11 +357,8 @@ def test_generate_face_svg_from_image_outputs_multiframe_main_compatible_scene(m
 
 
 def test_generate_face_svg_from_image_slugifies_invalid_model_names_for_pb_downlink(monkeypatch):
-    from deskbot_server.ark_face_svg import generate_face_svg_from_image
-    from deskbot_server.face_expr_scenes_store import (
-        design_frames_to_pb_chain,
-        normalize_face_expr_scenes,
-    )
+    from deskbot_server.dao.face_expr_scenes_store import design_frames_to_pb_chain, normalize_face_expr_scenes
+    from deskbot_server.vision.ark_face_svg import generate_face_svg_from_image
 
     captured = {}
 
@@ -380,7 +379,9 @@ def test_generate_face_svg_from_image_slugifies_invalid_model_names_for_pb_downl
                                 "elements": {
                                     "eye_l": [{"shape": "ellipse_fill", "cx": 98, "cy": 78, "rx": 26, "ry": 22}],
                                     "eye_r": [{"shape": "ellipse_fill", "cx": 186, "cy": 78, "rx": 26, "ry": 22}],
-                                    "mouth": [{"shape": "round_rect_fill", "x": 108, "y": 148, "w": 68, "h": 10, "r": 5}],
+                                    "mouth": [
+                                        {"shape": "round_rect_fill", "x": 108, "y": 148, "w": 68, "h": 10, "r": 5}
+                                    ],
                                     "nose": [{"shape": "circle_fill", "cx": 142, "cy": 118, "r": 5}],
                                     "extra": [],
                                 },
@@ -395,10 +396,7 @@ def test_generate_face_svg_from_image_slugifies_invalid_model_names_for_pb_downl
     monkeypatch.setenv("ARK_API_KEY", "test-key")
 
     result = generate_face_svg_from_image(
-        b"\x89PNG\r\n\x1a\nunique-image",
-        "image/png",
-        prompt="保留眯笑",
-        transport=fake_transport,
+        b"\x89PNG\r\n\x1a\nunique-image", "image/png", prompt="保留眯笑", transport=fake_transport
     )
 
     scene = result["scene"]
@@ -497,10 +495,7 @@ def test_face_design_generate_from_image_endpoint_allows_browsing_without_device
 
     resp = client.post(
         "/api/face_design/generate-from-image",
-        data={
-            "prompt": "坏笑",
-            "image": (io.BytesIO(b"\x89PNG\r\n\x1a\nfake"), "meme.png"),
-        },
+        data={"prompt": "坏笑", "image": (io.BytesIO(b"\x89PNG\r\n\x1a\nfake"), "meme.png")},
         content_type="multipart/form-data",
     )
 

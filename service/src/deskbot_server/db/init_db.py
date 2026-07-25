@@ -25,9 +25,7 @@ def _migrate_legacy_schema(engine) -> None:
             if "is_builtin" in cols:
                 conn.execute(text("ALTER TABLE users RENAME COLUMN is_builtin TO is_developer"))
             else:
-                conn.execute(text(
-                    "ALTER TABLE users ADD COLUMN is_developer BOOLEAN NOT NULL DEFAULT 0"
-                ))
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_developer BOOLEAN NOT NULL DEFAULT 0"))
     _migrate_scheduled_tasks_schema(engine)
 
 
@@ -58,35 +56,19 @@ def _migrate_scheduled_tasks_schema(engine) -> None:
     with engine.begin() as conn:
         if "run_at" in cols and "next_run_at" in cols:
             conn.execute(
-                text(
-                    "UPDATE scheduled_tasks SET next_run_at = run_at "
-                    "WHERE next_run_at IS NULL AND run_at IS NOT NULL"
-                )
+                text("UPDATE scheduled_tasks SET next_run_at = run_at WHERE next_run_at IS NULL AND run_at IS NOT NULL")
             )
         if "cron_expr" in cols:
             conn.execute(
-                text(
-                    "UPDATE scheduled_tasks SET cron_expr = '* * * * *' "
-                    "WHERE cron_expr IS NULL OR cron_expr = ''"
-                )
+                text("UPDATE scheduled_tasks SET cron_expr = '* * * * *' WHERE cron_expr IS NULL OR cron_expr = ''")
             )
         if "task_kind" in cols:
             conn.execute(
-                text(
-                    "UPDATE scheduled_tasks SET task_kind = 'once' "
-                    "WHERE task_kind IS NULL OR task_kind = ''"
-                )
+                text("UPDATE scheduled_tasks SET task_kind = 'once' WHERE task_kind IS NULL OR task_kind = ''")
             )
         if "enabled" in cols:
-            conn.execute(
-                text("UPDATE scheduled_tasks SET enabled = 1 WHERE enabled IS NULL")
-            )
-        conn.execute(
-            text(
-                "UPDATE scheduled_tasks SET status = 'active' "
-                "WHERE status = 'pending'"
-            )
-        )
+            conn.execute(text("UPDATE scheduled_tasks SET enabled = 1 WHERE enabled IS NULL"))
+        conn.execute(text("UPDATE scheduled_tasks SET status = 'active' WHERE status = 'pending'"))
     _migrate_scheduled_tasks_drop_legacy_run_at(engine)
 
 
@@ -102,16 +84,8 @@ def _migrate_scheduled_tasks_drop_legacy_run_at(engine) -> None:
         return
 
     logger.info("迁移 scheduled_tasks：移除遗留 run_at 列，统一使用 next_run_at")
-    cron_sel = (
-        "COALESCE(NULLIF(cron_expr, ''), '* * * * *')"
-        if "cron_expr" in cols
-        else "'* * * * *'"
-    )
-    kind_sel = (
-        "COALESCE(NULLIF(task_kind, ''), 'once')"
-        if "task_kind" in cols
-        else "'once'"
-    )
+    cron_sel = "COALESCE(NULLIF(cron_expr, ''), '* * * * *')" if "cron_expr" in cols else "'* * * * *'"
+    kind_sel = "COALESCE(NULLIF(task_kind, ''), 'once')" if "task_kind" in cols else "'once'"
     enabled_sel = "COALESCE(enabled, 1)" if "enabled" in cols else "1"
     if "next_run_at" in cols and "run_at" in cols:
         next_run_sel = "COALESCE(next_run_at, run_at)"
@@ -168,24 +142,9 @@ def _migrate_scheduled_tasks_drop_legacy_run_at(engine) -> None:
         )
         conn.execute(text("DROP TABLE scheduled_tasks"))
         conn.execute(text("ALTER TABLE scheduled_tasks_new RENAME TO scheduled_tasks"))
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_device_id "
-                "ON scheduled_tasks (device_id)"
-            )
-        )
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_status "
-                "ON scheduled_tasks (status)"
-            )
-        )
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_next_run_at "
-                "ON scheduled_tasks (next_run_at)"
-            )
-        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_device_id ON scheduled_tasks (device_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_status ON scheduled_tasks (status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_next_run_at ON scheduled_tasks (next_run_at)"))
 
 
 def init_database() -> None:
@@ -197,7 +156,7 @@ def init_database() -> None:
 
 
 def _seed_free_api_key() -> None:
-    from deskbot_server.auth.api_key_service import (
+    from deskbot_server.dao.api_key_service import (
         ensure_free_usage_placeholder,
         generate_raw_key,
         read_free_api_key_config,
@@ -208,8 +167,5 @@ def _seed_free_api_key() -> None:
         if read_free_api_key_config() is None:
             raw = generate_raw_key(free=True)
             write_free_api_key_file(raw)
-            logger.warning(
-                "已创建免费 API Key（每日 1GB 配额）prefix=%s —— 完整 Key 见 data/.free_api_key",
-                raw[:12],
-            )
+            logger.warning("已创建免费 API Key（每日 1GB 配额）prefix=%s —— 完整 Key 见 data/.free_api_key", raw[:12])
         ensure_free_usage_placeholder()

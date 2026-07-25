@@ -11,8 +11,8 @@ def temp_db(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "test.db"
         monkeypatch.setenv("DESKBOT_DB_PATH", str(db_path))
-        from deskbot_server.db.engine import init_engine, reset_engine
         from deskbot_server.db import init_database
+        from deskbot_server.db.engine import init_engine, reset_engine
 
         reset_engine()
         init_engine(db_path)
@@ -21,7 +21,7 @@ def temp_db(monkeypatch):
 
 
 def test_settings_test_limit_per_user_and_ip(temp_db):
-    from deskbot_server.application.settings_test_limit import (
+    from deskbot_server.service.application.settings_test_limit import (
         SETTINGS_TEST_DAILY_LIMIT,
         SettingsTestLimitExceeded,
         check_and_consume_settings_test,
@@ -55,9 +55,9 @@ def test_settings_test_limit_per_user_and_ip(temp_db):
 
 
 def test_api_test_llm_returns_429_when_quota_exhausted(temp_db, monkeypatch):
-    from deskbot_server.application.settings_test_limit import SETTINGS_TEST_DAILY_LIMIT
     from deskbot_server.auth.device_service import bind_device
     from deskbot_server.auth.service import create_user
+    from deskbot_server.service.application.settings_test_limit import SETTINGS_TEST_DAILY_LIMIT
     from deskbot_server.web.app import create_app
 
     user = create_user("quota@example.com", "password1234")
@@ -70,18 +70,10 @@ def test_api_test_llm_returns_429_when_quota_exhausted(temp_db, monkeypatch):
     def fake_completion(*_args, **_kwargs):
         return "ok", {"model": "test", "display_name": "test", "usage": {}}
 
-    monkeypatch.setattr(
-        "deskbot_server.web.blueprints.app_bp.chat_completion",
-        fake_completion,
-    )
+    monkeypatch.setattr("deskbot_server.web.blueprints.app_bp.chat_completion", fake_completion)
 
     url = "/app/api/llm-models/test?device_id=deskbot_quota"
-    body = {
-        "model_name": "qwen-flash",
-        "protocol": "openai",
-        "api_key": "sk-test",
-        "prompt": "hi",
-    }
+    body = {"model_name": "qwen-flash", "protocol": "openai", "api_key": "sk-test", "prompt": "hi"}
     for _ in range(SETTINGS_TEST_DAILY_LIMIT):
         resp = client.post(url, json=body)
         assert resp.status_code == 200

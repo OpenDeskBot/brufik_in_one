@@ -1,7 +1,4 @@
-from deskbot_server.asr.text_filter import (
-    asr_text_without_punctuation,
-    is_asr_text_acceptable,
-)
+from deskbot_server.infrastructure.asr.text_filter import asr_text_without_punctuation, is_asr_text_acceptable
 
 
 def test_strip_punctuation():

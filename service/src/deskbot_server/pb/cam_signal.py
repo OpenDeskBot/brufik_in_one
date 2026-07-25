@@ -5,15 +5,11 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from deskbot_server.pb.shapes import PB_ACTION_DEFAULT, PB_LEVEL_TASK
 from deskbot_server.pb.servo_pcm import parse_pb_cam_fps
+from deskbot_server.pb.shapes import PB_ACTION_DEFAULT, PB_LEVEL_TASK
 
 
-def build_cam_fps_signal_pb(
-    *,
-    cam_fps: int,
-    req: str | None = None,
-) -> dict[str, Any]:
+def build_cam_fps_signal_pb(*, cam_fps: int, req: str | None = None) -> dict[str, Any]:
     """空 pb_single：仅 ``cam_fps``，不含 anim/servo/audio。"""
     fps = parse_pb_cam_fps(cam_fps)
     if fps is None:

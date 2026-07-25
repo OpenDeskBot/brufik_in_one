@@ -1,4 +1,4 @@
-from deskbot_server.servo_config_store import (
+from deskbot_server.dao.servo_config_store import (
     DEFAULT_SERVO_LIMITS,
     clamp_servo_step,
     logical_step_to_protocol,

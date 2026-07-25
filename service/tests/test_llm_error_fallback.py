@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from deskbot_server.application.llm_error_fallback import (
+from deskbot_server.service.application.llm_error_fallback import (
     build_llm_error_fallback_plan,
     llm_error_fallback_tts,
     llm_error_idle_moves,

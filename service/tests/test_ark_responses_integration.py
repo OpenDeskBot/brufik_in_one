@@ -1,4 +1,5 @@
 """火山方舟 ark_responses 端到端集成测试（需网络与 .env 中 ARK_API_KEY）。"""
+
 from __future__ import annotations
 
 import json
@@ -25,8 +26,8 @@ def device_env(monkeypatch):
         monkeypatch.setenv("DESKBOT_DB_PATH", str(root / "test.db"))
         monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", root)
         monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", root / "device")
-        from deskbot_server.db.engine import init_engine, reset_engine
         from deskbot_server.db import init_database
+        from deskbot_server.db.engine import init_engine, reset_engine
 
         reset_engine()
         init_engine(root / "test.db")
@@ -35,7 +36,7 @@ def device_env(monkeypatch):
 
 
 def test_live_ark_responses_chat_completion():
-    from deskbot_server.llm.runtime import ResolvedLlmConfig, chat_completion
+    from deskbot_server.infrastructure.llm.runtime import ResolvedLlmConfig, chat_completion
 
     cfg = ResolvedLlmConfig(
         model=os.environ["ARK_MODEL"].strip(),
@@ -46,9 +47,7 @@ def test_live_ark_responses_chat_completion():
         display_name="DeepSeek v4 Flash",
     )
     content, meta = chat_completion(
-        [{"role": "user", "content": '只输出 JSON：{"tts":"集成测试通过"}'}],
-        config=cfg,
-        json_mode=True,
+        [{"role": "user", "content": '只输出 JSON：{"tts":"集成测试通过"}'}], config=cfg, json_mode=True
     )
     parsed = json.loads(content)
     assert parsed["tts"] == "集成测试通过"
@@ -58,7 +57,7 @@ def test_live_ark_responses_chat_completion():
 def test_live_ark_responses_stream_tts_prefetch():
     import asyncio
 
-    from deskbot_server.llm.runtime import ResolvedLlmConfig, chat_acompletion
+    from deskbot_server.infrastructure.llm.runtime import ResolvedLlmConfig, chat_acompletion
 
     cfg = ResolvedLlmConfig(
         model=os.environ["ARK_MODEL"].strip(),
@@ -91,8 +90,8 @@ def test_live_ark_responses_stream_tts_prefetch():
 def test_api_add_select_test_ark_model(device_env, monkeypatch):
     from deskbot_server.auth.device_service import bind_device
     from deskbot_server.auth.service import create_user
-    from deskbot_server.llm_config_store import get_active_llm_model
-    from deskbot_server.llm.runtime import resolve_llm_config
+    from deskbot_server.dao.llm_config_store import get_active_llm_model
+    from deskbot_server.infrastructure.llm.runtime import resolve_llm_config
     from deskbot_server.web.app import create_app
 
     device_id = device_env
@@ -123,20 +122,14 @@ def test_api_add_select_test_ark_model(device_env, monkeypatch):
 
     tested = client.post(
         f"/app/api/llm-models/test?device_id={device_id}",
-        json={
-            "model_id": model_id,
-            "prompt": "你好，请用一句话介绍你自己。",
-        },
+        json={"model_id": model_id, "prompt": "你好，请用一句话介绍你自己。"},
     )
     assert tested.status_code == 200, tested.get_data(as_text=True)
     test_payload = tested.get_json()
     assert test_payload["ok"] is True
     assert len(test_payload["reply"]) > 0
 
-    selected = client.post(
-        f"/app/api/llm-models/select?device_id={device_id}",
-        json={"model_id": model_id},
-    )
+    selected = client.post(f"/app/api/llm-models/select?device_id={device_id}", json={"model_id": model_id})
     assert selected.status_code == 200
 
     active = get_active_llm_model(device_id)
@@ -155,8 +148,8 @@ def test_openai_adapter_with_ark_device(device_env, monkeypatch):
     from deskbot_server.auth.service import create_user
     from deskbot_server.config import load_config
     from deskbot_server.core.settings import AppSettings
+    from deskbot_server.dao.llm_config_store import add_llm_model, set_active_llm_model
     from deskbot_server.infrastructure.llm.openai_compat import OpenAiLlmAdapter
-    from deskbot_server.llm_config_store import add_llm_model, set_active_llm_model
 
     device_id = device_env
     create_user("ark-adapter@example.com", "password1234")
@@ -187,7 +180,7 @@ def test_openai_adapter_with_ark_device(device_env, monkeypatch):
 def test_debug_llm_chat_with_ark_device(device_env):
     from deskbot_server.auth.device_service import bind_device
     from deskbot_server.auth.service import create_user
-    from deskbot_server.llm_config_store import add_llm_model, set_active_llm_model
+    from deskbot_server.dao.llm_config_store import add_llm_model, set_active_llm_model
     from deskbot_server.web.app import create_app
 
     device_id = device_env
@@ -208,10 +201,7 @@ def test_debug_llm_chat_with_ark_device(device_env):
     client = app.test_client()
     client.post("/login", data={"email": "ark-debug@example.com", "password": "password1234"})
 
-    resp = client.post(
-        "/api/llm/chat",
-        json={"text": "你好", "device_id": device_id},
-    )
+    resp = client.post("/api/llm/chat", json={"text": "你好", "device_id": device_id})
     assert resp.status_code == 200, resp.get_data(as_text=True)
     payload = resp.get_json()
     assert payload["ok"] is True

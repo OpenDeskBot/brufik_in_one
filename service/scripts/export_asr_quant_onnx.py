@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """若缺少 ``model_quant.onnx``，从 ``model.pt`` 导出量化 ONNX（CPU 推理）。"""
+
 from __future__ import annotations
 
 import sys
@@ -8,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from deskbot_server.asr_model_dir import ensure_asr_quant_onnx  # noqa: E402
+from deskbot_server.infrastructure.asr.model_dir import ensure_asr_quant_onnx  # noqa: E402
 
 
 def main() -> None:

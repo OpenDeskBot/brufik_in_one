@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-import pytest
-
 
 def test_ensure_device_data_initialized_copies_json(tmp_path, monkeypatch):
     from deskbot_server import device_data as dd
@@ -13,7 +8,9 @@ def test_ensure_device_data_initialized_copies_json(tmp_path, monkeypatch):
     global_dir = data_dir / "global"
     data_dir.mkdir()
     global_dir.mkdir()
-    (data_dir / "servo.json").write_text('{"xMin":0,"xMax":180,"yMin":0,"yMax":180,"xReverse":0,"yReverse":0}\n', encoding="utf-8")
+    (data_dir / "servo.json").write_text(
+        '{"xMin":0,"xMax":180,"yMin":0,"yMax":180,"xReverse":0,"yReverse":0}\n', encoding="utf-8"
+    )
     (data_dir / "user_memory.json").write_text('{"entries":[]}\n', encoding="utf-8")
     (global_dir / "llm_system.txt").write_text("你是测试助手\n", encoding="utf-8")
 

@@ -1,12 +1,12 @@
 """llm_config_store 单元测试。"""
+
 from __future__ import annotations
 
 import json
 
 import pytest
 
-from deskbot_server.device_data import device_data_dir
-from deskbot_server.llm_config_store import (
+from deskbot_server.dao.llm_config_store import (
     LLM_MODELS_FILENAME,
     add_llm_model,
     delete_llm_model,
@@ -15,6 +15,7 @@ from deskbot_server.llm_config_store import (
     set_active_llm_model,
     update_llm_model,
 )
+from deskbot_server.utils.device_data import device_data_dir
 
 
 @pytest.fixture

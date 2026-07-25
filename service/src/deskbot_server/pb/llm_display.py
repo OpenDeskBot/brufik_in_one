@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import io
 import re
-import binascii
 from typing import Any
 
 from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
@@ -94,12 +94,7 @@ def parse_llm_images(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _attach_images_to_anim_item(
-    item: dict[str, Any],
-    images: list[dict[str, Any]],
-    *,
-    asset_base: int,
-) -> None:
+def _attach_images_to_anim_item(item: dict[str, Any], images: list[dict[str, Any]], *, asset_base: int) -> None:
     if not images:
         return
     els = item.setdefault("elements", {})
@@ -111,22 +106,11 @@ def _attach_images_to_anim_item(
         els["extra"] = layer
     for i, img in enumerate(images):
         layer.append(
-            {
-                "shape": "image",
-                "asset": asset_base + i,
-                "x": img["x"],
-                "y": img["y"],
-                "w": img["w"],
-                "h": img["h"],
-            }
+            {"shape": "image", "asset": asset_base + i, "x": img["x"], "y": img["y"], "w": img["w"], "h": img["h"]}
         )
 
 
-def apply_llm_display_to_rows(
-    rows: list[dict[str, Any]],
-    *,
-    images: list[dict[str, Any]] | None = None,
-) -> None:
+def apply_llm_display_to_rows(rows: list[dict[str, Any]], *, images: list[dict[str, Any]] | None = None) -> None:
     """将 LLM 图片叠加到 pb 行（就地修改）。"""
     if not rows:
         return

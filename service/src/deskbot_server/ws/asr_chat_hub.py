@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
-import json
 import logging
 import os
 import time
@@ -11,27 +9,23 @@ import weakref
 from typing import Any, Optional
 
 from deskbot_server.constants import FACE_DESIGN_FILE
-from deskbot_server.llm.utils import coerce_pb_v2_downlink_payload
-from deskbot_server.face_expr_scenes_store import (
+from deskbot_server.dao.face_expr_scenes_store import (
     design_frames_to_pb_chain,
     find_design_scene_by_name,
     load_face_expr_scenes_file,
 )
+from deskbot_server.infrastructure.llm.utils import coerce_pb_v2_downlink_payload
+from deskbot_server.pb.payload_types import _is_pb_downlink_payload
 from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
-from deskbot_server.pb.shapes import (
-    PB_ACTION_DEFAULT,
-    PB_LEVEL_IDLE,
-    apply_pb_dispatch_fields,
-)
-from deskbot_server.ws.pb_idle_registry import note_pb_idle_for_device
-from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event
-from deskbot_server.settings import _is_pb_downlink_payload
+from deskbot_server.pb.shapes import PB_ACTION_DEFAULT, PB_LEVEL_IDLE, apply_pb_dispatch_fields
 from deskbot_server.pb.wire import device_pb_json_msg
-from deskbot_server.util import _json_msg
+from deskbot_server.utils.ws_utils import WsUtils
+from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event
+from deskbot_server.ws.pb_idle_registry import note_pb_idle_for_device
 from deskbot_server.ws.ws_send import (
     _pb_ws_chain_serial_lock,
     _PerWsFireAndForget,
-    _safe_send,
+    _safe_send_pb_json_then_binaries,
     _stop_pb_device_downlink_worker,
     enqueue_pb_device_downlink,
     enqueue_pb_device_downlink_unlocked,
@@ -40,14 +34,7 @@ from deskbot_server.ws.ws_send import (
 logger = logging.getLogger("deskbot-server")
 
 
-def _log_pb_tx_wire(
-    device_id: str,
-    payload: dict,
-    wire: str,
-    *,
-    label: str = "",
-    pcm_bytes: int = 0,
-) -> None:
+def _log_pb_tx_wire(device_id: str, payload: dict, wire: str, *, label: str = "", pcm_bytes: int = 0) -> None:
     """调试：打印实际发往设备的 pb JSON 文本帧（与 ``chat_flow`` 的 wire_json 一致）。"""
     tag = f" {label}" if label else ""
     bin_note = f" +binary={pcm_bytes}" if pcm_bytes else ""
@@ -72,19 +59,14 @@ def _log_pb_tx_wire(
 class AsrChatHub:
     """按 device_id 索引当前所有 /asr_chat 长连接，允许其它通道主动下发消息。
 
-    可选用途：在 ``send_face_info_to_asr_chat`` 开启时，``/asr_chat`` 的 ``camera_frame``
-    可将 ``face_info`` 写回同连接（与 ``device_pb_only`` 互斥）。
+    可选用途：设备经 ``/camera_uplink`` 或 ``/asr_chat`` 上行 JPEG 后，服务端只做入库/
+    调试预览，不再因相机结果经本 hub 回写设备。
 
     ``device_pb_only`` 为 true 时：经 :meth:`send` 仅接受 ``pb_*`` 载荷，且与同连接 TTS 共用
     :func:`enqueue_pb_device_downlink` 队列顺序写出；其它载荷直接丢弃计数为 0。
     """
 
-    def __init__(
-        self,
-        device_pb_only: bool = False,
-        *,
-        pipeline_broker: Optional[Any] = None,
-    ) -> None:
+    def __init__(self, device_pb_only: bool = False, *, pipeline_broker: Optional[Any] = None) -> None:
         self._by_device: dict = {}
         self._lock = asyncio.Lock()
         # 给 ESP32 反压（比如它在播 TTS 时 RX 满）时不会卡住调用方
@@ -123,19 +105,12 @@ class AsrChatHub:
 
     async def _close_superseded_connection(self, device_id: str, ws) -> None:
         """同 device 新连接接入时关闭旧 /asr_chat，避免 delivered=2 与 zombie 连接。"""
-        logger.info(
-            "[asr_chat_hub] 关闭同 device 旧 /asr_chat 连接 device_id=%s（新连接取代）",
-            device_id,
-        )
+        logger.info("[asr_chat_hub] 关闭同 device 旧 /asr_chat 连接 device_id=%s（新连接取代）", device_id)
         await self.detach(device_id, ws)
         try:
             await ws.close(code=1000, reason="superseded by new connection")
         except Exception:
-            logger.debug(
-                "[asr_chat_hub] 旧连接 close 异常 device_id=%s",
-                device_id,
-                exc_info=True,
-            )
+            logger.debug("[asr_chat_hub] 旧连接 close 异常 device_id=%s", device_id, exc_info=True)
 
     async def detach(self, device_id: str, ws) -> None:
         if not device_id:
@@ -202,7 +177,7 @@ class AsrChatHub:
 
         ``device_pb_only`` 连接上整链持 :func:`_pb_ws_chain_serial_lock` 后经
         :func:`enqueue_pb_device_downlink_unlocked` 入队，避免协程间插队导致仅首帧到达；
-        否则仍 ``await`` :func:`_safe_send` / :func:`_safe_send_pb_json_then_pcm`。
+        否则仍 ``await`` :meth:`WsUtils.safe_send` / :func:`_safe_send_pb_json_then_pcm`。
         """
         if not device_id or not frames:
             return 0
@@ -239,8 +214,6 @@ class AsrChatHub:
                         await enqueue_pb_device_downlink_unlocked(ws, wire, binaries=bins)
                         n += 1
             else:
-                from deskbot_server.ws.ws_send import _safe_send_pb_json_then_pcm
-
                 for i, payload in enumerate(frames):
                     if not isinstance(payload, dict):
                         continue
@@ -262,21 +235,18 @@ class AsrChatHub:
                         pcm_bytes=sum(len(b) for b in bins),
                     )
                     if bins:
-                        from deskbot_server.ws.ws_send import _safe_send_pb_json_then_binaries
-
                         ok_t, ok_b = await _safe_send_pb_json_then_binaries(ws, wire, bins)
                         if not (ok_t and ok_b):
                             continue
                     else:
-                        await _safe_send(ws, wire)
+                        ok_t, ok_b = await _safe_send_pb_json_then_binaries(ws, wire, [])
+                        if not (ok_t and ok_b):
+                            continue
                     n += 1
         return n
 
     async def send_pb_single_then_chain_ordered(
-        self,
-        device_id: str,
-        single_payload: dict,
-        tail_frames: Optional[list[dict]],
+        self, device_id: str, single_payload: dict, tail_frames: Optional[list[dict]]
     ) -> int:
         """在 ``device_pb_only`` 下持**同一把**链锁：先发 ``pb_single``，再顺序发 ``tail_frames``。
 
@@ -288,11 +258,7 @@ class AsrChatHub:
         single_payload = coerce_pb_v2_downlink_payload(single_payload)
         if self._device_pb_only and not _is_pb_downlink_payload(single_payload):
             return 0
-        tail = [
-            coerce_pb_v2_downlink_payload(f)
-            for f in (tail_frames or [])
-            if isinstance(f, dict)
-        ]
+        tail = [coerce_pb_v2_downlink_payload(f) for f in (tail_frames or []) if isinstance(f, dict)]
         async with self._lock:
             targets = list(self._by_device.get(device_id, ()))
         if not targets:
@@ -304,44 +270,26 @@ class AsrChatHub:
             if getattr(ws, "_asr_chat_pb_serial_queue", False):
                 async with _pb_ws_chain_serial_lock(ws):
                     wire0 = device_pb_json_msg(single_payload)
-                    _log_pb_tx_wire(
-                        device_id,
-                        single_payload,
-                        wire0,
-                        label=f"single+tail 1/{n_total}",
-                    )
+                    _log_pb_tx_wire(device_id, single_payload, wire0, label=f"single+tail 1/{n_total}")
                     await enqueue_pb_device_downlink_unlocked(ws, wire0, None)
                     n += 1
                     for ti, payload in enumerate(tail):
                         wire = device_pb_json_msg(payload)
-                        _log_pb_tx_wire(
-                            device_id,
-                            payload,
-                            wire,
-                            label=f"single+tail {ti + 2}/{n_total}",
-                        )
+                        _log_pb_tx_wire(device_id, payload, wire, label=f"single+tail {ti + 2}/{n_total}")
                         await enqueue_pb_device_downlink_unlocked(ws, wire, None)
                         n += 1
             else:
                 wire0 = device_pb_json_msg(single_payload)
-                _log_pb_tx_wire(
-                    device_id,
-                    single_payload,
-                    wire0,
-                    label=f"single+tail 1/{n_total}",
-                )
-                await _safe_send(ws, wire0)
-                n += 1
+                _log_pb_tx_wire(device_id, single_payload, wire0, label=f"single+tail 1/{n_total}")
+                ok_t, ok_b = await _safe_send_pb_json_then_binaries(ws, wire0, [])
+                if ok_t and ok_b:
+                    n += 1
                 for ti, payload in enumerate(tail):
                     wire = device_pb_json_msg(payload)
-                    _log_pb_tx_wire(
-                        device_id,
-                        payload,
-                        wire,
-                        label=f"single+tail {ti + 2}/{n_total}",
-                    )
-                    await _safe_send(ws, wire)
-                    n += 1
+                    _log_pb_tx_wire(device_id, payload, wire, label=f"single+tail {ti + 2}/{n_total}")
+                    ok_t, ok_b = await _safe_send_pb_json_then_binaries(ws, wire, [])
+                    if ok_t and ok_b:
+                        n += 1
         return n
 
 
@@ -396,7 +344,7 @@ class PbIdleSnoreAfterDownlink:
             self.note_activity(device_id)
 
     def note_activity(self, device_id: str) -> None:
-        from deskbot_server.pb_idle_dispatch import pb_idle_auto_dispatch_active
+        from deskbot_server.service.pb_idle_dispatch import pb_idle_auto_dispatch_active
 
         if not pb_idle_auto_dispatch_active():
             self.cancel_for_device(device_id)
@@ -447,7 +395,7 @@ class PbIdleSnoreAfterDownlink:
                 self._tasks.pop(device_id, None)
 
     async def _deliver_scene(self, device_id: str) -> None:
-        from deskbot_server.pb_idle_dispatch import pb_idle_auto_dispatch_active
+        from deskbot_server.service.pb_idle_dispatch import pb_idle_auto_dispatch_active
 
         if not pb_idle_auto_dispatch_active():
             return
@@ -455,9 +403,7 @@ class PbIdleSnoreAfterDownlink:
             return
         if self._gaze_blocks_idle_snore(device_id):
             logger.info(
-                "[pb_idle_snore] 跳过：正脸 is_frontal，重新计时 device_id=%s scene=%s",
-                device_id,
-                self._scene_lc,
+                "[pb_idle_snore] 跳过：正脸 is_frontal，重新计时 device_id=%s scene=%s", device_id, self._scene_lc
             )
             self.note_activity(device_id)
             return
@@ -481,9 +427,7 @@ class PbIdleSnoreAfterDownlink:
         self._suppress_note_devices.add(device_id)
         n = 0
         try:
-            n = await self._hub.send_pb_chain_ordered(
-                device_id, frames, binaries_per_frame=binaries_per_frame
-            )
+            n = await self._hub.send_pb_chain_ordered(device_id, frames, binaries_per_frame=binaries_per_frame)
             logger.info(
                 "[pb_idle_snore] scene=%s level=%d action=%s device_id=%s req=%s frames=%d ws_sends=%d",
                 self._scene_lc,
@@ -495,11 +439,7 @@ class PbIdleSnoreAfterDownlink:
                 n,
             )
         except Exception:
-            logger.exception(
-                "[pb_idle_snore] 下发失败 scene=%s device_id=%s",
-                self._scene_lc,
-                device_id,
-            )
+            logger.exception("[pb_idle_snore] 下发失败 scene=%s device_id=%s", self._scene_lc, device_id)
         finally:
             self._suppress_note_devices.discard(device_id)
         scene_title = str(ent.get("title") or self._scene_lc).strip()
@@ -533,7 +473,7 @@ class PbIdleSilenceServoAfterDownlink:
         self._silence_already_sent: set[str] = set()
 
     def note_activity(self, device_id: str) -> None:
-        from deskbot_server.pb_idle_dispatch import pb_idle_auto_dispatch_active
+        from deskbot_server.service.pb_idle_dispatch import pb_idle_auto_dispatch_active
 
         if not pb_idle_auto_dispatch_active():
             self.cancel_for_device(device_id)
@@ -583,15 +523,12 @@ class PbIdleSilenceServoAfterDownlink:
                 self._tasks.pop(device_id, None)
 
     async def _deliver_silence_servo(self, device_id: str) -> None:
-        from deskbot_server.pb_idle_dispatch import pb_idle_auto_dispatch_active
+        from deskbot_server.service.pb_idle_dispatch import pb_idle_auto_dispatch_active
 
         if not pb_idle_auto_dispatch_active():
             return
         if device_id in self._silence_already_sent:
-            logger.info(
-                "[pb_idle_silence] 跳过：上次已是低头沉默，等待其它 pb 下行 device_id=%s",
-                device_id,
-            )
+            logger.info("[pb_idle_silence] 跳过：上次已是低头沉默，等待其它 pb 下行 device_id=%s", device_id)
             return
         if not await self._hub.first_ws(device_id):
             return
@@ -605,15 +542,7 @@ class PbIdleSilenceServoAfterDownlink:
             "pb_ver": 2,
             "action": PB_ACTION_DEFAULT,
             "level": PB_LEVEL_IDLE,
-            "servo": [
-                {
-                    "xm": 0,
-                    "ym": 0,
-                    "x": self._SILENCE_SERVO_X,
-                    "y": self._SILENCE_SERVO_Y,
-                    "ms": ms,
-                }
-            ],
+            "servo": [{"xm": 0, "ym": 0, "x": self._SILENCE_SERVO_X, "y": self._SILENCE_SERVO_Y, "ms": ms}],
         }
         attach_pb_device_hints_from_config(payload)
         self._suppress_note_devices.add(device_id)
@@ -632,10 +561,7 @@ class PbIdleSilenceServoAfterDownlink:
                 n,
             )
         except Exception:
-            logger.exception(
-                "[pb_idle_silence] 下发失败 device_id=%s",
-                device_id,
-            )
+            logger.exception("[pb_idle_silence] 下发失败 device_id=%s", device_id)
             return
         finally:
             self._suppress_note_devices.discard(device_id)
@@ -644,9 +570,7 @@ class PbIdleSilenceServoAfterDownlink:
             device_id=device_id,
             request_id=req_id,
             source="auto_idle_silence",
-            summary=(
-                f"idle 低头沉默 舵机 ({self._SILENCE_SERVO_X}, {self._SILENCE_SERVO_Y})"
-            ),
+            summary=(f"idle 低头沉默 舵机 ({self._SILENCE_SERVO_X}, {self._SILENCE_SERVO_Y})"),
             status="ok",
             error=None,
         )

@@ -2,13 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = [
-    "DoubaoPhonemeTtsAdapter",
-    "FunAsrAdapter",
-    "OpenAiLlmAdapter",
-    "WsDownlinkAdapter",
-    "build_tts_adapter",
-]
+__all__ = ["DoubaoPhonemeTtsAdapter", "FunAsrAdapter", "OpenAiLlmAdapter", "WsDownlinkAdapter", "build_tts_adapter"]
 
 
 def __getattr__(name: str) -> Any:

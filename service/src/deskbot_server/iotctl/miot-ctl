@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# miot-ctl 启动脚本
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV="$ROOT/.venv"
+
+if [ ! -x "$VENV/bin/python" ]; then
+  echo "未找到虚拟环境，请先运行: bash $ROOT/install.sh" >&2
+  exit 1
+fi
+
+# 个人 token / 缓存写入 service/data/miot-cli/，勿放在 iotctl/ 源码目录
+SERVICE_DATA="$(cd "$ROOT/../../../data" && pwd)"
+export MIOT_CTL_HOME="${MIOT_CTL_HOME:-$SERVICE_DATA/miot-cli}"
+exec "$VENV/bin/python" -m miot_ctl "$@"

@@ -9,7 +9,7 @@ WIFI_CLIENT_CPP = os.path.join(
 
 MARKER = "/* deskbot: write wait pump */"
 DECL = (
-    "\nextern \"C\" void deskbot_ws_uplink_write_pump(void); "
+    "\nextern \"C\" void deskbot_ws_transport_write_pump(void); "
     "/* deskbot: write wait pump */\n"
 )
 OLD = """        if(FD_ISSET(socketFileDescriptor, &set)) {
@@ -19,7 +19,7 @@ NEW = """        if(FD_ISSET(socketFileDescriptor, &set)) {
 INSERT_AFTER_SELECT = """        if(FD_ISSET(socketFileDescriptor, &set)) {
             res = send(socketFileDescriptor, (void*) buf, bytesRemaining, MSG_DONTWAIT);"""
 ELSE_BLOCK = """        } else {
-            deskbot_ws_uplink_write_pump();
+            deskbot_ws_transport_write_pump();
         }
 """
 
@@ -36,7 +36,7 @@ NEW_TAIL = """            else {
                 // Try again
             }
         } else {
-            deskbot_ws_uplink_write_pump();
+            deskbot_ws_transport_write_pump();
         }
     }
     return totalBytesSent;
@@ -46,9 +46,21 @@ if not os.path.isfile(WIFI_CLIENT_CPP):
     print("==> WiFiClient.cpp not found, skip write pump patch: %s" % WIFI_CLIENT_CPP)
 else:
     content = open(WIFI_CLIENT_CPP, "r", encoding="utf-8").read()
-    if MARKER in content and "deskbot_ws_uplink_write_pump();" in content:
+    changed = False
+    # ws_uplink → ws_transport 重命名后，已打补丁的 framework 仍可能是旧符号名。
+    if "deskbot_ws_uplink_write_pump" in content:
+        content = content.replace("deskbot_ws_uplink_write_pump", "deskbot_ws_transport_write_pump")
+        changed = True
+        print("==> WiFiClient.cpp: renamed write pump symbol uplink→transport")
+    if MARKER in content and "deskbot_ws_transport_write_pump();" in content:
+        if changed:
+            with open(WIFI_CLIENT_CPP, "w", encoding="utf-8") as f:
+                f.write(content)
         print("==> WiFiClient.cpp write pump already patched")
     elif OLD_TAIL not in content:
+        if changed:
+            with open(WIFI_CLIENT_CPP, "w", encoding="utf-8") as f:
+                f.write(content)
         print("==> WiFiClient.cpp: expected write tail not found, skip pump patch")
     else:
         if MARKER not in content:
@@ -59,4 +71,4 @@ else:
         content = content.replace(OLD_TAIL, NEW_TAIL, 1)
         with open(WIFI_CLIENT_CPP, "w", encoding="utf-8") as f:
             f.write(content)
-        print("==> Patched WiFiClient.cpp: deskbot_ws_uplink_write_pump() on write wait")
+        print("==> Patched WiFiClient.cpp: deskbot_ws_transport_write_pump() on write wait")

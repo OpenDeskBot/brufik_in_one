@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from flask import session
-from flask_login import current_user
-
 from deskbot_server.auth.device_service import user_owns_device
-
+from deskbot_server.web.flaskish import current_user, session
 
 SESSION_DEVICE_KEY = "current_device_id"
 

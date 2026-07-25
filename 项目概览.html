@@ -240,7 +240,7 @@
     <tr><th>模块</th><th>文件</th><th>职责</th></tr>
     <tr><td><b>语音会话</b></td><td>asr_chat_client</td><td>连接后台 <code>/asr_chat</code>，跑「采音→上传→收 pb→播放/动作」整轮</td></tr>
     <tr><td><b>音频采集</b></td><td>audio_capture</td><td>I2S 16kHz 单声道，20ms/帧，基于噪声门限的 VAD 触发</td></tr>
-    <tr><td><b>音频播放</b></td><td>audio_player</td><td>I2S 输出 + DMA 队列，支持 PCM 流 / WAV / 音量控制</td></tr>
+    <tr><td><b>音频播放</b></td><td>speaker</td><td>I2S 输出 + DMA 队列，支持 PCM 流 / WAV / 音量控制</td></tr>
     <tr><td><b>转头控制</b></td><td>head</td><td>双轴舵机 50Hz 刷新，斜坡平滑运动，预置点头/摇头/看向手势</td></tr>
     <tr><td><b>显示</b></td><td>oled_display</td><td>ST7789 驱动，从 pb 动画帧渲染表情/口型/文字（含 UTF-8）</td></tr>
     <tr><td><b>摄像头</b></td><td>camera_ws / camera_http</td><td>OV2640 采 JPEG，WebSocket 上行（帧率可由后台调）</td></tr>

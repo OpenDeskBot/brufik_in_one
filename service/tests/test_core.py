@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from deskbot_server.core.settings import AppSettings
-from deskbot_server.llm.utils import parse_llm_reply
+from deskbot_server.infrastructure.llm.utils import parse_llm_reply
 
 
 def test_app_settings_from_config_defaults():
@@ -20,6 +20,8 @@ def test_app_settings_from_config_defaults():
     assert s.server.asr_chat_device_pb_only is True
     assert s.audio.input_codec == "opus"
     assert s.vad.mode == 3
+
+
 def test_app_settings_env_override_pb_only():
     cfg = {"server": {"asr_chat_device_pb_only": True}}
     os.environ["DESKBOT_ASR_CHAT_DEVICE_PB_ONLY"] = "0"
@@ -47,7 +49,7 @@ def test_parse_llm_reply_plain_text_fallback():
 
 
 def test_asr_model_dir_ready_nested_weight(tmp_path):
-    from deskbot_server.asr_model_dir import asr_model_dir_ready
+    from deskbot_server.infrastructure.asr.model_dir import asr_model_dir_ready
 
     nested = tmp_path / "iic" / "SenseVoiceSmall"
     nested.mkdir(parents=True)

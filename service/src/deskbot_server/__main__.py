@@ -1,11 +1,12 @@
 """python -m deskbot_server"""
+
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from deskbot_server.logging_setup import setup_logging
 from deskbot_server.main import main
+from deskbot_server.utils.logging_setup import setup_logging
 
 logger = logging.getLogger("deskbot-server")
 

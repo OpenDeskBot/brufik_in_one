@@ -20,14 +20,14 @@ class _FakeHttpResponse:
 
 
 def test_build_chat_model_keeps_openai_compatible_model_id():
-    from deskbot_server.llm.runtime import build_chat_model
+    from deskbot_server.infrastructure.llm.runtime import build_chat_model
 
     assert build_chat_model("openai", "ep-202607020001") == "ep-202607020001"
     assert build_chat_model("openai", "openai/ep-202607020001") == "ep-202607020001"
 
 
 def test_resolve_system_llm_config_prefers_ark_env(monkeypatch):
-    from deskbot_server.llm.runtime import resolve_system_llm_config
+    from deskbot_server.infrastructure.llm.runtime import resolve_system_llm_config
 
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
@@ -36,10 +36,7 @@ def test_resolve_system_llm_config_prefers_ark_env(monkeypatch):
     monkeypatch.delenv("VOLCENGINE_LLM_MODEL", raising=False)
     monkeypatch.setenv("ARK_API_KEY", "ark-test-key")
     monkeypatch.setenv("ARK_BASE_URL", "https://ark.example.test/api/v3")
-    monkeypatch.setattr(
-        "deskbot_server.llm.runtime.load_config",
-        lambda: {"llm": {"model_name": "ep-202607020001"}},
-    )
+    monkeypatch.setattr("deskbot_server.llm.runtime.load_config", lambda: {"llm": {"model_name": "ep-202607020001"}})
 
     cfg = resolve_system_llm_config()
 
@@ -49,7 +46,7 @@ def test_resolve_system_llm_config_prefers_ark_env(monkeypatch):
 
 
 def test_chat_completion_stream_invokes_tts_extractor(monkeypatch):
-    from deskbot_server.llm.runtime import ResolvedLlmConfig, chat_acompletion
+    from deskbot_server.infrastructure.llm.runtime import ResolvedLlmConfig, chat_acompletion
 
     seen_deltas: list[str] = []
 
@@ -62,10 +59,7 @@ def test_chat_completion_stream_invokes_tts_extractor(monkeypatch):
                 on_delta(c)
         return "".join(chunks), {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
 
-    monkeypatch.setattr(
-        "deskbot_server.llm.runtime._request_chat_completion_stream",
-        fake_stream,
-    )
+    monkeypatch.setattr("deskbot_server.llm.runtime._request_chat_completion_stream", fake_stream)
     cfg = ResolvedLlmConfig(
         model="qwen-flash",
         api_key="test-key",
@@ -80,11 +74,7 @@ def test_chat_completion_stream_invokes_tts_extractor(monkeypatch):
         async def on_tts(text: str) -> None:
             tts_seen.append(text)
 
-        content, meta = await chat_acompletion(
-            [{"role": "user", "content": "hi"}],
-            config=cfg,
-            on_tts_ready=on_tts,
-        )
+        content, meta = await chat_acompletion([{"role": "user", "content": "hi"}], config=cfg, on_tts_ready=on_tts)
         return content, meta
 
     import asyncio
@@ -96,7 +86,7 @@ def test_chat_completion_stream_invokes_tts_extractor(monkeypatch):
 
 
 def test_chat_completion_posts_to_openai_compatible_endpoint(monkeypatch):
-    from deskbot_server.llm.runtime import ResolvedLlmConfig, chat_completion
+    from deskbot_server.infrastructure.llm.runtime import ResolvedLlmConfig, chat_completion
 
     seen = {}
 
@@ -122,12 +112,7 @@ def test_chat_completion_posts_to_openai_compatible_endpoint(monkeypatch):
         display_name="火山方舟",
     )
 
-    content, meta = chat_completion(
-        [{"role": "user", "content": "你好"}],
-        config=cfg,
-        json_mode=True,
-        temperature=0.2,
-    )
+    content, meta = chat_completion([{"role": "user", "content": "你好"}], config=cfg, json_mode=True, temperature=0.2)
 
     assert seen["url"] == "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
     assert seen["headers"]["Authorization"] == "Bearer ark-test-key"
@@ -145,7 +130,7 @@ def test_chat_completion_posts_to_openai_compatible_endpoint(monkeypatch):
 
 
 def test_missing_key_message_mentions_volcengine_env():
-    from deskbot_server.llm.runtime import ResolvedLlmConfig, chat_completion
+    from deskbot_server.infrastructure.llm.runtime import ResolvedLlmConfig, chat_completion
 
     cfg = ResolvedLlmConfig(
         model="ep-202607020001",
@@ -165,7 +150,7 @@ def test_missing_key_message_mentions_volcengine_env():
 
 
 def test_ark_responses_completion_posts_to_responses_endpoint(monkeypatch):
-    from deskbot_server.llm.runtime import ResolvedLlmConfig, chat_completion
+    from deskbot_server.infrastructure.llm.runtime import ResolvedLlmConfig, chat_completion
 
     seen = {}
 
@@ -196,10 +181,7 @@ def test_ark_responses_completion_posts_to_responses_endpoint(monkeypatch):
     )
 
     content, meta = chat_completion(
-        [
-            {"role": "system", "content": "你是助手"},
-            {"role": "user", "content": "你好"},
-        ],
+        [{"role": "system", "content": "你是助手"}, {"role": "user", "content": "你好"}],
         config=cfg,
         json_mode=True,
         temperature=0.2,
@@ -219,7 +201,7 @@ def test_ark_responses_completion_posts_to_responses_endpoint(monkeypatch):
 
 
 def test_ark_responses_stream_parses_output_text_delta(monkeypatch):
-    from deskbot_server.llm.runtime import ResolvedLlmConfig, chat_acompletion
+    from deskbot_server.infrastructure.llm.runtime import ResolvedLlmConfig, chat_acompletion
 
     class _FakeStreamResponse:
         def __enter__(self):
@@ -233,13 +215,13 @@ def test_ark_responses_stream_parses_output_text_delta(monkeypatch):
                 return b""
             self._done = True
             return (
-                b'event: response.output_text.delta\n'
+                b"event: response.output_text.delta\n"
                 b'data: {"type":"response.output_text.delta","delta":"{\\"tts\\":\\""}\n\n'
-                b'event: response.output_text.delta\n'
+                b"event: response.output_text.delta\n"
                 b'data: {"type":"response.output_text.delta","delta":"\\u4f60\\u597d"}\n\n'
-                b'event: response.output_text.delta\n'
+                b"event: response.output_text.delta\n"
                 b'data: {"type":"response.output_text.delta","delta":"\\"}"}\n\n'
-                b'event: response.completed\n'
+                b"event: response.completed\n"
                 b'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}\n\n'
             )
 
@@ -258,23 +240,14 @@ def test_ark_responses_stream_parses_output_text_delta(monkeypatch):
 
     import asyncio
 
-    content, meta = asyncio.run(
-        chat_acompletion(
-            [{"role": "user", "content": "hi"}],
-            config=cfg,
-            stream=True,
-        )
-    )
+    content, meta = asyncio.run(chat_acompletion([{"role": "user", "content": "hi"}], config=cfg, stream=True))
 
     assert content == '{"tts":"你好"}'
     assert meta["usage"] == {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
 
 
 def test_resolve_first_token_timeout_disables_ark_responses_default(monkeypatch):
-    from deskbot_server.llm.runtime import (
-        LLM_FIRST_TOKEN_TIMEOUT_SECONDS,
-        resolve_first_token_timeout,
-    )
+    from deskbot_server.infrastructure.llm.runtime import LLM_FIRST_TOKEN_TIMEOUT_SECONDS, resolve_first_token_timeout
 
     monkeypatch.delenv("LLM_FIRST_TOKEN_TIMEOUT", raising=False)
     assert resolve_first_token_timeout("ark_responses") == 0.0
@@ -282,7 +255,7 @@ def test_resolve_first_token_timeout_disables_ark_responses_default(monkeypatch)
 
 
 def test_resolve_first_token_timeout_honors_env(monkeypatch):
-    from deskbot_server.llm.runtime import resolve_first_token_timeout
+    from deskbot_server.infrastructure.llm.runtime import resolve_first_token_timeout
 
     monkeypatch.setenv("LLM_FIRST_TOKEN_TIMEOUT", "20")
     assert resolve_first_token_timeout("ark_responses") == 20.0

@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import struct
-
 from pathlib import Path
 
 import numpy as np
 import opuslib_next
 
-from deskbot_server.pipeline.audio import AudioConfig, ConnectionSession
-from deskbot_server.pipeline.opus_uplink import decode_opus_uplink
-from deskbot_server.pipeline.silero_vad import SileroVadConfig, SileroVadStream
+from deskbot_server.service.pipeline.audio import AudioConfig, ConnectionSession
+from deskbot_server.service.pipeline.opus_uplink import decode_opus_uplink
+from deskbot_server.service.pipeline.silero_vad import SileroVadConfig, SileroVadStream
 
 
 class _StubPipeline:
@@ -21,17 +20,10 @@ class _StubPipeline:
 
 def _session() -> ConnectionSession:
     cfg = AudioConfig(
-        input_codec="opus",
-        sample_rate=16000,
-        channels=1,
-        min_speech_ms=250,
-        max_silence_ms=500,
-        pre_speech_ms=300,
+        input_codec="opus", sample_rate=16000, channels=1, min_speech_ms=250, max_silence_ms=500, pre_speech_ms=300
     )
     session = ConnectionSession(_StubPipeline(), cfg)
-    model_path = str(
-        Path(__file__).resolve().parents[1] / "models" / "silero_vad" / "silero_vad.onnx"
-    )
+    model_path = str(Path(__file__).resolve().parents[1] / "models" / "silero_vad" / "silero_vad.onnx")
     session._vad = SileroVadStream(
         SileroVadConfig(
             model_path=model_path,

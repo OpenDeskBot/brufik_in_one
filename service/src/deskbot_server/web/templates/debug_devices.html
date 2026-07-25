@@ -2489,7 +2489,7 @@
           const fid = this.cvRegisterFaceId;
           if (fid == null) return null;
           const face = (this.cvFaces || []).find((f) => Number(f.face_id) === Number(fid));
-          if (!face || !Array.isArray(face.points) || !face.points.length) return null;
+          if (!face || !Array.isArray(face.landmarks) || !face.landmarks.length) return null;
           return face;
         },
         cvCanRegisterPerson() {
@@ -2505,7 +2505,7 @@
           if (!this.cvRegisterName) return "保存人名：请填写姓名";
           if (this.cvRegisterFaceId == null) return "保存人名：请在下拉框选 face_id，或点击表格行";
           if (!this.cvRegisterFacePayload) {
-            return "保存人名：该 face_id 当前无五官 points（换一帧或重选 face_id）";
+            return "保存人名：该 face_id 当前无 landmarks（换一帧或重选 face_id）";
           }
           return "";
         },
@@ -3753,9 +3753,9 @@
                 name: this.cvRegisterName,
                 device_id: this.selected,
                 face_id: this.cvRegisterFaceId,
-                points: face.points,
                 landmarks: face.landmarks || [],
-                face_descriptor: face.face_descriptor || undefined,
+                embedding: face.embedding || face.face_descriptor || undefined,
+                face_descriptor: face.face_descriptor || face.embedding || undefined,
                 jpeg_base64,
                 image_w: face.image_w || this.cvFrameW,
                 image_h: face.image_h || this.cvFrameH,
@@ -4622,7 +4622,6 @@
                 this.cvFaces = [{
                   face_id: meta.face_id,
                   landmarks: meta.landmarks,
-                  points: meta.points,
                   yaw_deg: meta.yaw_deg,
                   pitch_deg: meta.pitch_deg,
                   iris_offsets: meta.iris_offsets,
@@ -4664,7 +4663,7 @@
               const cf = meta.confidence;
               const cfN = cf != null ? Number(cf) : NaN;
               this.cvFpConfidence = Number.isFinite(cfN) ? cfN : null;
-              this.cvFpPoints = Array.isArray(meta.points) ? meta.points : [];
+              this.cvFpPoints = [];
             } else {
               if (this.cvServoAutoMode === "gaze") this._cvGazeClearFollowDebounce();
               this.cvFpFrontalScore = null;

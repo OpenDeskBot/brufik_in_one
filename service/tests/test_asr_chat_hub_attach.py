@@ -1,4 +1,5 @@
 """AsrChatHub attach：同 device 仅保留最新 /asr_chat 连接。"""
+
 from __future__ import annotations
 
 import asyncio
