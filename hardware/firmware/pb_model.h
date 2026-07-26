@@ -33,7 +33,6 @@ enum PbModelMicHint : int {
 };
 
 constexpr size_t PB_MODEL_FMT_CAPACITY = 8;
-constexpr size_t PB_ASSET_CAPACITY = 8;
 
 constexpr size_t PB_ANIM_PHONEME_CAPACITY = 16;
 constexpr size_t PB_ANIM_TEXT_CAPACITY = 129;  // 与 display.cpp 的单个文本图元上限一致。
@@ -53,7 +52,6 @@ enum class pb_anim_element_shape : int {
   round_rect,
   round_rect_outline,
   text,
-  image,
 };
 
 enum class pb_anim_element_layer : int {
@@ -74,22 +72,19 @@ struct pb_servo_frame {
   int ms = 0;
 };
 
-/** 一段音频 binary 的描述。格式、采样率和声道在 pb_model 顶层。 */
+/** 一段音频 binary；sr/ch/fmt 在解析或 dispatch 时填入，供 speaker 独立解码播放。 */
 struct pb_audio {
   int8_t* bin = nullptr;
   int next_bin_len = 0;
   int frames = 0;  // Opus batch 帧数；PCM 时为 0。
-};
-
-/** anim[] 引用的 JPEG 附件。 */
-struct pb_asset {
-  int8_t* bin = nullptr;
-  int next_bin_len = 0;
+  uint32_t sr = 0;
+  uint8_t ch = 0;
+  char fmt[PB_MODEL_FMT_CAPACITY]{};
 };
 
 /**
  * 一个表情图层内的图元。字段覆盖当前显示端支持的 rect/circle/line/ellipse/
- * round_rect/text/image；无关字段保持默认值。
+ * round_rect/text；无关字段保持默认值。
  */
 struct pb_anim_element {
   pb_anim_element_layer layer = pb_anim_element_layer::bg;
@@ -106,7 +101,6 @@ struct pb_anim_element {
   int y2 = 0;
   int text_size = 1;
   char text[PB_ANIM_TEXT_CAPACITY]{};
-  int asset_index = -1;
 };
 
 /** 一个表情时间片；elements 保存原始图层 JSON。 */
@@ -134,15 +128,15 @@ struct pb_model {
   size_t anim_count = 0;
   pb_servo_frame* servo = nullptr;
   size_t servo_count = 0;
-  pb_audio audio;
-  pb_asset* assets = nullptr;
-  size_t asset_count = 0;
+  pb_audio* audio = nullptr;
 };
 
 /** 回收 PSRAM 中的动画帧及其图元；可传空指针。 */
 void pb_anim_frames_free(pb_anim_frame* frames, size_t frame_count);
 /** 回收 PSRAM 中的舵机帧；可传空指针。 */
 void pb_servo_frames_free(pb_servo_frame* frames);
+/** 回收 ``pb_audio`` 及其 bin；可传空指针。 */
+void pb_audio_free(pb_audio* audio);
 /** 释放 ``pb_model_from_json`` 分配的帧、图元与音频内存；可重复调用。 */
 void pb_model_free(pb_model& model);
 
@@ -151,5 +145,7 @@ bool pb_model_from_json(const JsonDocument& doc, const uint8_t* media, size_t me
                         pb_model& out, const char*& err);
 const char* pb_model_type_name(int type);
 bool pb_model_is_play_type(int type);
+/** 队列调度链首：``pb_start`` / ``pb_single`` 且 ``idx==0``。 */
+bool pb_model_is_chain_head(const pb_model& model);
 
 #endif

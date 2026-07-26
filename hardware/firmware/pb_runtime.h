@@ -37,7 +37,7 @@ private:
   bool tryMicOnlySingle(pb_model& model);
   void onChainHead(pb_model& model);
   void dispatchAnim(pb_model& model);
-  void dispatchServo(const pb_model& model);
+  void dispatchServo(pb_model& model);
   bool dispatchAudio(pb_model& model);
   void onSequenceEnd(const pb_model& model);
   void maybeAck(const pb_model& model);

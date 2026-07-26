@@ -2,9 +2,8 @@
 
 #include "asr_ws.h"
 #include "camera_ws.h"
-#include "deskbot_state.h"
-#include "deskbot_uplink_state.h"
 #include "logger.h"
+#include "mic.h"
 #include "pb_runtime.h"
 #include "utils/opus_codec.h"
 #include "utils/utils.h"
@@ -526,7 +525,7 @@ bool ws_transport_drain_rx(void) {
       free(item.data);
       return true;
     }
-    deskbot_uplink_bump_ws_generation();
+    mic_set_ws_state(kMicWsError);
     pb_runtime_notify_link_down();
     free(item.data);
     return true;
@@ -539,7 +538,6 @@ bool ws_transport_drain_rx(void) {
         const String t = peek.doc["type"].is<String>() ? peek.doc["type"].as<String>() : String("");
         if (t == "ready") {
           asr_ws_note_ready();
-          deskbot_state_notify(kStateGo);
           (void)opus_codec_decode_init();
           if (!s_boot_connect_sent) {
             if (ws_transport_enqueue_state("{\"type\":\"boot_connect\"}")) {

@@ -7,7 +7,7 @@
 
 /** TX 类型：统一 FIFO；drain 按 type 选 asr / camera socket。 */
 enum class WsTxType : uint8_t {
-  kState = 0,  // pb_ack / boot_connect / audio_cancel / deskbot_state → /asr_chat
+  kState = 0,  // pb_ack / boot_connect / audio_cancel → /asr_chat
   kAudio = 1,  // Opus batch / flush → /asr_chat
   kImage = 2,  // camera_frame + JPEG → /camera_uplink
 };

@@ -22,7 +22,7 @@ int parse_action(JsonVariantConst value) {
   if (!value.is<String>()) return PB_MODEL_REPLACE;
   String raw = value.as<String>();
   raw.toLowerCase();
-  if (raw == "append" || raw == "opportunistic") return PB_MODEL_APPEND;
+  if (raw == "append") return PB_MODEL_APPEND;
   if (raw == "default") return PB_MODEL_DEFAULT;
   return PB_MODEL_REPLACE;
 }
@@ -54,7 +54,6 @@ pb_anim_element_shape parse_shape(const char* shape) {
   if (!strcmp(shape, "round_rect") || !strcmp(shape, "fill_round_rect")) return pb_anim_element_shape::round_rect;
   if (!strcmp(shape, "round_rect_outline") || !strcmp(shape, "draw_round_rect")) return pb_anim_element_shape::round_rect_outline;
   if (!strcmp(shape, "text") || !strcmp(shape, "print") || !strcmp(shape, "label")) return pb_anim_element_shape::text;
-  if (!strcmp(shape, "image")) return pb_anim_element_shape::image;
   return pb_anim_element_shape::none;
 }
 
@@ -79,7 +78,6 @@ const char* shape_name(pb_anim_element_shape shape) {
     case pb_anim_element_shape::round_rect: return "round_rect";
     case pb_anim_element_shape::round_rect_outline: return "round_rect_outline";
     case pb_anim_element_shape::text: return "text";
-    case pb_anim_element_shape::image: return "image";
     default: return "";
   }
 }
@@ -148,7 +146,6 @@ bool parse_anim_frames(JsonVariantConst value, pb_model& out) {
         out_prim.x2 = read_int(prim["x2"]);
         out_prim.y2 = read_int(prim["y2"]);
         out_prim.text_size = read_int(prim["size"], 1);
-        out_prim.asset_index = read_int(prim["asset"], -1);
         if (prim["text"].is<String>()) copy_string(out_prim.text, sizeof(out_prim.text), prim["text"].as<String>());
       }
     }
@@ -186,37 +183,6 @@ int parse_mic_hint(JsonVariantConst value) {
   return PB_MIC_NONE;
 }
 
-bool parse_assets(JsonVariantConst value, const uint8_t* media, size_t media_len, size_t media_off,
-                  pb_model& out) {
-  if (value.isNull()) return true;
-  if (!value.is<JsonArrayConst>()) return false;
-  const JsonArrayConst arr = value.as<JsonArrayConst>();
-  if (arr.size() > PB_ASSET_CAPACITY) return false;
-  size_t count = 0;
-  for (JsonObjectConst item : arr) {
-    int len = 0;
-    if (!parse_nonnegative_int(item["next_bin_len"], len)) return false;
-    if (len == 0) continue;
-    ++count;
-  }
-  if (count == 0) return true;
-  out.assets = static_cast<pb_asset*>(heap_caps_malloc(count * sizeof(pb_asset), MALLOC_CAP_SPIRAM));
-  if (!out.assets) return false;
-  memset(out.assets, 0, count * sizeof(pb_asset));
-  for (JsonObjectConst item : arr) {
-    int len = 0;
-    if (!parse_nonnegative_int(item["next_bin_len"], len) || len == 0) continue;
-    if (media_off + (size_t)len > media_len) return false;
-    pb_asset& asset = out.assets[out.asset_count++];
-    asset.next_bin_len = len;
-    asset.bin = static_cast<int8_t*>(heap_caps_malloc((size_t)len, MALLOC_CAP_SPIRAM));
-    if (!asset.bin) return false;
-    memcpy(asset.bin, media + media_off, (size_t)len);
-    media_off += (size_t)len;
-  }
-  return true;
-}
-
 }  // namespace
 
 void pb_anim_frames_free(pb_anim_frame* frames, size_t frame_count) {
@@ -233,16 +199,19 @@ void pb_servo_frames_free(pb_servo_frame* frames) {
   heap_caps_free(frames);
 }
 
+void pb_audio_free(pb_audio* audio) {
+  if (!audio) {
+    return;
+  }
+  heap_caps_free(audio->bin);
+  audio->bin = nullptr;
+  heap_caps_free(audio);
+}
+
 void pb_model_free(pb_model& model) {
   pb_anim_frames_free(model.anim, model.anim_count);
   pb_servo_frames_free(model.servo);
-  heap_caps_free(model.audio.bin);
-  if (model.assets) {
-    for (size_t i = 0; i < model.asset_count; ++i) {
-      heap_caps_free(model.assets[i].bin);
-    }
-    heap_caps_free(model.assets);
-  }
+  pb_audio_free(model.audio);
   model = pb_model{};
 }
 
@@ -301,38 +270,44 @@ bool pb_model_from_json(const JsonDocument& doc, const uint8_t* media, size_t me
         pb_model_free(out);
         return false;
       }
-      if (!parse_nonnegative_int(doc["audio"]["next_bin_len"], out.audio.next_bin_len)) {
+      out.audio = static_cast<pb_audio*>(heap_caps_malloc(sizeof(pb_audio), MALLOC_CAP_SPIRAM));
+      if (!out.audio) {
+        err = "audio psram alloc failed";
+        pb_model_free(out);
+        return false;
+      }
+      memset(out.audio, 0, sizeof(pb_audio));
+      out.audio->sr = out.sr;
+      out.audio->ch = out.ch;
+      if (out.fmt[0] != '\0') {
+        copy_string(out.audio->fmt, sizeof(out.audio->fmt), String(out.fmt));
+      }
+      if (!parse_nonnegative_int(doc["audio"]["next_bin_len"], out.audio->next_bin_len)) {
         err = "invalid audio.next_bin_len";
         pb_model_free(out);
         return false;
       }
       if (!doc["audio"]["frames"].isNull() &&
-          !parse_nonnegative_int(doc["audio"]["frames"], out.audio.frames)) {
+          !parse_nonnegative_int(doc["audio"]["frames"], out.audio->frames)) {
         err = "invalid audio.frames";
         pb_model_free(out);
         return false;
       }
-      if (out.audio.next_bin_len > 0) {
-        if (!media || media_len < (size_t)out.audio.next_bin_len) {
+      if (out.audio->next_bin_len > 0) {
+        if (!media || media_len < (size_t)out.audio->next_bin_len) {
           err = "audio binary missing or short";
           pb_model_free(out);
           return false;
         }
-        out.audio.bin = static_cast<int8_t*>(
-            heap_caps_malloc((size_t)out.audio.next_bin_len, MALLOC_CAP_SPIRAM));
-        if (!out.audio.bin) {
+        out.audio->bin = static_cast<int8_t*>(
+            heap_caps_malloc((size_t)out.audio->next_bin_len, MALLOC_CAP_SPIRAM));
+        if (!out.audio->bin) {
           err = "audio psram alloc failed";
           pb_model_free(out);
           return false;
         }
-        memcpy(out.audio.bin, media, (size_t)out.audio.next_bin_len);
+        memcpy(out.audio->bin, media, (size_t)out.audio->next_bin_len);
       }
-    }
-    size_t media_off = out.audio.next_bin_len > 0 ? (size_t)out.audio.next_bin_len : 0;
-    if (!parse_assets(doc["assets"], media, media_len, media_off, out)) {
-      err = "invalid assets";
-      pb_model_free(out);
-      return false;
     }
   }
   return true;
@@ -351,4 +326,8 @@ const char* pb_model_type_name(int type) {
 
 bool pb_model_is_play_type(int type) {
   return type >= PB_MODEL_START && type <= PB_MODEL_SINGLE;
+}
+
+bool pb_model_is_chain_head(const pb_model& model) {
+  return pb_model_is_play_type(model.type) && model.idx == 0;
 }

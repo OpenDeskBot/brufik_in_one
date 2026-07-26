@@ -5,18 +5,20 @@
 
 /* ========== 烧录前可改：网络 ==========
  * 默认连 deskbot_wifi；也可改成你的路由器 SSID/密码。
- * 若 SSID 留空 → 热点 Deskbot_Rom，http://192.168.4.1/ 配网；NVS 已存凭证优先。
- * WS host 留空 → 禁用 WebSocket 上行。
+ * 若 SSID 留空 → 开放热点（SSID=设备 ID，无密码），http://192.168.4.1/ 配网；NVS 已存凭证优先。
+ * WS host 留空 → 禁用内置 WebSocket；可在配网页添加自定义云服务器。
  */
 #define WIFI_DEFAULT_SSID "Micband"
 #define WIFI_DEFAULT_PASSWORD "Xiaomi@2025"
 
+/** 开机 AP 配网窗口（ms）编译期兜底；运行时以 NVS 为准（默认 20s，5–60s 可配）。 */
+#ifndef DESKBOT_AP_OFFER_TIMEOUT_MS
+#define DESKBOT_AP_OFFER_TIMEOUT_MS 20000
+#endif
+
 #define DESKBOT_WS_HOST "192.168.31.145" 
 // "10.220.138.26"
 #define DESKBOT_WS_PORT 9000
-
-/* 服务端 WebSocket 鉴权 Key（odk_... 或 odk_free_...）。留空则无法连接 /asr_chat。 */
-#define DESKBOT_API_KEY "odk_free_k60xNgMyI6A-09nP1Tc6gQ67tnHPcMgF"
 
 #define ASR_CHAT_HOST DESKBOT_WS_HOST
 #define ASR_CHAT_PORT DESKBOT_WS_PORT
@@ -37,10 +39,6 @@ static inline bool deskbot_camera_uplink_enabled(void) {
 
 static inline bool deskbot_ws_configured(void) {
   return DESKBOT_WS_HOST[0] != '\0';
-}
-
-static inline bool deskbot_api_key_configured(void) {
-  return DESKBOT_API_KEY[0] != '\0';
 }
 
 /* ========== 硬件接线（Seeed XIAO ESP32S3 Sense）==========
@@ -146,11 +144,6 @@ static inline size_t deskbot_pdm_voice_hangover_thr(size_t ema) {
 /** 相机 JPEG 上行最小间隔（ms）；持续上传，不因听音/播音降频或暂停。 */
 #ifndef DESKBOT_CAMERA_UPLINK_INTERVAL_MS
 #define DESKBOT_CAMERA_UPLINK_INTERVAL_MS      500
-#endif
-
-/** 设备状态（舵机角/音量等）上行最小间隔（ms）；仅对 go 通知生效，go_now 立即发。 */
-#ifndef DESKBOT_STATE_UPLINK_INTERVAL_MS
-#define DESKBOT_STATE_UPLINK_INTERVAL_MS      10000
 #endif
 
 /** 单轮连续 Opus 上行上限（秒）；正常由 pb_start 提前结束。 */

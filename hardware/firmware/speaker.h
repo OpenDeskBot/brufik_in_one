@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 #include "deskbot_config.h"
+#include "pb_model.h"
 
 #define MAX98357_LRC DESKBOT_ROM_MAX98357_LRC
 #define MAX98357_BCLK DESKBOT_ROM_MAX98357_BCLK
@@ -33,6 +34,9 @@ bool speaker_stream_pcm16_begin(uint32_t sample_rate, uint8_t channels);
 bool speaker_stream_pcm16_chunk(int16_t* samples, size_t num_samples,
                                 uint32_t caps_for_heap_caps_free);
 bool speaker_stream_pcm16_end(uint8_t channels);
+
+/** 入队一块 pb_audio（opus/s16le）；成功则所有权交 speaker_task。 */
+bool speaker_submit_pb_audio_owned(pb_audio* audio);
 
 /**
  * 打断：置 cancel 并插队 abort，排空未播队列、清 DMA（流式与 WAV 均可打断）。

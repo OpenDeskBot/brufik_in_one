@@ -2,7 +2,9 @@
 
 #include "camera.h"
 #include "deskbot_config.h"
+#include "boot_guide.h"
 #include "logger.h"
+#include "utils/nvs_config_utils.h"
 #include "utils/utils.h"
 #include "ws_transport.h"
 
@@ -89,7 +91,7 @@ static void ensure_connected_owner() {
     }
     return;
   }
-  if (!deskbot_api_key_configured() || DESKBOT_WS_HOST[0] == '\0') {
+  if (!deskbot_ws_is_active_configured()) {
     return;
   }
 
@@ -148,14 +150,17 @@ static void ensure_connected_owner() {
   set_state(-1);
   s_connected_at_ms = 0;
 
-  char path[80];
-  snprintf(path, sizeof(path), "%s?device_id=%s", DESKBOT_CAMERA_WS_PATH, get_device_id());
-  char auth_header[96];
-  snprintf(auth_header, sizeof(auth_header), "X-API-Key: %s", DESKBOT_API_KEY);
-  camera_ws.setExtraHeaders(auth_header);
-  camera_ws.setReconnectInterval(500);
-  log_warn("[CAMERA_WS] reconnecting ws://%s:%u%s", DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT, path);
-  camera_ws.begin(DESKBOT_WS_HOST, DESKBOT_WS_PORT, path);
+  DeskbotWsTarget target;
+  deskbot_ws_get_active(&target);
+  char service_path[48];
+  char path[112];
+  deskbot_ws_build_service_path(service_path, sizeof(service_path), &target, DESKBOT_CAMERA_WS_PATH);
+  snprintf(path, sizeof(path), "%s?device_id=%s&pin_code=%s", service_path, get_device_id(),
+           nvs_get_pin_code());
+  const char* scheme = target.use_ssl ? "wss" : "ws";
+  log_warn("[CAMERA_WS] reconnecting %s://%s:%u%s", scheme, target.host, (unsigned)target.port,
+           path);
+  deskbot_ws_client_begin(camera_ws, path);
 }
 
 int camera_ws_state(void) {

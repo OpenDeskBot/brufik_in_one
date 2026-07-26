@@ -1,6 +1,8 @@
 #include "speaker.h"
 
 #include "mic.h"
+#include "pb_model.h"
+#include "utils/opus_codec.h"
 #include "utils/utils.h"
 #include "logger.h"
 
@@ -60,6 +62,7 @@ enum class JobKind : uint8_t {
   kChunk = 2,
   kEnd = 3,
   kAbort = 4,
+  kPbAudio = 5,
 };
 
 struct Job {
@@ -67,6 +70,7 @@ struct Job {
   HeapFree free_mode = HeapFree::kMalloc;
   uint8_t channels = 1;
   uint32_t rate = SAMPLE_RATE;
+  pb_audio* pb_audio_ptr = nullptr;
   union {
     struct {
       uint8_t* ptr;
@@ -97,6 +101,9 @@ static void free_job(Job& j) {
   } else if (j.kind == JobKind::kChunk) {
     free_ptr(j.pcm.ptr, j.free_mode);
     j.pcm.ptr = nullptr;
+  } else if (j.kind == JobKind::kPbAudio) {
+    pb_audio_free(j.pb_audio_ptr);
+    j.pb_audio_ptr = nullptr;
   }
 }
 
@@ -112,7 +119,7 @@ static bool enqueue(Job& j, bool front = false) {
     return xQueueSendToFront(s_q, &j, portMAX_DELAY) == pdTRUE;
   }
   /* 满则失败（不从队列偷包，避免与 speaker_task 双消费者竞态）。 */
-  if (j.kind == JobKind::kChunk) {
+  if (j.kind == JobKind::kChunk || j.kind == JobKind::kPbAudio) {
     if (xQueueSend(s_q, &j, 0) == pdTRUE) {
       return true;
     }
@@ -285,6 +292,77 @@ static bool play_wav(uint8_t* data, size_t len) {
   return ok;
 }
 
+static bool play_pb_audio_owned(pb_audio* audio) {
+  if (!audio || !audio->bin || audio->next_bin_len <= 0) {
+    return false;
+  }
+  if (audio->sr == 0 || audio->ch == 0 || audio->fmt[0] == '\0') {
+    log_warn("[SPEAKER] pb_audio missing sr/ch/fmt");
+    return false;
+  }
+  if (strcmp(audio->fmt, "s16le") != 0 && strcmp(audio->fmt, "opus") != 0) {
+    log_warn("[SPEAKER] unsupported fmt=%s", audio->fmt);
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(audio->bin);
+  const size_t length = (size_t)audio->next_bin_len;
+  int16_t* pcm_owned = nullptr;
+  size_t samples = 0;
+  HeapFree free_mode = HeapFree::kHeapCaps;
+
+  if (strcmp(audio->fmt, "opus") == 0) {
+    const uint16_t opus_frames = audio->frames > 0 ? (uint16_t)audio->frames : (uint16_t)1;
+    const size_t cap = opus_codec_decode_out_cap((int)audio->sr, opus_frames);
+    pcm_owned =
+        (int16_t*)heap_caps_malloc(cap * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pcm_owned) {
+      pcm_owned = (int16_t*)heap_caps_malloc(cap * sizeof(int16_t), MALLOC_CAP_DEFAULT);
+      free_mode = HeapFree::kMalloc;
+    }
+    if (!pcm_owned) {
+      return false;
+    }
+    samples = opus_frames > 1 ? opus_codec_decode_batch(payload, length, (int)audio->sr, opus_frames,
+                                                        pcm_owned, cap)
+                              : opus_codec_decode(payload, length, (int)audio->sr, pcm_owned, cap);
+    if (samples == 0) {
+      free_ptr(pcm_owned, free_mode);
+      return false;
+    }
+  } else {
+    if ((length & 1u) != 0u) {
+      return false;
+    }
+    pcm_owned = (int16_t*)heap_caps_malloc(length, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pcm_owned) {
+      pcm_owned = (int16_t*)heap_caps_malloc(length, MALLOC_CAP_DEFAULT);
+      free_mode = HeapFree::kMalloc;
+    }
+    if (!pcm_owned) {
+      return false;
+    }
+    memcpy(pcm_owned, payload, length);
+    samples = length / 2;
+  }
+
+  if (!s_stream_active.load(std::memory_order_relaxed)) {
+    if (audio->ch != 1 && audio->ch != 2) {
+      free_ptr(pcm_owned, free_mode);
+      return false;
+    }
+    s_cancel.store(false, std::memory_order_release);
+    i2s_set_clk(I2S_NUM_1, audio->sr, I2S_BITS_PER_SAMPLE_16BIT,
+                audio->ch == 2 ? I2S_CHANNEL_STEREO : I2S_CHANNEL_MONO);
+    s_i2s_rate = audio->sr;
+    s_stream_active.store(true, std::memory_order_release);
+  }
+
+  const bool ok = play(pcm_owned, samples);
+  free_ptr(pcm_owned, free_mode);
+  return ok;
+}
+
 static void speaker_task(void*) {
   Job job{};
   for (;;) {
@@ -323,6 +401,12 @@ static void speaker_task(void*) {
         } else if (job.pcm.ptr && job.pcm.samples > 0) {
           /* 若被 abort，play 提前返回；收尾交给随后的 kAbort。 */
           (void)play(job.pcm.ptr, job.pcm.samples);
+        }
+        free_job(job);
+        break;
+      case JobKind::kPbAudio:
+        if (job.pb_audio_ptr) {
+          (void)play_pb_audio_owned(job.pb_audio_ptr);
         }
         free_job(job);
         break;
@@ -435,6 +519,20 @@ bool speaker_stream_pcm16_chunk(int16_t* samples, size_t num_samples,
   j.free_mode = caps_to_mode(caps_for_heap_caps_free);
   if (!enqueue(j)) {
     free_ptr(samples, j.free_mode);
+    return false;
+  }
+  return true;
+}
+
+bool speaker_submit_pb_audio_owned(pb_audio* audio) {
+  if (!audio) {
+    return false;
+  }
+  Job j{};
+  j.kind = JobKind::kPbAudio;
+  j.pb_audio_ptr = audio;
+  if (!enqueue(j)) {
+    pb_audio_free(audio);
     return false;
   }
   return true;

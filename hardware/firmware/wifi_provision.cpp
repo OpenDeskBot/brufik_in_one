@@ -1,38 +1,59 @@
 #include "wifi_provision.h"
 
-#include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include "boot_guide.h"
 #include "deskbot_config.h"
-#include "display.h"
+#include "utils/nvs_config_utils.h"
 #include "utils/utils.h"
 
 namespace {
 
-constexpr char kApSsid[] = "Deskbot_Rom";
-constexpr char kPrefsNs[] = "deskbot_wifi";
-constexpr char kPrefsCountKey[] = "cnt";
-constexpr char kLegacySsidKey[] = "ssid";
-constexpr char kLegacyPassKey[] = "pass";
-constexpr int kMaxSavedWifi = 10;
 constexpr int kMaxReconnectAttempts = 40;
 
-struct WifiCredential {
-  String ssid;
-  String password;
-};
+char s_ap_ssid[32] = {};
+
+static void build_ap_ssid() {
+  strncpy(s_ap_ssid, get_device_id(), sizeof(s_ap_ssid) - 1);
+  s_ap_ssid[sizeof(s_ap_ssid) - 1] = '\0';
+}
+
+static bool config_ap_running() {
+  return WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA;
+}
+
+static void ensure_config_ap_running() {
+  build_ap_ssid();
+  if (config_ap_running() && WiFi.softAPIP() != IPAddress(0, 0, 0, 0)) {
+    return;
+  }
+  WiFi.disconnect(true, true);
+  delay(200);
+  WiFi.mode(WIFI_AP_STA);
+  delay(100);
+  WiFi.softAP(s_ap_ssid);
+  Serial.printf("[wifi] AP started ssid=%s (open) ip=%s\r\n", s_ap_ssid,
+                WiFi.softAPIP().toString().c_str());
+}
+
+static void display_show_config_portal() {
+  char url[32];
+  snprintf(url, sizeof(url), "http://%s/", WiFi.softAPIP().toString().c_str());
+  boot_guide_provision_show(s_ap_ssid, url, -1);
+}
 
 static void display_show_wifi_connected();
 bool try_connect_credential(const char* source_label, int max_attempts,
                             bool ssid_already_visible);
-int load_saved_wifi_list(WifiCredential* out, int max_out);
-int build_visible_saved_candidates(const WifiCredential* saved, int saved_count,
-                                   WifiCredential* out, int max_out);
+int build_visible_saved_candidates(const NvsWifiCredential* saved, int saved_count,
+                                   NvsWifiCredential* out, int max_out);
 bool wifi_defaults_configured();
+static bool wifi_connect_sta_once();
 
 WebServer server(80);
 bool done_config = false;
+bool s_portal_exit_continue = false;
 String ssid;
 String password;
 
@@ -114,12 +135,12 @@ static bool attempt_runtime_wifi_reconnect() {
     ssid = WiFi.SSID();
   }
 
-  WifiCredential saved[kMaxSavedWifi];
-  const int saved_count = load_saved_wifi_list(saved, kMaxSavedWifi);
+  NvsWifiCredential saved[NVS_MAX_SAVED_WIFI];
+  const int saved_count = nvs_wifi_list(saved, NVS_MAX_SAVED_WIFI);
 
-  WifiCredential visible[kMaxSavedWifi];
+  NvsWifiCredential visible[NVS_MAX_SAVED_WIFI];
   const int visible_count =
-      build_visible_saved_candidates(saved, saved_count, visible, kMaxSavedWifi);
+      build_visible_saved_candidates(saved, saved_count, visible, NVS_MAX_SAVED_WIFI);
   for (int i = 0; i < visible_count; ++i) {
     ssid = visible[i].ssid;
     password = visible[i].password;
@@ -219,28 +240,12 @@ static bool scan_target_ssid_visible() {
   return found;
 }
 
-static void display_wifi_ssid_line(char* out, size_t out_len) {
-  snprintf(out, out_len, "SSID:%.20s", ssid.c_str());
-}
-
 static void display_show_wifi_connecting() {
-  char line1[48];
-  char line2[40];
-  char line3[28];
-  char ssid_line[28];
-  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
-  snprintf(line3, sizeof(line3), "WiFi 连接中...");
-  display_wifi_ssid_line(ssid_line, sizeof(ssid_line));
-  display_boot_show4(line1, line2, line3, ssid_line);
+  boot_guide_wifi_connecting(ssid.c_str());
 }
 
 /** 根据扫描与 WiFi.status() 在屏幕上展示失败原因。 */
 static void display_show_wifi_fail(wl_status_t st, bool ssid_in_scan, const char* next_hint) {
-  char line1[48];
-  char line2[40];
-  char line3[28];
-  char line4[40];
-  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
   const char* detail;
   if (st == WL_CONNECT_FAILED) {
     detail = "密码错误";
@@ -249,24 +254,16 @@ static void display_show_wifi_fail(wl_status_t st, bool ssid_in_scan, const char
   } else {
     detail = "WiFi 连接失败";
   }
-  snprintf(line3, sizeof(line3), "WiFi 失败: %s", detail);
+  char detail_buf[48];
   if (next_hint && next_hint[0] != '\0') {
-    snprintf(line4, sizeof(line4), "%s", next_hint);
-  } else {
-    line4[0] = '\0';
+    snprintf(detail_buf, sizeof(detail_buf), "%s · %s", detail, next_hint);
+    detail = detail_buf;
   }
-  display_boot_show4(line1, line2, line3, line4[0] != '\0' ? line4 : nullptr);
+  boot_guide_wifi_result(false, ssid.c_str(), detail);
 }
 
 static void display_show_wifi_connected() {
-  char line1[48];
-  char line2[40];
-  char line3[40];
-  char line4[40];
-  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
-  snprintf(line3, sizeof(line3), "WiFi:%.18s", WiFi.SSID().c_str());
-  snprintf(line4, sizeof(line4), "IP:%s", WiFi.localIP().toString().c_str());
-  display_boot_show4(line1, line2, line3, line4);
+  boot_guide_wifi_on_connected(WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
 }
 
 String json_escape(const String& raw) {
@@ -321,7 +318,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <h1>给小歪连上家里的 Wi‑Fi</h1>
       <p>按照屏幕上的地址打开本页，选择路由器并输入密码。保存后设备会关闭热点并自动连接新网络。</p>
       <div class="steps">
-        <div class="step"><b>1 连接小歪热点</b><span>手机或电脑加入 Deskbot_Rom</span></div>
+        <div class="step"><b>1 连接小歪热点</b><span>手机或电脑加入屏幕上的 Device ID 同名 Wi‑Fi</span></div>
         <div class="step"><b>2 打开屏幕上的网址</b><span>通常是 http://192.168.4.1</span></div>
         <div class="step"><b>3 选择家里的 Wi‑Fi</b><span>保存后看设备屏幕上的连接结果</span></div>
       </div>
@@ -329,7 +326,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     <section class="card">
       <div class="status">
-        <div class="pill"><span>设备热点</span><b id="ap-ssid">Deskbot_Rom</b></div>
+        <div class="pill"><span>设备热点</span><b id="ap-ssid">deskbot_000000000000</b></div>
         <div class="pill"><span>配网地址</span><b id="ap-ip">http://192.168.4.1</b></div>
         <div class="pill"><span>设备 ID</span><b id="device-id">读取中</b></div>
         <div class="pill"><span>连接设备数</span><b id="station-count">0</b></div>
@@ -359,6 +356,51 @@ const char index_html[] PROGMEM = R"rawliteral(
         <input type="password" id="password-input" name="password" autocomplete="current-password" placeholder="留空表示开放网络">
         <button type="submit" id="save-btn" class="primary">保存并连接</button>
       </form>
+    </section>
+
+    <section class="card" id="device-config-card">
+      <h2>设备配置</h2>
+      <p class="hint">管理配网热点窗口、设备绑定 PIN、已保存 Wi‑Fi 与恢复出厂。</p>
+
+      <label for="ap-offer-input">配网热点窗口（秒）</label>
+      <div class="form-grid" style="grid-template-columns:1fr auto;align-items:end">
+        <input type="number" id="ap-offer-input" min="5" max="60" step="1" value="20">
+        <button type="button" id="ap-offer-save-btn" onclick="saveApOfferSec()">保存</button>
+      </div>
+      <p class="hint" id="ap-offer-hint">范围 5–60 秒，默认 20 秒；下次开机生效。</p>
+
+      <label>PIN Code（绑定设备）</label>
+      <div class="status" style="margin-bottom:8px">
+        <div class="pill"><span>当前 PIN</span><b id="pin-code">----</b></div>
+        <div class="pill"><span>设备 ID</span><b id="config-device-id">----</b></div>
+      </div>
+      <button type="button" onclick="resetPin()">重置 PIN</button>
+
+      <label style="margin-top:16px">已保存 Wi‑Fi</label>
+      <div id="saved-wifi-list" class="list"></div>
+      <p class="hint hidden" id="saved-wifi-empty">暂无已保存 Wi‑Fi。</p>
+
+      <label style="margin-top:16px">云服务器</label>
+      <p class="hint">格式 ws://主机:端口 或 wss://主机:端口，可选路径前缀；设备会自动连接 /asr_chat 与 /camera_uplink。</p>
+      <div id="ws-server-list" class="list"></div>
+      <p class="hint hidden" id="ws-server-empty">暂无自定义云服务器。</p>
+      <label for="ws-server-url-input">添加云服务器</label>
+      <div class="form-grid" style="grid-template-columns:1fr auto;align-items:end">
+        <input type="text" id="ws-server-url-input" placeholder="ws://192.168.1.1:9000">
+        <button type="button" id="ws-server-add-btn" onclick="addWsServer()">添加</button>
+      </div>
+
+      <div style="margin-top:18px;padding-top:14px;border-top:2px dashed var(--line)">
+        <p class="hint">恢复出厂将清除已保存 Wi‑Fi、云服务器、重置 PIN 与启动时间，设备随后重启。</p>
+        <button type="button" id="factory-reset-btn" onclick="factoryReset()">恢复出厂设置</button>
+      </div>
+      <div id="config-message" class="msg hidden"></div>
+    </section>
+
+    <section class="card">
+      <p class="hint">配网或查看设置完成后，可关闭热点并继续正常启动（将尝试连接已保存 Wi‑Fi）。</p>
+      <button type="button" id="continue-boot-btn" class="primary" style="width:100%"
+              onclick="continueBoot()">继续启动</button>
     </section>
 
     <p class="footer">Open‑Deskbot · 小歪配网</p>
@@ -500,8 +542,282 @@ const char index_html[] PROGMEM = R"rawliteral(
       });
     });
 
+    function setConfigMessage(text, type) {
+      const el = document.getElementById('config-message');
+      el.textContent = text;
+      el.className = 'msg ' + (type || '');
+      el.classList.remove('hidden');
+    }
+
+    function loadDeviceConfig() {
+      fetch('/device-config')
+        .then(r => r.json())
+        .then(c => {
+          if (!c.ok) return;
+          if (c.device_id) {
+            document.getElementById('config-device-id').textContent = c.device_id;
+          }
+          if (c.pin_code) {
+            document.getElementById('pin-code').textContent = c.pin_code;
+          }
+          const apInput = document.getElementById('ap-offer-input');
+          if (typeof c.ap_offer_sec !== 'undefined') {
+            apInput.value = c.ap_offer_sec;
+          }
+          if (typeof c.ap_offer_min !== 'undefined') {
+            apInput.min = c.ap_offer_min;
+          }
+          if (typeof c.ap_offer_max !== 'undefined') {
+            apInput.max = c.ap_offer_max;
+          }
+          if (typeof c.ap_offer_min !== 'undefined' && typeof c.ap_offer_max !== 'undefined') {
+            document.getElementById('ap-offer-hint').textContent =
+              '范围 ' + c.ap_offer_min + '–' + c.ap_offer_max + ' 秒，默认 20 秒；下次开机生效。';
+          }
+
+          const listEl = document.getElementById('saved-wifi-list');
+          const emptyEl = document.getElementById('saved-wifi-empty');
+          listEl.innerHTML = '';
+          const saved = c.saved_wifi || [];
+          if (saved.length === 0) {
+            emptyEl.classList.remove('hidden');
+          } else {
+            emptyEl.classList.add('hidden');
+            saved.forEach(ssid => {
+              const row = document.createElement('div');
+              row.className = 'network';
+              row.style.cursor = 'default';
+              row.innerHTML = '<span>' + ssid + '</span>';
+              const delBtn = document.createElement('button');
+              delBtn.type = 'button';
+              delBtn.textContent = '删除';
+              delBtn.style.marginLeft = '8px';
+              delBtn.onclick = () => deleteSavedWifi(ssid);
+              row.appendChild(delBtn);
+              listEl.appendChild(row);
+            });
+          }
+
+          renderWsServers(c);
+        })
+        .catch(() => {});
+    }
+
+    function renderWsServers(c) {
+      const listEl = document.getElementById('ws-server-list');
+      const emptyEl = document.getElementById('ws-server-empty');
+      listEl.innerHTML = '';
+      const active = c.ws_active || 'builtin';
+      const rows = [{ id: 'builtin', url: c.ws_builtin_url || '', label: '内置（默认）' }];
+      (c.ws_servers || []).forEach(s => rows.push({ id: s.id, url: s.url, label: s.id }));
+
+      if ((c.ws_servers || []).length === 0) {
+        emptyEl.classList.remove('hidden');
+      } else {
+        emptyEl.classList.add('hidden');
+      }
+
+      rows.forEach(row => {
+        const item = document.createElement('div');
+        item.className = 'network' + (row.id === active ? ' on' : '');
+        item.style.cursor = 'default';
+        const text = document.createElement('span');
+        text.innerHTML = '<b>' + row.label + '</b><br><small>' + row.url + '</small>';
+        item.appendChild(text);
+
+        const actions = document.createElement('span');
+        actions.style.display = 'flex';
+        actions.style.gap = '8px';
+
+        const useBtn = document.createElement('button');
+        useBtn.type = 'button';
+        useBtn.textContent = row.id === active ? '当前' : '使用';
+        useBtn.disabled = row.id === active;
+        useBtn.onclick = () => selectWsServer(row.id);
+        actions.appendChild(useBtn);
+
+        if (row.id !== 'builtin') {
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.textContent = '删除';
+          delBtn.onclick = () => deleteWsServer(row.id);
+          actions.appendChild(delBtn);
+        }
+
+        item.appendChild(actions);
+        listEl.appendChild(item);
+      });
+    }
+
+    function addWsServer() {
+      const input = document.getElementById('ws-server-url-input');
+      const url = (input.value || '').trim();
+      if (!url) {
+        setConfigMessage('请输入云服务器地址。', 'err');
+        return;
+      }
+      const btn = document.getElementById('ws-server-add-btn');
+      btn.disabled = true;
+      fetch('/device-config/ws-servers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'url=' + encodeURIComponent(url)
+      })
+        .then(r => r.json())
+        .then(data => {
+          btn.disabled = false;
+          if (data.success) {
+            input.value = '';
+            setConfigMessage('云服务器已添加。', 'ok');
+            loadDeviceConfig();
+          } else {
+            setConfigMessage('添加失败: ' + (data.message || '未知错误'), 'err');
+          }
+        })
+        .catch(err => {
+          btn.disabled = false;
+          setConfigMessage('添加失败: ' + err.message, 'err');
+        });
+    }
+
+    function selectWsServer(id) {
+      fetch('/device-config/ws-servers/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'id=' + encodeURIComponent(id)
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            setConfigMessage('已切换云服务器，继续启动后生效。', 'ok');
+            loadDeviceConfig();
+          } else {
+            setConfigMessage('切换失败: ' + (data.message || '未知错误'), 'err');
+          }
+        })
+        .catch(err => setConfigMessage('切换失败: ' + err.message, 'err'));
+    }
+
+    function deleteWsServer(id) {
+      if (!confirm('确定删除该云服务器？')) return;
+      fetch('/device-config/ws-servers/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'id=' + encodeURIComponent(id)
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            setConfigMessage('云服务器已删除。', 'ok');
+            loadDeviceConfig();
+          } else {
+            setConfigMessage('删除失败: ' + (data.message || '未知错误'), 'err');
+          }
+        })
+        .catch(err => setConfigMessage('删除失败: ' + err.message, 'err'));
+    }
+
+    function saveApOfferSec() {
+      const sec = parseInt(document.getElementById('ap-offer-input').value, 10);
+      const btn = document.getElementById('ap-offer-save-btn');
+      btn.disabled = true;
+      fetch('/device-config/ap-offer-sec', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'sec=' + encodeURIComponent(sec)
+      })
+        .then(r => r.json())
+        .then(data => {
+          btn.disabled = false;
+          if (data.success) {
+            setConfigMessage('启动时间已保存为 ' + data.ap_offer_sec + ' 秒，下次开机生效。', 'ok');
+          } else {
+            setConfigMessage('保存失败: ' + (data.message || '未知错误'), 'err');
+          }
+        })
+        .catch(err => {
+          btn.disabled = false;
+          setConfigMessage('保存失败: ' + err.message, 'err');
+        });
+    }
+
+    function resetPin() {
+      if (!confirm('确定重置 PIN？旧 PIN 将无法再用于绑定。')) return;
+      fetch('/device-config/reset-pin', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && data.pin_code) {
+            document.getElementById('pin-code').textContent = data.pin_code;
+            setConfigMessage('PIN 已重置为 ' + data.pin_code, 'ok');
+          } else {
+            setConfigMessage('重置失败: ' + (data.message || '未知错误'), 'err');
+          }
+        })
+        .catch(err => setConfigMessage('重置失败: ' + err.message, 'err'));
+    }
+
+    function deleteSavedWifi(ssid) {
+      if (!confirm('确定删除已保存 Wi‑Fi「' + ssid + '」？')) return;
+      fetch('/device-config/delete-wifi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'ssid=' + encodeURIComponent(ssid)
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            setConfigMessage('已删除 Wi‑Fi「' + ssid + '」', 'ok');
+            loadDeviceConfig();
+          } else {
+            setConfigMessage('删除失败: ' + (data.message || '未知错误'), 'err');
+          }
+        })
+        .catch(err => setConfigMessage('删除失败: ' + err.message, 'err'));
+    }
+
+    function factoryReset() {
+      if (!confirm('确定恢复出厂？将清除已保存 Wi‑Fi、重置 PIN 与启动时间，设备随后重启。')) return;
+      const btn = document.getElementById('factory-reset-btn');
+      btn.disabled = true;
+      fetch('/device-config/factory-reset', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            setConfigMessage('已恢复出厂，设备正在重启…', 'ok');
+          } else {
+            btn.disabled = false;
+            setConfigMessage('恢复失败: ' + (data.message || '未知错误'), 'err');
+          }
+        })
+        .catch(err => {
+          btn.disabled = false;
+          setConfigMessage('恢复失败: ' + err.message, 'err');
+        });
+    }
+
+    function continueBoot() {
+      const btn = document.getElementById('continue-boot-btn');
+      btn.disabled = true;
+      btn.textContent = '正在继续启动…';
+      fetch('/device-config/continue-boot', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (!data.success) {
+            btn.disabled = false;
+            btn.textContent = '继续启动';
+            setConfigMessage('操作失败: ' + (data.message || '未知错误'), 'err');
+          }
+        })
+        .catch(err => {
+          btn.disabled = false;
+          btn.textContent = '继续启动';
+          setConfigMessage('操作失败: ' + err.message, 'err');
+        });
+    }
+
     window.onload = function() {
       loadStatus();
+      loadDeviceConfig();
       setTimeout(scanNetworks, 700);
     };
   </script>
@@ -513,119 +829,18 @@ bool wifi_defaults_configured() {
   return WIFI_DEFAULT_SSID[0] != '\0';
 }
 
-static void migrate_legacy_wifi_prefs(Preferences& prefs) {
-  if (!prefs.isKey(kLegacySsidKey)) {
-    return;
-  }
-  String old_ssid = prefs.getString(kLegacySsidKey, "");
-  String old_pass = prefs.getString(kLegacyPassKey, "");
-  old_ssid.trim();
-  if (old_ssid.length() > 0 && prefs.getUChar(kPrefsCountKey, 0) == 0) {
-    prefs.putString("s0", old_ssid);
-    prefs.putString("p0", old_pass);
-    prefs.putUChar(kPrefsCountKey, 1);
-    Serial.println("[wifi] migrated legacy single credential to list");
-  }
-  prefs.remove(kLegacySsidKey);
-  prefs.remove(kLegacyPassKey);
-}
-
-int load_saved_wifi_list(WifiCredential* out, int max_out) {
-  if (out == nullptr || max_out <= 0) {
-    return 0;
-  }
-  Preferences prefs;
-  if (!prefs.begin(kPrefsNs, false)) {
-    return 0;
-  }
-  migrate_legacy_wifi_prefs(prefs);
-  int n = prefs.getUChar(kPrefsCountKey, 0);
-  if (n > kMaxSavedWifi) {
-    n = kMaxSavedWifi;
-  }
-  int count = 0;
-  for (int i = 0; i < n && count < max_out; ++i) {
-    char key_s[4];
-    char key_p[4];
-    snprintf(key_s, sizeof(key_s), "s%d", i);
-    snprintf(key_p, sizeof(key_p), "p%d", i);
-    String saved_ssid = prefs.getString(key_s, "");
-    saved_ssid.trim();
-    if (saved_ssid.length() == 0) {
-      continue;
-    }
-    out[count].ssid = saved_ssid;
-    out[count].password = prefs.getString(key_p, "");
-    count++;
-  }
-  prefs.end();
-  return count;
-}
-
-bool save_wifi_to_prefs(const String& new_ssid, const String& new_password) {
-  WifiCredential existing[kMaxSavedWifi];
-  const int existing_count = load_saved_wifi_list(existing, kMaxSavedWifi);
-
-  WifiCredential merged[kMaxSavedWifi];
-  int merged_count = 0;
-  merged[merged_count].ssid = new_ssid;
-  merged[merged_count].password = new_password;
-  merged_count++;
-
-  for (int i = 0; i < existing_count && merged_count < kMaxSavedWifi; ++i) {
-    if (existing[i].ssid == new_ssid) {
-      continue;
-    }
-    merged[merged_count++] = existing[i];
-  }
-
-  Preferences prefs;
-  if (!prefs.begin(kPrefsNs, false)) {
-    return false;
-  }
-  migrate_legacy_wifi_prefs(prefs);
-  prefs.putUChar(kPrefsCountKey, (uint8_t)merged_count);
-  for (int i = 0; i < merged_count; ++i) {
-    char key_s[4];
-    char key_p[4];
-    snprintf(key_s, sizeof(key_s), "s%d", i);
-    snprintf(key_p, sizeof(key_p), "p%d", i);
-    prefs.putString(key_s, merged[i].ssid);
-    prefs.putString(key_p, merged[i].password);
-  }
-  for (int i = merged_count; i < kMaxSavedWifi; ++i) {
-    char key_s[4];
-    char key_p[4];
-    snprintf(key_s, sizeof(key_s), "s%d", i);
-    snprintf(key_p, sizeof(key_p), "p%d", i);
-    prefs.remove(key_s);
-    prefs.remove(key_p);
-  }
-  prefs.end();
-  return true;
-}
-
-void clear_wifi_prefs() {
-  Preferences prefs;
-  if (prefs.begin(kPrefsNs, false)) {
-    prefs.clear();
-    prefs.end();
-    Serial.println("[wifi] cleared saved credentials");
-  }
-}
-
 /** 在扫描结果中找出已保存且可见的 WiFi，按 RSSI 从高到低排序。 */
-int build_visible_saved_candidates(const WifiCredential* saved, int saved_count,
-                                   WifiCredential* out, int max_out) {
+int build_visible_saved_candidates(const NvsWifiCredential* saved, int saved_count,
+                                   NvsWifiCredential* out, int max_out) {
   if (saved == nullptr || saved_count <= 0 || out == nullptr || max_out <= 0) {
     return 0;
   }
 
   struct Match {
-    WifiCredential cred;
+    NvsWifiCredential cred;
     int rssi;
   };
-  Match matches[kMaxSavedWifi];
+  Match matches[NVS_MAX_SAVED_WIFI];
   int match_count = 0;
 
   int n = WiFi.scanNetworks();
@@ -665,11 +880,8 @@ int build_visible_saved_candidates(const WifiCredential* saved, int saved_count,
 
 void setup_http_server() {
   done_config = false;
-
-  Serial.printf("[wifi] opening AP %s\r\n", kApSsid);
-  // AP+STA：配网页 /scan-wifi 需要 STA 扫描能力
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(kApSsid);
+  s_portal_exit_continue = false;
+  ensure_config_ap_running();
 
   server.on("/", HTTP_GET, []() {
     server.send(200, "text/html", index_html);
@@ -679,7 +891,7 @@ void setup_http_server() {
     const IPAddress ip = WiFi.softAPIP();
     String json = "{";
     json += "\"ok\":true,";
-    json += "\"ap_ssid\":\"" + json_escape(kApSsid) + "\",";
+    json += "\"ap_ssid\":\"" + json_escape(String(s_ap_ssid)) + "\",";
     json += "\"ap_ip\":\"" + ip.toString() + "\",";
     json += "\"device_id\":\"" + json_escape(String(get_device_id())) + "\",";
     json += "\"station_count\":" + String(WiFi.softAPgetStationNum());
@@ -754,7 +966,7 @@ void setup_http_server() {
       return;
     }
 
-    if (!save_wifi_to_prefs(new_ssid, new_password)) {
+    if (!nvs_wifi_upsert(new_ssid.c_str(), new_password.c_str())) {
       server.send(500, "application/json", "{\"success\":false,\"message\":\"Failed to save credentials\"}");
       return;
     }
@@ -762,6 +974,129 @@ void setup_http_server() {
     Serial.printf("[wifi] credentials saved ssid=%s\r\n", new_ssid.c_str());
     server.send(200, "application/json", "{\"success\":true,\"message\":\"WiFi configuration saved\"}");
     done_config = true;
+  });
+
+  server.on("/device-config", HTTP_GET, []() {
+    NvsWifiCredential saved[NVS_MAX_SAVED_WIFI];
+    const int saved_count = nvs_wifi_list(saved, NVS_MAX_SAVED_WIFI);
+    String json = "{";
+    json += "\"ok\":true,";
+    json += "\"device_id\":\"" + json_escape(String(get_device_id())) + "\",";
+    json += "\"pin_code\":\"" + json_escape(String(nvs_get_pin_code())) + "\",";
+    json += "\"ap_offer_sec\":" + String(nvs_get_ap_offer_timeout_sec()) + ",";
+    json += "\"ap_offer_min\":" + String(nvs_get_ap_offer_timeout_min_sec()) + ",";
+    json += "\"ap_offer_max\":" + String(nvs_get_ap_offer_timeout_max_sec()) + ",";
+    json += "\"saved_wifi\":[";
+    for (int i = 0; i < saved_count; ++i) {
+      if (i > 0) {
+        json += ",";
+      }
+      json += "\"" + json_escape(saved[i].ssid) + "\"";
+    }
+    json += "],";
+
+    char builtin_url[96];
+    deskbot_ws_format_builtin_url(builtin_url, sizeof(builtin_url));
+    json += "\"ws_active\":\"" + json_escape(String(nvs_ws_get_active_id())) + "\",";
+    json += "\"ws_builtin_url\":\"" + json_escape(String(builtin_url)) + "\",";
+    json += "\"ws_servers\":[";
+    NvsWsServerEntry ws_entries[NVS_MAX_CUSTOM_WS];
+    const int ws_count = nvs_ws_list_custom(ws_entries, NVS_MAX_CUSTOM_WS);
+    for (int i = 0; i < ws_count; ++i) {
+      if (i > 0) {
+        json += ",";
+      }
+      json += "{\"id\":\"" + json_escape(String(ws_entries[i].id)) + "\",";
+      json += "\"url\":\"" + json_escape(String(ws_entries[i].url)) + "\"}";
+    }
+    json += "]}";
+    server.send(200, "application/json", json);
+  });
+
+  server.on("/device-config/ap-offer-sec", HTTP_POST, []() {
+    const int sec = server.arg("sec").toInt();
+    if (!nvs_set_ap_offer_timeout_sec((unsigned)sec)) {
+      server.send(400, "application/json",
+                  "{\"success\":false,\"message\":\"启动时间须在 5–60 秒之间\"}");
+      return;
+    }
+    String json = "{\"success\":true,\"ap_offer_sec\":" + String(nvs_get_ap_offer_timeout_sec()) + "}";
+    server.send(200, "application/json", json);
+  });
+
+  server.on("/device-config/reset-pin", HTTP_POST, []() {
+    const char* pin = nvs_reset_pin_code();
+    String json = "{\"success\":true,\"pin_code\":\"" + json_escape(String(pin)) + "\"}";
+    server.send(200, "application/json", json);
+  });
+
+  server.on("/device-config/delete-wifi", HTTP_POST, []() {
+    const String target = server.arg("ssid");
+    if (!nvs_wifi_delete(target.c_str())) {
+      server.send(404, "application/json",
+                  "{\"success\":false,\"message\":\"未找到该 Wi‑Fi\"}");
+      return;
+    }
+    server.send(200, "application/json", "{\"success\":true}");
+  });
+
+  server.on("/device-config/ws-servers", HTTP_POST, []() {
+    String url = server.arg("url");
+    url.trim();
+    if (url.length() == 0) {
+      server.send(400, "application/json",
+                  "{\"success\":false,\"message\":\"URL 不能为空\"}");
+      return;
+    }
+    DeskbotWsTarget parsed;
+    if (!utils_parse_ws_url(url.c_str(), &parsed)) {
+      server.send(400, "application/json",
+                  "{\"success\":false,\"message\":\"URL 格式须为 ws:// 或 wss://\"}");
+      return;
+    }
+    char new_id[8];
+    if (!nvs_ws_add_custom(url.c_str(), new_id, sizeof(new_id))) {
+      server.send(400, "application/json",
+                  "{\"success\":false,\"message\":\"添加失败或已达上限\"}");
+      return;
+    }
+    String json = "{\"success\":true,\"id\":\"" + json_escape(String(new_id)) + "\"}";
+    server.send(200, "application/json", json);
+  });
+
+  server.on("/device-config/ws-servers/select", HTTP_POST, []() {
+    const String id = server.arg("id");
+    if (!nvs_ws_set_active_id(id.c_str())) {
+      server.send(400, "application/json",
+                  "{\"success\":false,\"message\":\"无效的服务器\"}");
+      return;
+    }
+    server.send(200, "application/json", "{\"success\":true}");
+  });
+
+  server.on("/device-config/ws-servers/delete", HTTP_POST, []() {
+    const String id = server.arg("id");
+    if (!nvs_ws_delete_custom(id.c_str())) {
+      server.send(404, "application/json",
+                  "{\"success\":false,\"message\":\"未找到该服务器\"}");
+      return;
+    }
+    server.send(200, "application/json", "{\"success\":true}");
+  });
+
+  server.on("/device-config/factory-reset", HTTP_POST, []() {
+    nvs_wifi_clear();
+    nvs_device_factory_reset();
+    nvs_ws_factory_reset();
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"factory reset\"}");
+    delay(500);
+    ESP.restart();
+  });
+
+  server.on("/device-config/continue-boot", HTTP_POST, []() {
+    s_portal_exit_continue = true;
+    done_config = true;
+    server.send(200, "application/json", "{\"success\":true}");
   });
 
   server.onNotFound([]() {
@@ -772,22 +1107,12 @@ void setup_http_server() {
   server.begin();
 
   IPAddress ip = WiFi.softAPIP();
-  Serial.printf("[wifi] config portal http://%s SSID=%s\r\n", ip.toString().c_str(), kApSsid);
-
-  char line1[48];
-  char line2[40];
-  char line3[40];
-  char line4[40];
-  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
-  snprintf(line3, sizeof(line3), "连接热点 %s", kApSsid);
-  snprintf(line4, sizeof(line4), "浏览器打开 http://%s", ip.toString().c_str());
-  display_boot_show4(line1, line2, line3, line4);
+  Serial.printf("[wifi] config portal http://%s SSID=%s\r\n", ip.toString().c_str(), s_ap_ssid);
+  display_show_config_portal();
 }
 
 void config_wifi() {
   Serial.println("[wifi] enter config mode");
-  WiFi.disconnect(true, true);
-  delay(200);
   setup_http_server();
 
   const unsigned long portal_start_ms = millis();
@@ -804,7 +1129,10 @@ void config_wifi() {
   WiFi.softAPdisconnect(true);
   WiFi.disconnect(true, true);
   delay(200);
-  if (done_config) {
+  if (s_portal_exit_continue) {
+    Serial.println("[wifi] continue boot, closing portal...");
+    s_portal_exit_continue = false;
+  } else if (done_config) {
     Serial.println("[wifi] config saved, reconnecting...");
   }
 }
@@ -891,66 +1219,161 @@ bool try_connect_credential(const char* source_label, int max_attempts, bool ssi
   return false;
 }
 
-}  // namespace
+static bool wifi_connect_sta_once() {
+  NvsWifiCredential saved[NVS_MAX_SAVED_WIFI];
+  const int saved_count = nvs_wifi_list(saved, NVS_MAX_SAVED_WIFI);
 
-bool wifi_provision_connect() {
-  Serial.println("[wifi] connecting...");
-  WiFi.persistent(false);
-  register_wifi_event_handlers_once();
+  NvsWifiCredential visible[NVS_MAX_SAVED_WIFI];
+  const int visible_count =
+      build_visible_saved_candidates(saved, saved_count, visible, NVS_MAX_SAVED_WIFI);
+  Serial.printf("[wifi] saved=%d visible_in_scan=%d\r\n", saved_count, visible_count);
 
-  while (WiFi.status() != WL_CONNECTED) {
-    WifiCredential saved[kMaxSavedWifi];
-    const int saved_count = load_saved_wifi_list(saved, kMaxSavedWifi);
-
-    WifiCredential visible[kMaxSavedWifi];
-    const int visible_count =
-        build_visible_saved_candidates(saved, saved_count, visible, kMaxSavedWifi);
-    Serial.printf("[wifi] saved=%d visible_in_scan=%d\r\n", saved_count, visible_count);
-
-    for (int i = 0; i < visible_count; ++i) {
-      ssid = visible[i].ssid;
-      password = visible[i].password;
-      Serial.printf("[wifi] try saved visible [%d/%d] ssid=%s\r\n", i + 1, visible_count,
-                    ssid.c_str());
-      if (try_connect_credential("saved", kMaxReconnectAttempts, true)) {
-        Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
-                      WiFi.RSSI());
-        apply_wifi_runtime_keepalive();
-        s_wifi_was_up = true;
-        display_show_wifi_connected();
-        return true;
-      }
+  for (int i = 0; i < visible_count; ++i) {
+    ssid = visible[i].ssid;
+    password = visible[i].password;
+    Serial.printf("[wifi] try saved visible [%d/%d] ssid=%s\r\n", i + 1, visible_count,
+                  ssid.c_str());
+    if (try_connect_credential("saved", kMaxReconnectAttempts, true)) {
+      Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
+                    WiFi.RSSI());
+      apply_wifi_runtime_keepalive();
+      s_wifi_was_up = true;
+      display_show_wifi_connected();
+      return true;
     }
-
-    if (wifi_defaults_configured()) {
-      ssid = WIFI_DEFAULT_SSID;
-      password = WIFI_DEFAULT_PASSWORD;
-      Serial.printf("[wifi] try compile-time default ssid=%s\r\n", ssid.c_str());
-      if (try_connect_credential("defaults", kMaxReconnectAttempts, false)) {
-        Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
-                      WiFi.RSSI());
-        apply_wifi_runtime_keepalive();
-        s_wifi_was_up = true;
-        display_show_wifi_connected();
-        return true;
-      }
-    } else if (saved_count == 0) {
-      config_wifi();
-      continue;
-    }
-
-    Serial.println("\r\n[wifi] all credentials failed, enter config mode");
-    WiFi.disconnect(true, true);
-    delay(200);
-    config_wifi();
   }
 
-  Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
-                WiFi.RSSI());
-  apply_wifi_runtime_keepalive();
-  s_wifi_was_up = true;
-  display_show_wifi_connected();
-  return true;
+  if (wifi_defaults_configured()) {
+    ssid = WIFI_DEFAULT_SSID;
+    password = WIFI_DEFAULT_PASSWORD;
+    Serial.printf("[wifi] try compile-time default ssid=%s\r\n", ssid.c_str());
+    if (try_connect_credential("defaults", kMaxReconnectAttempts, false)) {
+      Serial.printf("[wifi] connected IP=%s RSSI=%d dBm\r\n", WiFi.localIP().toString().c_str(),
+                    WiFi.RSSI());
+      apply_wifi_runtime_keepalive();
+      s_wifi_was_up = true;
+      display_show_wifi_connected();
+      return true;
+    }
+  }
+
+  return false;
+}
+
+}  // namespace
+
+bool wifi_provision_ap_offer(unsigned timeout_ms) {
+  build_ap_ssid();
+
+  WiFi.persistent(false);
+  WiFi.disconnect(true, true);
+  delay(200);
+  WiFi.mode(WIFI_AP);
+  delay(100);
+  if (!WiFi.softAP(s_ap_ssid)) {
+    Serial.println("[wifi] AP offer: softAP failed");
+    return false;
+  }
+
+  char portal_url[32];
+  snprintf(portal_url, sizeof(portal_url), "http://%s/", WiFi.softAPIP().toString().c_str());
+
+  Serial.printf("[wifi] AP offer ssid=%s (open) ip=%s timeout=%u ms\r\n", s_ap_ssid, portal_url,
+                timeout_ms);
+
+  unsigned long remaining_ms = timeout_ms;
+  unsigned long last_tick_ms = millis();
+  int last_display_key = -2;
+  bool http_started = false;
+  done_config = false;
+  s_portal_exit_continue = false;
+
+  while (true) {
+    const unsigned long now = millis();
+    const unsigned long elapsed = now - last_tick_ms;
+    last_tick_ms = now;
+
+    const uint8_t stations = WiFi.softAPgetStationNum();
+    const bool paused = stations > 0;
+
+    if (!paused && remaining_ms > 0) {
+      if (elapsed >= remaining_ms) {
+        remaining_ms = 0;
+      } else {
+        remaining_ms -= elapsed;
+      }
+    }
+
+    if (paused && !http_started) {
+      Serial.printf("[wifi] AP offer: station connected (%u), countdown paused\r\n",
+                    (unsigned)stations);
+      setup_http_server();
+      http_started = true;
+    }
+
+    if (http_started) {
+      server.handleClient();
+      if (done_config) {
+        server.close();
+        WiFi.softAPdisconnect(true);
+        WiFi.disconnect(true, true);
+        delay(200);
+        if (s_portal_exit_continue) {
+          Serial.println("[wifi] AP offer: continue boot from portal");
+          s_portal_exit_continue = false;
+        } else {
+          Serial.println("[wifi] AP offer: config saved from portal");
+        }
+        return true;
+      }
+    }
+
+    if (remaining_ms == 0 && !paused) {
+      Serial.println("[wifi] AP offer: timeout, no station");
+      if (http_started) {
+        server.close();
+      }
+      WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_OFF);
+      delay(100);
+      return false;
+    }
+
+    int display_key;
+    if (paused) {
+      display_key = -1;
+    } else {
+      display_key = (int)((remaining_ms + 999UL) / 1000UL);
+    }
+
+    if (display_key != last_display_key) {
+      last_display_key = display_key;
+      boot_guide_provision_show(s_ap_ssid, portal_url, display_key);
+      if (!paused) {
+        Serial.printf("[wifi] AP offer: countdown %d s\r\n", display_key);
+      }
+    }
+
+    delay(100);
+  }
+}
+
+bool wifi_provision_connect_sta() {
+  Serial.println("[wifi] STA connect...");
+  WiFi.persistent(false);
+  register_wifi_event_handlers_once();
+  return wifi_connect_sta_once();
+}
+
+void wifi_provision_config_portal() { config_wifi(); }
+
+bool wifi_provision_connect() {
+  (void)wifi_provision_ap_offer(nvs_get_ap_offer_timeout_ms());
+  if (wifi_provision_connect_sta()) {
+    return true;
+  }
+  wifi_provision_config_portal();
+  return wifi_provision_connect_sta();
 }
 
 void wifi_provision_set_link_handlers(WifiLinkHandler on_down, WifiLinkHandler on_up) {
@@ -1009,7 +1432,7 @@ void wifi_provision_maintain() {
 }
 
 void wifi_provision_reset() {
-  clear_wifi_prefs();
+  nvs_wifi_clear();
   Serial.println("[wifi] reset: rebooting...");
   delay(500);
   ESP.restart();

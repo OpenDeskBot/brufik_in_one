@@ -9,13 +9,14 @@
 #include "mic.h"
 #include "pb_runtime.h"
 #include "asr_ws.h"
-#include "deskbot_state.h"
 #include "head.h"
 #include "cmd.h"
 #include "led.h"
 #include "logger.h"
 #include "task_trace.h"
 #include "utils/utils.h"
+#include "utils/nvs_config_utils.h"
+#include "boot_guide.h"
 #include "ws_transport.h"
 
 /* loopTask 只做 cmd / wifi maintain / yield；Opus encode 在 mic、decode 在 pb_runtime。
@@ -43,53 +44,61 @@ void setup() {
   log_info("Initializing Deskbot...");
   log_info("[BOOT] device_id=%s", get_device_id());
 
-  /* ---- 阶段 A：硬件 setup_*（一般不出错；不启动上行生产者任务）---- */
+  /* ---- 阶段 A：显示 + 基础硬件 ---- */
   setup_display();
+  display_backlight_on();
   setup_FFat();
   setup_led();
 
-  /* 预归中（GPIO 位bang，不 attach）；永久 attach 须在 camera 之后（LEDC vs MCPWM）。 */
   setup_head();
   setup_mic();
   setup_speaker();
 
-  static bool s_camera_ok = false;
-  s_camera_ok = setup_camera();
-  /* attach：永久 PWM；motor_task 由阶段 B task_setup_head 启动（boot 回中会兜底）。 */
-  head_servo_boot_attach();
-  display_backlight_on();
-  if (!s_camera_ok) {
-    log_warn("[BOOT] Camera absent or failed — continuing without camera");
-    display_boot_show("无摄像头", "继续启动...");
-  }
+  log_info("[BOOT] pin=%s hotspot=%s", nvs_get_pin_code(), get_device_id());
 
-  if (!wifi_provision_connect()) {
-    log_error("WiFi connect failed");
-    display_boot_show("WiFi 连接失败", "请重启或配网");
-    return;
+  (void)wifi_provision_ap_offer(nvs_get_ap_offer_timeout_ms());
+  if (!wifi_provision_connect_sta()) {
+    wifi_provision_config_portal();
+    if (!wifi_provision_connect_sta()) {
+      log_error("WiFi connect failed");
+      boot_guide_wifi_result(false, nullptr, "请重启或配网");
+      return;
+    }
   }
   wifi_provision_set_link_handlers(on_wifi_link_down, on_wifi_link_up);
 
-  /* ---- 阶段 B：音频上行 + WS（先占内部 RAM，避免 display 大栈挤掉 ws_transport）---- */
+  /* ---- 阶段 B：云服务器连接（屏幕引导）---- */
   task_setup_speaker();
   task_setup_mic();
-  if (!setup_pb_runtime()) {
-    log_error("[BOOT] pb_runtime setup failed");
-  } else if (!setup_ws_transport()) {
+  if (!setup_ws_transport()) {
     log_error("[BOOT] ws_transport setup failed");
+    boot_guide_server_result(false, "初始化失败");
+    delay(1200);
   } else if (!task_setup_ws_transport()) {
     log_error("[BOOT] ws_transport task_setup failed");
+    boot_guide_server_result(false, "任务启动失败");
+    delay(1200);
+  } else {
+    (void)boot_guide_wait_ws_ready(DESKBOT_WS_CONNECT_TIMEOUT_MS);
+  }
+
+  static bool s_camera_ok = false;
+  s_camera_ok = setup_camera();
+  head_servo_boot_attach();
+  if (!s_camera_ok) {
+    log_warn("[BOOT] Camera absent or failed — continuing without camera");
+  }
+
+  /* ---- 阶段 C：pb / 显示任务 ---- */
+  if (!setup_pb_runtime()) {
+    log_error("[BOOT] pb_runtime setup failed");
   } else if (!task_setup_pb_runtime()) {
     log_error("[BOOT] pb_runtime task_setup failed");
   }
 
-  /* ---- 阶段 C：显示 / 舵机 / 统计 ---- */
   task_setup_display();
   task_setup_head();
-  // task_setup_cpu_runtime_stats();
 
-  /* ---- 阶段 D：其余上行生产者 ---- */
-  task_setup_deskbot_state();
   if (s_camera_ok) {
     task_setup_camera();
   } else {
@@ -97,15 +106,15 @@ void setup() {
   }
 
   log_info("[BOOT] firmware=%s %s %s", VERSION, __DATE__, __TIME__);
-  log_info("[BOOT] device_id=%s ws=%s:%u api_key=%s", get_device_id(), DESKBOT_WS_HOST,
-           (unsigned)DESKBOT_WS_PORT, deskbot_api_key_configured() ? "set" : "MISSING");
+  char ws_url[128];
+  deskbot_ws_format_active_url(ws_url, sizeof(ws_url));
+  log_info("[BOOT] device_id=%s ws=%s pin=%s", get_device_id(), ws_url, nvs_get_pin_code());
   log_info("PSRAM size=%u free=%u", (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFreePsram());
 
-  display_boot_show_ready();
+  boot_guide_show_ready();
   log_info("%s is Ready. http://%s", PRODUCT_NAME, WiFi.localIP().toString().c_str());
-  log_warn("[BOOT] ready device=%s ws=%s:%u wifi_ip=%s",
-           get_device_id(), DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT,
-           WiFi.localIP().toString().c_str());
+  log_warn("[BOOT] ready device=%s ws=%s wifi_ip=%s",
+           get_device_id(), ws_url, WiFi.localIP().toString().c_str());
   log_set_level(LOG_LEVEL_WARN);
 }
 

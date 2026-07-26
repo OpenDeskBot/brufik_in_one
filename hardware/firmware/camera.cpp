@@ -1,7 +1,9 @@
 #include "camera.h"
 
 #include "deskbot_config.h"
+#include "head.h"
 #include "logger.h"
+#include "speaker.h"
 #include "ws_transport.h"
 
 #include <Arduino.h>
@@ -34,6 +36,9 @@ static bool s_camera_ok = false;
 static volatile uint32_t s_interval_ms = 1000u;
 static QueueHandle_t s_notify_q = nullptr;
 static uint32_t s_seq = 0;
+/** queue 尚未创建时暂存最新通知（boot 阶段 camera_ws ready 可能早于 task_setup_camera）。 */
+static bool s_has_pending_notify = false;
+static CamNotify s_pending_notify = kCamStop;
 
 static void camera_capture_task(void*);
 
@@ -115,6 +120,15 @@ void task_setup_camera() {
   }
   log_warn("[CAMERA] capture task started (notify-queue gated) interval=%ums",
            (unsigned)s_interval_ms);
+
+  /* 补放 boot 期间暂存的 notify（常见：WS ready 早于本任务）。 */
+  if (s_has_pending_notify) {
+    const CamNotify n = s_pending_notify;
+    s_has_pending_notify = false;
+    xQueueReset(s_notify_q);
+    (void)xQueueSend(s_notify_q, &n, 0);
+    log_warn("[CAMERA] flushed pending notify=%d", (int)n);
+  }
 }
 
 void camera_set_fps(uint32_t fps) {
@@ -126,10 +140,12 @@ void camera_set_fps(uint32_t fps) {
 }
 
 void camera_notify_capture(CamNotify n) {
-  if (!s_notify_q) {
+  if (!kCameraCaptureEnabled && n == kCamGo) {
     return;
   }
-  if (!kCameraCaptureEnabled && n == kCamGo) {
+  if (!s_notify_q) {
+    s_pending_notify = n;
+    s_has_pending_notify = true;
     return;
   }
   /* 单槽：先清空再放入最新通知。 */
@@ -156,17 +172,34 @@ static bool capture_and_enqueue_one() {
   s_seq += 1;
   const uint32_t seq = s_seq;
   const size_t len = fb->len;
+  const int servo_x = head_read_x();
+  const int servo_y = head_read_y_logic();
+  const int volume = speaker_get_volume();
   if (seq <= 1u || seq % 30u == 0u) {
-    log_warn("[CAMERA] enqueue frame seq=%u jpeg=%uB", (unsigned)seq, (unsigned)len);
+    log_warn("[CAMERA] enqueue frame seq=%u jpeg=%uB servo=(%d,%d) volume=%d", (unsigned)seq,
+             (unsigned)len, servo_x, servo_y, volume);
   }
 
-  char header[96];
-  snprintf(
+  char header[256];
+  const int n = snprintf(
       header,
       sizeof(header),
-      "{\"type\":\"camera_frame\",\"codec\":\"jpeg\",\"next_bin_len\":%u,\"seq\":%u}",
+      "{\"type\":\"camera_frame\",\"codec\":\"jpeg\",\"next_bin_len\":%u,\"seq\":%u,"
+      "\"volume\":%d,\"servo\":{\"x\":%d,\"y\":%d,\"x_min\":%d,\"x_max\":%d,\"y_min\":%d,\"y_max\":%d}}",
       (unsigned)len,
-      (unsigned)seq);
+      (unsigned)seq,
+      volume,
+      servo_x,
+      servo_y,
+      X_MIN_LIMIT,
+      X_MAX_LIMIT,
+      Y_MIN_LIMIT,
+      Y_MAX_LIMIT);
+  if (n <= 0 || (size_t)n >= sizeof(header)) {
+    esp_camera_fb_return(fb);
+    log_warn("[CAMERA] header snprintf truncated");
+    return false;
+  }
 
   /* 入队成功后所有权交给 ws_transport：发完/丢弃时调 releaser；失败则本处立刻 return。 */
   if (!ws_transport_enqueue_image_borrow(header, fb->buf, fb->len, release_camera_fb, fb)) {

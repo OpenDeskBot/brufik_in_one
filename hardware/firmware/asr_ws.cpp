@@ -1,9 +1,10 @@
 #include "asr_ws.h"
 
 #include "deskbot_config.h"
-#include "deskbot_state.h"
-#include "deskbot_uplink_state.h"
+#include "boot_guide.h"
 #include "logger.h"
+#include "mic.h"
+#include "utils/nvs_config_utils.h"
 #include "utils/utils.h"
 #include "ws_transport.h"
 
@@ -16,6 +17,7 @@
 
 WebSocketsClient asr_ws;
 static std::atomic<int> g_asr_ws_state{-1};
+static volatile bool s_ws_uplink_allowed = false;
 static bool s_handlers_registered = false;
 static bool s_registered_with_transport = false;
 static unsigned long s_reconnect_backoff_ms = 2000;
@@ -32,20 +34,30 @@ static void set_state(int v) {
   g_asr_ws_state.store(v, std::memory_order_release);
 }
 
+static void set_ws_uplink_allowed(bool allowed) {
+  s_ws_uplink_allowed = allowed;
+  mic_set_ws_state(allowed ? kMicWsOk : kMicWsError);
+}
+
 static void log_net_context(const char* tag) {
+  DeskbotWsTarget target;
+  deskbot_ws_get_active(&target);
+  const char* scheme = target.use_ssl ? "wss" : "ws";
   if (WiFi.status() == WL_CONNECTED) {
-    log_warn("[ASR_WS] net %s wifi=%s ip=%s rssi=%d server=ws://%s:%u",
+    log_warn("[ASR_WS] net %s wifi=%s ip=%s rssi=%d server=%s://%s:%u",
              tag ? tag : "?",
              WiFi.SSID().c_str(),
              WiFi.localIP().toString().c_str(),
              (int)WiFi.RSSI(),
-             ASR_CHAT_HOST,
-             (unsigned)ASR_CHAT_PORT);
+             scheme,
+             target.valid ? target.host : "?",
+             target.valid ? (unsigned)target.port : 0U);
   } else {
-    log_warn("[ASR_WS] net %s wifi=DISCONNECTED server=ws://%s:%u",
+    log_warn("[ASR_WS] net %s wifi=DISCONNECTED server=%s://%s:%u",
              tag ? tag : "?",
-             ASR_CHAT_HOST,
-             (unsigned)ASR_CHAT_PORT);
+             scheme,
+             target.valid ? target.host : "?",
+             target.valid ? (unsigned)target.port : 0U);
   }
 }
 
@@ -53,8 +65,7 @@ static void mark_disconnected_internal(const char* why) {
   set_state(-1);
   s_connected_at_ms = 0;
   s_connect_attempt_started_ms = 0;
-  deskbot_uplink_set_ws_ready(false);
-  deskbot_state_notify(kStateStop);
+  set_ws_uplink_allowed(false);
   if (why && why[0]) {
     log_warn("[ASR_WS] state=-1 (%s)", why);
   }
@@ -92,7 +103,7 @@ static void register_handlers() {
     if (type == WStype_CONNECTED) {
       set_state(-1);
       s_connected_at_ms = millis();
-      deskbot_uplink_set_ws_ready(false);
+      set_ws_uplink_allowed(false);
       log_warn("[ASR_WS] TCP connected; awaiting packed ready");
     } else if (type == WStype_DISCONNECTED) {
       const bool was_ready = g_asr_ws_state.load(std::memory_order_acquire) == 0;
@@ -104,8 +115,12 @@ static void register_handlers() {
       log_warn("[ASR_WS] disconnected reason_len=%u reason=%.*s", (unsigned)length,
                (int)length, reason);
       const String reason_text(reason, length);
-      if (reason_text.indexOf("api_key_required") >= 0) {
-        log_error("[ASR_WS] auth rejected: API key missing or invalid (set DESKBOT_API_KEY)");
+      if (reason_text.indexOf("pin_code_required") >= 0) {
+        log_error("[ASR_WS] auth rejected: pin_code missing or invalid");
+      } else if (reason_text.indexOf("device_id_required") >= 0) {
+        log_error("[ASR_WS] auth rejected: device_id missing");
+      } else if (reason_text.indexOf("api_key_required") >= 0) {
+        log_error("[ASR_WS] auth rejected: API key missing or invalid (legacy server?)");
       } else if (reason_text.indexOf("quota_exhausted") >= 0) {
         log_error("[ASR_WS] auth rejected: free key daily quota exhausted");
       }
@@ -160,7 +175,7 @@ static void ensure_connected_owner() {
     }
     return;
   }
-  if (!deskbot_api_key_configured() || ASR_CHAT_HOST[0] == '\0') {
+  if (!deskbot_ws_is_active_configured()) {
     return;
   }
 
@@ -218,18 +233,20 @@ static void ensure_connected_owner() {
   asr_ws.disconnect();
   set_state(-1);
   s_connected_at_ms = 0;
-  deskbot_uplink_set_ws_ready(false);
+  set_ws_uplink_allowed(false);
   ws_transport_new_session();
 
-  char path[64];
-  snprintf(path, sizeof(path), "/asr_chat?device_id=%s", get_device_id());
-  char auth_header[96];
-  snprintf(auth_header, sizeof(auth_header), "X-API-Key: %s", DESKBOT_API_KEY);
-  asr_ws.setExtraHeaders(auth_header);
-  asr_ws.setReconnectInterval(500);
-  log_warn("[ASR_WS] reconnecting ws://%s:%u%s", ASR_CHAT_HOST, (unsigned)ASR_CHAT_PORT, path);
+  DeskbotWsTarget target;
+  deskbot_ws_get_active(&target);
+  char service_path[48];
+  char path[96];
+  deskbot_ws_build_service_path(service_path, sizeof(service_path), &target, "/asr_chat");
+  snprintf(path, sizeof(path), "%s?device_id=%s&pin_code=%s", service_path, get_device_id(),
+           nvs_get_pin_code());
+  const char* scheme = target.use_ssl ? "wss" : "ws";
+  log_warn("[ASR_WS] reconnecting %s://%s:%u%s", scheme, target.host, (unsigned)target.port, path);
   log_net_context("connecting");
-  asr_ws.begin(ASR_CHAT_HOST, ASR_CHAT_PORT, path);
+  deskbot_ws_client_begin(asr_ws, path);
 }
 
 int asr_ws_state(void) {
@@ -237,7 +254,7 @@ int asr_ws_state(void) {
 }
 
 bool asr_ws_can_send(void) {
-  return asr_ws.isConnected() && asr_ws_state() == 0 && deskbot_uplink_ws_uplink_allowed();
+  return asr_ws.isConnected() && asr_ws_state() == 0 && s_ws_uplink_allowed;
 }
 
 WebSocketsClient* asr_ws_client(void) {
@@ -245,7 +262,7 @@ WebSocketsClient* asr_ws_client(void) {
 }
 
 void asr_ws_on_link_down(const char* why) {
-  deskbot_uplink_bump_ws_generation();
+  set_ws_uplink_allowed(false);
   asr_ws_force_reconnect(why ? why : "wifi lost");
 }
 
@@ -268,7 +285,7 @@ void asr_ws_note_ready(void) {
   s_send_fail_streak = 0;
   s_connect_fail_streak = 0;
   set_state(0);
-  deskbot_uplink_set_ws_ready(true);
+  set_ws_uplink_allowed(true);
   log_warn("[ASR_WS] ready state=0");
 }
 

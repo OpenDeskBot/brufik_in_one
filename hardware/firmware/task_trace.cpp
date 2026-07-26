@@ -282,7 +282,6 @@ void log_stack_heap_tick() {
       {"pb_runtime", 24 * 1024},
       {"display_render", 24 * 1024},
       {"motor", 8 * 1024},
-      {"deskbot_state", 4 * 1024},
       {"camera_cap", 6 * 1024},
       {"cpu_stats", 4 * 1024},
   };

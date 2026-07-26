@@ -2,10 +2,7 @@
 #include "display_text.h"
 #include "pb_model.h"
 
-#include <WiFi.h>
-
 #include "logger.h"
-#include "utils/utils.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -13,7 +10,6 @@
 #include "freertos/task.h"
 
 #include <ArduinoJson.h>
-#include <JPEGDEC.h>
 #include <cstring>
 #include "esp_heap_caps.h"
 #include "mic.h"
@@ -71,69 +67,28 @@ void display_boot_screen_reset() { display_canvas_text_reset(); }
 
 static constexpr uint8_t kDisplayBootTextSize = DESKBOT_DISPLAY_BOOT_TEXT_SIZE;
 
-void display_boot_header_lines(char* line1, size_t line1_len, char* line2, size_t line2_len) {
-  snprintf(line1, line1_len, "%s v%s", PRODUCT_NAME, VERSION);
-  snprintf(line2, line2_len, "device_id: %s", get_device_id());
-}
-
-static void display_boot_draw_lines(const char* line1, const char* line2, const char* line3,
-                                 const char* line4 = nullptr) {
+Adafruit_GFX* display_guide_target_begin(bool clear_black) {
   display_boot_screen_reset();
-  const int16_t x0 = DESKBOT_DISPLAY_BOOT_SX;
-  const int16_t y0 = DESKBOT_DISPLAY_BOOT_SY0;
-  const int16_t dy = display_text_line_height(kDisplayBootTextSize);
-
   Adafruit_GFX* target = (s_canvas && s_canvas->getBuffer()) ? static_cast<Adafruit_GFX*>(s_canvas)
                                                              : static_cast<Adafruit_GFX*>(&g_display);
-  if (s_canvas && s_canvas->getBuffer()) {
-    s_canvas->fillScreen(DESKBOT_DISPLAY_COLOR_BLACK);
-    s_canvas_text_bg = true;
-  } else {
-    g_display.fillScreen(DESKBOT_DISPLAY_COLOR_BLACK);
-  }
-
-  int16_t row = 0;
-  auto draw_row = [&](const char* text) {
-    if (!text || text[0] == '\0') {
-      return;
+  if (clear_black) {
+    if (s_canvas && s_canvas->getBuffer()) {
+      s_canvas->fillScreen(DESKBOT_DISPLAY_COLOR_BLACK);
+      s_canvas_text_bg = true;
+    } else {
+      g_display.fillScreen(DESKBOT_DISPLAY_COLOR_BLACK);
     }
-    display_text_draw(target, x0, y0 + row * dy, text, kDisplayBootTextSize, DESKBOT_DISPLAY_COLOR_WHITE);
-    row++;
-  };
-  draw_row(line1);
-  draw_row(line2);
-  draw_row(line3);
-  draw_row(line4);
+  } else if (s_canvas && s_canvas->getBuffer()) {
+    s_canvas_text_bg = true;
+  }
+  return target;
+}
 
+void display_guide_target_end() {
   if (s_canvas && s_canvas->getBuffer()) {
     pb_canvas_push();
   }
   display_flush_timed();
-}
-
-void display_boot_show3(const char* line1, const char* line2, const char* line3) {
-  display_boot_draw_lines(line1, line2, line3, nullptr);
-}
-
-void display_boot_show4(const char* line1, const char* line2, const char* line3, const char* line4) {
-  display_boot_draw_lines(line1, line2, line3, line4);
-}
-
-void display_boot_show(const char* status_line3, const char* status_line4) {
-  char line1[48];
-  char line2[40];
-  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
-  display_boot_draw_lines(line1, line2, status_line3, status_line4);
-}
-
-void display_boot_show_ready() {
-  char line1[48];
-  char line2[40];
-  char line3[48];
-  display_boot_header_lines(line1, sizeof(line1), line2, sizeof(line2));
-  snprintf(line3, sizeof(line3), "WiFi:%.16s %s", WiFi.SSID().c_str(),
-           WiFi.localIP().toString().c_str());
-  display_boot_draw_lines(line1, line2, line3, "请试试问我: 现在几点了?");
 }
 
 static void display_canvas_ensure_black() {
@@ -179,7 +134,6 @@ void setup_display() {
            DESKBOT_DISPLAY_DC);
   g_display.setTextSize(kDisplayBootTextSize);
   g_display.setTextColor(DESKBOT_DISPLAY_COLOR_WHITE, DESKBOT_DISPLAY_COLOR_BLACK);
-  display_boot_show("初始化中...", nullptr);
 }
 
 /* display_print/println：boot 阶段 banner；横屏逻辑坐标为 PB_COORD（284×240）。 */
@@ -223,7 +177,6 @@ static constexpr uint8_t  kPbMaxPrimsPerLayer   = 16;
 static constexpr UBaseType_t kPbDisplayQueueDepth = 5;
 /** text 图元：服务端预换行后下发；单行 UTF-8 按字节截断（约 42 个汉字）。 */
 static constexpr size_t kPbMaxTextChars = 128;
-static constexpr uint8_t kDisplayMaxPbAssets = 8;
 static constexpr uint16_t kPbDefaultPrimColor = 65535u;
 
 /* pb 图元：与服务端 anim[] 实际下发的 shape 对齐。 */
@@ -239,7 +192,6 @@ enum class PbShape : uint8_t {
   RoundRect,
   RoundRectOutline,
   Text,
-  Image,
 };
 
 struct StoredPrim {
@@ -256,7 +208,6 @@ struct StoredPrim {
   int16_t y2;
   uint8_t text_size; /* 仅 Text：1–3，与 setTextSize 一致 */
   char    text[kPbMaxTextChars + 1];
-  uint8_t asset_index; /* 仅 Image：assets[] 下标 */
 };
 
 struct StoredLayer {
@@ -301,28 +252,6 @@ static bool ensure_stored_layer_pool() {
   return true;
 }
 
-struct DisplayPbAssetBlob {
-  uint8_t* data = nullptr;
-  size_t   len  = 0;
-};
-static DisplayPbAssetBlob s_render_assets[kDisplayMaxPbAssets]{};
-static uint8_t         s_render_asset_count = 0;
-
-struct JpegBlitCtx {
-  uint16_t*     canvas_buf;
-  int16_t       canvas_w;
-  int16_t       canvas_h;
-  int16_t       dx;
-  int16_t       dy;
-  int16_t       dw;
-  int16_t       dh;
-  int           iw;
-  int           ih;
-};
-/** JPEG 解码器放静态区：JPEGDEC 解码 284×240 时栈帧较大，避免 display_render 栈溢出。 */
-static JPEGDEC     s_jpeg_dec;
-static JpegBlitCtx s_jpeg_blit_ctx{};
-
 static void pb_vector_interp_reset() {
   if (!ensure_stored_layer_pool()) {
     return;
@@ -334,17 +263,6 @@ static void pb_vector_interp_reset() {
   memset(&s_layer_pool->prev_eye_l, 0, sizeof(s_layer_pool->prev_eye_l));
   memset(&s_layer_pool->prev_eye_r, 0, sizeof(s_layer_pool->prev_eye_r));
   memset(&s_layer_pool->prev_extra, 0, sizeof(s_layer_pool->prev_extra));
-}
-
-static void display_free_render_assets() {
-  for (uint8_t i = 0; i < s_render_asset_count; i++) {
-    if (s_render_assets[i].data) {
-      heap_caps_free(s_render_assets[i].data);
-      s_render_assets[i].data = nullptr;
-    }
-    s_render_assets[i].len = 0;
-  }
-  s_render_asset_count = 0;
 }
 
 static int lerp_i16(int16_t a, int16_t b, float t) {
@@ -499,16 +417,6 @@ static void json_fill_layer(JsonArrayConst arr, StoredLayer* out) {
         tsz = 3;
       }
       p.text_size = (uint8_t)tsz;
-    } else if (strcmp(shape, "image") == 0) {
-      p.shape = PbShape::Image;
-      p.x = (int16_t)(it["x"] | 0);
-      p.y = (int16_t)(it["y"] | 0);
-      p.w = (int16_t)(it["w"] | 0);
-      p.h = (int16_t)(it["h"] | 0);
-      p.asset_index = (uint8_t)constrain((int)(it["asset"] | 0), 0, 255);
-      if (p.w < 1 || p.h < 1) {
-        continue;
-      }
     } else {
       continue;
     }
@@ -561,7 +469,6 @@ static PbShape pb_shape_from_element(pb_anim_element_shape shape) {
     case pb_anim_element_shape::round_rect: return PbShape::RoundRect;
     case pb_anim_element_shape::round_rect_outline: return PbShape::RoundRectOutline;
     case pb_anim_element_shape::text: return PbShape::Text;
-    case pb_anim_element_shape::image: return PbShape::Image;
     default: return PbShape::None;
   }
 }
@@ -592,11 +499,6 @@ static bool prim_from_pb_element(const pb_anim_element& in, StoredPrim& p) {
     if (tsz < 1) tsz = 1;
     if (tsz > 3) tsz = 3;
     p.text_size = (uint8_t)tsz;
-  } else if (p.shape == PbShape::Image) {
-    if (p.w < 1 || p.h < 1 || in.asset_index < 0) {
-      return false;
-    }
-    p.asset_index = (uint8_t)constrain(in.asset_index, 0, 255);
   }
   return true;
 }
@@ -629,72 +531,6 @@ static void stored_from_pb_elements(const pb_anim_element* elements, size_t coun
   layer_fill_from_pb_elements(elements, count, pb_anim_element_layer::eye_l, eye_l);
   layer_fill_from_pb_elements(elements, count, pb_anim_element_layer::eye_r, eye_r);
   layer_fill_from_pb_elements(elements, count, pb_anim_element_layer::extra, extra);
-}
-
-static int pb_jpeg_draw_cb(JPEGDRAW* pDraw) {
-  JpegBlitCtx* ctx = static_cast<JpegBlitCtx*>(pDraw->pUser);
-  if (!ctx || !ctx->canvas_buf || !pDraw->pPixels || ctx->iw <= 0 || ctx->ih <= 0 || ctx->dw <= 0 ||
-      ctx->dh <= 0 || ctx->canvas_w <= 0 || ctx->canvas_h <= 0) {
-    return 0;
-  }
-  const uint16_t* pixels = pDraw->pPixels;
-  const int src_row_w = (pDraw->iWidthUsed > 0) ? pDraw->iWidthUsed : pDraw->iWidth;
-  for (int row_i = 0; row_i < pDraw->iHeight; row_i++) {
-    const int src_y = pDraw->y + row_i;
-    const int dst_y = ctx->dy + (src_y * ctx->dh) / ctx->ih;
-    if (dst_y < 0 || dst_y >= ctx->canvas_h) {
-      continue;
-    }
-    uint16_t* dst_row = ctx->canvas_buf + (int32_t)dst_y * (int32_t)ctx->canvas_w;
-    for (int col_i = 0; col_i < src_row_w; col_i++) {
-      const int src_x = pDraw->x + col_i;
-      const int dst_x = ctx->dx + (src_x * ctx->dw) / ctx->iw;
-      if (dst_x < 0 || dst_x >= ctx->canvas_w) {
-        continue;
-      }
-      dst_row[dst_x] = pixels[row_i * pDraw->iWidth + col_i];
-    }
-  }
-  return 1;
-}
-
-static void draw_jpeg_asset(const StoredPrim& p) {
-  if (p.asset_index >= s_render_asset_count) {
-    log_warn("[DISPLAY] image asset=%u missing (have %u)", (unsigned)p.asset_index,
-             (unsigned)s_render_asset_count);
-    return;
-  }
-  const DisplayPbAssetBlob& blob = s_render_assets[p.asset_index];
-  if (!blob.data || blob.len < 4) {
-    log_warn("[DISPLAY] image asset=%u empty", (unsigned)p.asset_index);
-    return;
-  }
-  if (!s_canvas || !s_canvas->getBuffer() || s_draw_gfx != s_canvas) {
-    log_warn("[DISPLAY] JPEG skip: need PSRAM canvas target");
-    return;
-  }
-  if (s_jpeg_dec.openRAM(blob.data, (int)blob.len, pb_jpeg_draw_cb) != 1) {
-    log_warn("[DISPLAY] JPEG openRAM failed asset=%u len=%u", (unsigned)p.asset_index, (unsigned)blob.len);
-    return;
-  }
-  s_jpeg_blit_ctx.canvas_buf = s_canvas->getBuffer();
-  s_jpeg_blit_ctx.canvas_w = (int16_t)DESKBOT_DRAW_W;
-  s_jpeg_blit_ctx.canvas_h = (int16_t)DESKBOT_DRAW_H;
-  s_jpeg_blit_ctx.dx = p.x;
-  s_jpeg_blit_ctx.dy = p.y;
-  s_jpeg_blit_ctx.dw = p.w;
-  s_jpeg_blit_ctx.dh = p.h;
-  s_jpeg_blit_ctx.iw = s_jpeg_dec.getWidth();
-  s_jpeg_blit_ctx.ih = s_jpeg_dec.getHeight();
-  if (s_jpeg_blit_ctx.iw <= 0 || s_jpeg_blit_ctx.ih <= 0) {
-    s_jpeg_dec.close();
-    return;
-  }
-  /* 与 GFXcanvas16 / drawRGBBitmap 一致：ESP32 上为小端 RGB565；BIG_ENDIAN 会花屏。 */
-  s_jpeg_dec.setPixelType(RGB565_LITTLE_ENDIAN);
-  s_jpeg_dec.setUserPointer(&s_jpeg_blit_ctx);
-  s_jpeg_dec.decode(0, 0, 0);
-  s_jpeg_dec.close();
 }
 
 static void draw_prim(const StoredPrim& p) {
@@ -759,9 +595,6 @@ static void draw_prim(const StoredPrim& p) {
         }
         display_text_draw(s_draw_gfx, p.x, p.y, p.text, sz, col);
       }
-      break;
-    case PbShape::Image:
-      draw_jpeg_asset(p);
       break;
     case PbShape::None:
     default:
@@ -857,20 +690,6 @@ static void draw_prim_lerp(const StoredPrim* prev, const StoredPrim& curr, float
         (*s_draw_gfx).drawRect(x, y, w, h, col);
       }
     } break;
-    case PbShape::Image: {
-      StoredPrim mid = curr;
-      mid.x = (int16_t)lerp_i16(prev->x, curr.x, t);
-      mid.y = (int16_t)lerp_i16(prev->y, curr.y, t);
-      mid.w = (int16_t)lerp_i16(prev->w, curr.w, t);
-      mid.h = (int16_t)lerp_i16(prev->h, curr.h, t);
-      if (mid.w < 1) {
-        mid.w = 1;
-      }
-      if (mid.h < 1) {
-        mid.h = 1;
-      }
-      draw_jpeg_asset(mid);
-    } break;
     case PbShape::Text: {
       if (strcmp(prev->text, curr.text) != 0 || prev->text_size != curr.text_size) {
         draw_prim(curr);
@@ -912,40 +731,9 @@ static void draw_layer_lerp(const StoredLayer* prev, const StoredLayer& curr, fl
   }
 }
 
-/** extra 层：先画 image 再画 text/其它，避免全屏 JPEG 盖住「正在拍照」等文案。 */
+/** extra 层与其它层相同插值规则。 */
 static void draw_extra_layer_ordered(const StoredLayer* prev, const StoredLayer& curr, float t) {
-  const uint8_t ncurr = curr.count;
-  if (ncurr == 0) {
-    /* 与 draw_layer_lerp 一致：空 extra 沿用上一帧。 */
-    if (prev && prev->count > 0) {
-      for (uint8_t pass = 0; pass < 2; pass++) {
-        for (uint8_t i = 0; i < prev->count; i++) {
-          const StoredPrim& c = prev->prims[i];
-          const bool is_image = (c.shape == PbShape::Image);
-          if ((pass == 0) != is_image) {
-            continue;
-          }
-          draw_prim(c);
-        }
-      }
-    }
-    return;
-  }
-  const uint8_t nprev = prev ? prev->count : 0;
-  for (uint8_t pass = 0; pass < 2; pass++) {
-    for (uint8_t i = 0; i < ncurr; i++) {
-      const StoredPrim& c = curr.prims[i];
-      const bool is_image = (c.shape == PbShape::Image);
-      if ((pass == 0) != is_image) {
-        continue;
-      }
-      if (i < nprev) {
-        draw_prim_lerp(&prev->prims[i], c, t);
-      } else {
-        draw_prim(c);
-      }
-    }
-  }
+  draw_layer_lerp(prev, curr, t);
 }
 
 static void draw_stored_interpolated(const StoredLayer* pbg, const StoredLayer* pn, const StoredLayer* pm,
@@ -1133,8 +921,6 @@ struct DisplayRequest {
   size_t json_len;
   pb_anim_frame* anim_frames = nullptr;
   size_t anim_frame_count = 0;
-  uint8_t asset_count = 0;
-  DisplayPbAssetBlob assets[kDisplayMaxPbAssets]{};
   SemaphoreHandle_t notify_sem;
 };
 
@@ -1144,17 +930,6 @@ static void display_free_request_anim_frames(DisplayRequest& req) {
     req.anim_frames = nullptr;
     req.anim_frame_count = 0;
   }
-}
-
-static void display_free_request_assets(DisplayRequest& req) {
-  for (uint8_t i = 0; i < req.asset_count; i++) {
-    if (req.assets[i].data) {
-      heap_caps_free(req.assets[i].data);
-      req.assets[i].data = nullptr;
-    }
-    req.assets[i].len = 0;
-  }
-  req.asset_count = 0;
 }
 
 QueueHandle_t     s_queue       = nullptr;
@@ -1169,34 +944,15 @@ void display_render_task(void* /*arg*/) {
       continue;
     }
     if (req.scene == DISPLAY_SCENE_PB_VECTOR_JSON) {
-      display_free_render_assets();
-      s_render_asset_count = req.asset_count;
-      for (uint8_t i = 0; i < req.asset_count && i < kDisplayMaxPbAssets; i++) {
-        s_render_assets[i] = req.assets[i];
-        req.assets[i].data = nullptr;
-        req.assets[i].len = 0;
-      }
-      req.asset_count = 0;
       pb_render_vector_json(req.json_payload, req.json_len);
-      display_free_render_assets();
       if (req.json_payload) {
         ::free(req.json_payload);
       }
     } else if (req.scene == DISPLAY_SCENE_PB_ANIM_FRAMES) {
-      display_free_render_assets();
-      s_render_asset_count = req.asset_count;
-      for (uint8_t i = 0; i < req.asset_count && i < kDisplayMaxPbAssets; i++) {
-        s_render_assets[i] = req.assets[i];
-        req.assets[i].data = nullptr;
-        req.assets[i].len = 0;
-      }
-      req.asset_count = 0;
       pb_render_anim_frames_timed(req.anim_frames, req.anim_frame_count);
-      display_free_render_assets();
       display_free_request_anim_frames(req);
     } else if (req.scene == DISPLAY_SCENE_RESET) {
       pb_vector_interp_reset();
-      display_free_render_assets();
     }
     if (req.notify_sem) {
       xSemaphoreGive(req.notify_sem);
@@ -1223,7 +979,7 @@ void ensure_render_task() {
     s_caller_lock = xSemaphoreCreateMutex();
   }
   if (!s_task) {
-    /* U8g2 drawUTF8(gb2312) + JPEGDEC 解码全屏图栈较深；10KB 会触发 canary（见拍照 overlay）。 */
+    /* U8g2 drawUTF8(gb2312) 栈较深；10KB 会触发 canary。 */
     xTaskCreatePinnedToCore(display_render_task, "display_render", 24 * 1024, nullptr, 2, &s_task,
                             APP_CPU_NUM);
   }
@@ -1233,28 +989,6 @@ void ensure_render_task() {
 
 void task_setup_display() {
   ensure_render_task();
-}
-
-static void display_fill_request_assets(DisplayRequest& req, uint8_t* const* asset_bufs,
-                                     const size_t* asset_lens, uint8_t asset_count) {
-  req.asset_count = 0;
-  for (uint8_t i = 0; i < kDisplayMaxPbAssets; i++) {
-    req.assets[i].data = nullptr;
-    req.assets[i].len = 0;
-  }
-  if (!asset_bufs || !asset_lens || asset_count == 0) {
-    return;
-  }
-  /* 保留 JSON asset 下标：空槽占位，不压缩。 */
-  const uint8_t n = asset_count < kDisplayMaxPbAssets ? asset_count : kDisplayMaxPbAssets;
-  for (uint8_t i = 0; i < n; i++) {
-    if (!asset_bufs[i] || asset_lens[i] == 0) {
-      continue;
-    }
-    req.assets[i].data = asset_bufs[i];
-    req.assets[i].len = asset_lens[i];
-  }
-  req.asset_count = n;
 }
 
 static void display_enqueue_pb_vector_request(DisplayRequest& req, bool wait_done) {
@@ -1276,10 +1010,8 @@ static void display_enqueue_pb_vector_request(DisplayRequest& req, bool wait_don
         if (dropped.json_payload) {
           ::free(dropped.json_payload);
         }
-        display_free_request_assets(dropped);
       } else if (dropped.scene == DISPLAY_SCENE_PB_ANIM_FRAMES) {
         display_free_request_anim_frames(dropped);
-        display_free_request_assets(dropped);
       }
       if (dropped.notify_sem) {
         xSemaphoreGive(dropped.notify_sem);
@@ -1293,18 +1025,11 @@ static void display_enqueue_pb_vector_request(DisplayRequest& req, bool wait_don
       } else if (req.scene == DISPLAY_SCENE_PB_ANIM_FRAMES) {
         display_free_request_anim_frames(req);
       }
-      display_free_request_assets(req);
     }
   }
 }
 
 void display_render_submit_pb_vector_json(const char* json, size_t json_len, bool wait_done) {
-  display_render_submit_pb_vector_json(json, json_len, nullptr, nullptr, 0, wait_done);
-}
-
-void display_render_submit_pb_vector_json(const char* json, size_t json_len, uint8_t* const* asset_bufs,
-                                       const size_t* asset_lens, uint8_t asset_count,
-                                       bool wait_done) {
   ensure_render_task();
   if (!json || json_len == 0) {
     return;
@@ -1321,13 +1046,10 @@ void display_render_submit_pb_vector_json(const char* json, size_t json_len, uin
   req.arg = 0;
   req.json_payload = copy;
   req.json_len = json_len;
-  display_fill_request_assets(req, asset_bufs, asset_lens, asset_count);
   display_enqueue_pb_vector_request(req, wait_done);
 }
 
-void display_render_submit_pb_vector_json_owned(char* json, size_t json_len, uint8_t* const* asset_bufs,
-                                             const size_t* asset_lens, uint8_t asset_count,
-                                             bool wait_done) {
+void display_render_submit_pb_vector_json_owned(char* json, size_t json_len, bool wait_done) {
   ensure_render_task();
   if (!json || json_len == 0) {
     if (json) {
@@ -1342,13 +1064,10 @@ void display_render_submit_pb_vector_json_owned(char* json, size_t json_len, uin
   req.arg = 0;
   req.json_payload = json;
   req.json_len = json_len;
-  display_fill_request_assets(req, asset_bufs, asset_lens, asset_count);
   display_enqueue_pb_vector_request(req, wait_done);
 }
 
 void display_render_submit_pb_anim_frames_owned(pb_anim_frame* frames, size_t frame_count,
-                                                uint8_t* const* asset_bufs,
-                                                const size_t* asset_lens, uint8_t asset_count,
                                                 bool wait_done) {
   ensure_render_task();
   if (!frames || frame_count == 0) {
@@ -1361,7 +1080,6 @@ void display_render_submit_pb_anim_frames_owned(pb_anim_frame* frames, size_t fr
   req.scene = DISPLAY_SCENE_PB_ANIM_FRAMES;
   req.anim_frames = frames;
   req.anim_frame_count = frame_count;
-  display_fill_request_assets(req, asset_bufs, asset_lens, asset_count);
   display_enqueue_pb_vector_request(req, wait_done);
 }
 
@@ -1377,10 +1095,8 @@ void display_render_reset() {
       if (dropped.json_payload) {
         ::free(dropped.json_payload);
       }
-      display_free_request_assets(dropped);
     } else if (dropped.scene == DISPLAY_SCENE_PB_ANIM_FRAMES) {
       display_free_request_anim_frames(dropped);
-      display_free_request_assets(dropped);
     }
     if (dropped.notify_sem) {
       xSemaphoreGive(dropped.notify_sem);

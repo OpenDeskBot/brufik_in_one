@@ -133,6 +133,18 @@ struct MotorCmd {
   uint8_t  step_deg;
 };
 
+enum class MotorJobKind : uint8_t {
+  kCmd = 0,
+  kPbServoChunk = 1,
+};
+
+struct MotorJob {
+  MotorJobKind kind = MotorJobKind::kCmd;
+  MotorCmd cmd{};
+  pb_servo_frame* servo_frames = nullptr;
+  size_t servo_count = 0;
+};
+
 QueueHandle_t     s_motor_queue       = nullptr;
 TaskHandle_t      s_motor_task        = nullptr;
 
@@ -149,70 +161,112 @@ static int step_toward(int cur, int target, int step) {
   return cur + (d > step ? step : d < -step ? -step : d);
 }
 
+static void execute_motor_cmd(const MotorCmd& cmd) {
+  int x = s_logical_x;
+  int y = s_logical_y;
+  if (!head_servo_ensure_attached(x, y)) {
+    return;
+  }
+  const int x_target = resolve_target(cmd.xm, x, cmd.x, X_MIN_LIMIT, X_MAX_LIMIT);
+  const int y_target = resolve_target(cmd.ym, y, cmd.y, Y_MIN_LIMIT, Y_MAX_LIMIT);
+
+  if (cmd.ms > 0) {
+    const int total_ticks = (cmd.ms > SERVO_TICK_MS) ? (int)(cmd.ms / SERVO_TICK_MS) : 1;
+    const int x_start = x, y_start = y;
+    const int dx_total = x_target - x_start;
+    const int dy_total = y_target - y_start;
+
+    TickType_t last_wake = xTaskGetTickCount();
+    for (int i = 1; i <= total_ticks; i++) {
+      const int new_x = x_start + (long)dx_total * i / total_ticks;
+      const int new_y = y_start + (long)dy_total * i / total_ticks;
+      if (new_x != x) { x = new_x; head_servo_write_x(x); }
+      if (new_y != y) { y = new_y; head_servo_write_y(y); }
+      vTaskDelayUntil(&last_wake, k_tick_ticks);
+    }
+    const uint32_t used_ms = (uint32_t)total_ticks * SERVO_TICK_MS;
+    if (used_ms < cmd.ms) vTaskDelay(pdMS_TO_TICKS(cmd.ms - used_ms));
+
+  } else {
+    const int step = cmd.step_deg ? cmd.step_deg : 1;
+    TickType_t last_wake = xTaskGetTickCount();
+    while (x != x_target || y != y_target) {
+      if (x != x_target) { x = step_toward(x, x_target, step); head_servo_write_x(x); }
+      if (y != y_target) { y = step_toward(y, y_target, step); head_servo_write_y(y); }
+      vTaskDelayUntil(&last_wake, k_tick_ticks);
+    }
+    if (cmd.hold_ms) vTaskDelay(pdMS_TO_TICKS(cmd.hold_ms));
+  }
+
+  head_sync_logical_pos(x, y);
+}
+
+static void execute_pb_servo_frame(const pb_servo_frame& frame) {
+  const uint16_t ms =
+      frame.ms > 0 ? (uint16_t)constrain(frame.ms, 0, 65535) : (uint16_t)SERVO_TICK_MS;
+  MotorCmd cmd{};
+  cmd.xm = (uint8_t)constrain(frame.xm, 0, 2);
+  cmd.ym = (uint8_t)constrain(frame.ym, 0, 2);
+  cmd.x = frame.x;
+  cmd.y = frame.y;
+  cmd.ms = ms;
+  execute_motor_cmd(cmd);
+}
+
+static void free_motor_job(MotorJob& job) {
+  if (job.kind == MotorJobKind::kPbServoChunk) {
+    pb_servo_frames_free(job.servo_frames);
+    job.servo_frames = nullptr;
+    job.servo_count = 0;
+  }
+}
+
 /* ---- motor_task ---- */
 
 void motor_task(void* /*arg*/) {
-  MotorCmd cmd{};
+  MotorJob job{};
   for (;;) {
-    if (xQueueReceive(s_motor_queue, &cmd, portMAX_DELAY) != pdTRUE) continue;
+    if (xQueueReceive(s_motor_queue, &job, portMAX_DELAY) != pdTRUE) continue;
 
-    int x = s_logical_x;
-    int y = s_logical_y;
-    if (!head_servo_ensure_attached(x, y)) {
+    if (job.kind == MotorJobKind::kPbServoChunk) {
+      if (job.servo_frames && job.servo_count > 0) {
+        for (size_t i = 0; i < job.servo_count; ++i) {
+          execute_pb_servo_frame(job.servo_frames[i]);
+        }
+      }
+      free_motor_job(job);
       continue;
     }
-    const int x_target = resolve_target(cmd.xm, x, cmd.x, X_MIN_LIMIT, X_MAX_LIMIT);
-    const int y_target = resolve_target(cmd.ym, y, cmd.y, Y_MIN_LIMIT, Y_MAX_LIMIT);
 
-    if (cmd.ms > 0) {
-      /* ms 模式：Bresenham 整数线性插值，保证 ms 时间内均匀到达目标。 */
-      const int total_ticks = (cmd.ms > SERVO_TICK_MS) ? (int)(cmd.ms / SERVO_TICK_MS) : 1;
-      const int x_start = x, y_start = y;
-      const int dx_total = x_target - x_start;
-      const int dy_total = y_target - y_start;
-
-      TickType_t last_wake = xTaskGetTickCount();
-      for (int i = 1; i <= total_ticks; i++) {
-        const int new_x = x_start + (long)dx_total * i / total_ticks;
-        const int new_y = y_start + (long)dy_total * i / total_ticks;
-        if (new_x != x) { x = new_x; head_servo_write_x(x); }
-        if (new_y != y) { y = new_y; head_servo_write_y(y); }
-        vTaskDelayUntil(&last_wake, k_tick_ticks);
-      }
-      const uint32_t used_ms = (uint32_t)total_ticks * SERVO_TICK_MS;
-      if (used_ms < cmd.ms) vTaskDelay(pdMS_TO_TICKS(cmd.ms - used_ms));
-
-    } else {
-      /* 普通模式：以 step_deg 步进直到到达目标。 */
-      const int step = cmd.step_deg ? cmd.step_deg : 1;
-      TickType_t last_wake = xTaskGetTickCount();
-      while (x != x_target || y != y_target) {
-        if (x != x_target) { x = step_toward(x, x_target, step); head_servo_write_x(x); }
-        if (y != y_target) { y = step_toward(y, y_target, step); head_servo_write_y(y); }
-        vTaskDelayUntil(&last_wake, k_tick_ticks);
-      }
-      if (cmd.hold_ms) vTaskDelay(pdMS_TO_TICKS(cmd.hold_ms));
-    }
-
-    head_sync_logical_pos(x, y);
+    execute_motor_cmd(job.cmd);
   }
 }
 
 /** 丢弃队列中尚未被 motor_task 取走的命令。 */
 void drain_motor_queue_nonblocking() {
   if (!s_motor_queue) return;
-  MotorCmd dropped{};
-  while (xQueueReceive(s_motor_queue, &dropped, 0) == pdTRUE) {}
+  MotorJob dropped{};
+  while (xQueueReceive(s_motor_queue, &dropped, 0) == pdTRUE) {
+    free_motor_job(dropped);
+  }
 }
 
 /** 非阻塞入队。队列满时保留既有动作，丢弃新命令而不破坏正在排队的手势序列。 */
-static bool enqueue_motor(const MotorCmd& cmd) {
+static bool enqueue_motor_job(MotorJob job) {
   task_setup_head();
-  if (!s_motor_queue || xQueueSend(s_motor_queue, &cmd, 0) != pdTRUE) {
+  if (!s_motor_queue || xQueueSend(s_motor_queue, &job, 0) != pdTRUE) {
+    free_motor_job(job);
     log_warn("[HEAD] motor queue full; drop new command");
     return false;
   }
   return true;
+}
+
+static bool enqueue_motor(const MotorCmd& cmd) {
+  MotorJob job{};
+  job.kind = MotorJobKind::kCmd;
+  job.cmd = cmd;
+  return enqueue_motor_job(job);
 }
 
 static bool enqueue_motion(uint8_t xm, int x, uint8_t ym, int y,
@@ -231,7 +285,7 @@ static bool enqueue_motion(uint8_t xm, int x, uint8_t ym, int y,
 
 void task_setup_head() {
   if (s_motor_queue && s_motor_task) return;
-  if (!s_motor_queue)       s_motor_queue       = xQueueCreate(HEAD_MOTOR_QUEUE_DEPTH, sizeof(MotorCmd));
+  if (!s_motor_queue)       s_motor_queue       = xQueueCreate(HEAD_MOTOR_QUEUE_DEPTH, sizeof(MotorJob));
   if (!s_motor_queue) {
     log_error("[HEAD] motor queue create failed");
     return;
@@ -335,18 +389,18 @@ bool head_flush_pb_servo() {
   return true;
 }
 
-void head_submit_pb_servo_frames(const pb_servo_frame* frames, size_t count) {
+void head_submit_pb_servo_chunk_owned(pb_servo_frame* frames, size_t count) {
   if (!frames || count == 0) {
+    if (frames) {
+      pb_servo_frames_free(frames);
+    }
     return;
   }
-  for (size_t i = 0; i < count; ++i) {
-    const pb_servo_frame& frame = frames[i];
-    const uint16_t ms =
-        frame.ms > 0 ? (uint16_t)constrain(frame.ms, 0, 65535) : (uint16_t)SERVO_TICK_MS;
-    head_servo_cmd_async((uint8_t)constrain(frame.xm, 0, 2), (uint8_t)constrain(frame.ym, 0, 2),
-                         frame.x, frame.y, /*step_deg=*/0, ms);
-  }
-  if (count > 0) {
+  MotorJob job{};
+  job.kind = MotorJobKind::kPbServoChunk;
+  job.servo_frames = frames;
+  job.servo_count = count;
+  if (enqueue_motor_job(job)) {
     log_info("[HEAD] pb servo[] submitted segs=%u", (unsigned)count);
   }
 }
@@ -505,8 +559,9 @@ void head_clear_motor_pending() {
 bool head_drop_oldest_motor_pending() {
   task_setup_head();
   if (!s_motor_queue) return false;
-  MotorCmd dropped{};
+  MotorJob dropped{};
   if (xQueueReceive(s_motor_queue, &dropped, 0) != pdTRUE) return false;
+  free_motor_job(dropped);
   log_warn("[HEAD] drop oldest motor command for PB scheduler");
   return true;
 }

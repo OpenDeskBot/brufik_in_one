@@ -3,7 +3,7 @@
 
 typedef void (*WifiLinkHandler)(void);
 
-/** 开机 AP 窗口：热点 brufik_{pin}，屏幕二维码 + 倒计时。有客户端连入返回 true。 */
+/** 开机 AP 窗口：热点 SSID=设备 ID，屏幕二维码 + 倒计时（有客户端时暂停）。超时且无连接返回 false。 */
 bool wifi_provision_ap_offer(unsigned timeout_ms);
 
 /** 连接 WiFi（STA）：已保存凭证 → deskbot_config.h 默认；不进入配网热点。 */

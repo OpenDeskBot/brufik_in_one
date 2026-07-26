@@ -6,6 +6,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_heap_caps.h"
@@ -13,7 +14,7 @@
 #include <freertos/task.h>
 
 namespace {
-constexpr size_t kMaxPackedJsonLen = 16 * 1024;
+constexpr size_t kMaxPackedJsonLen = DESKBOT_MAX_PACKED_JSON_LEN;
 }
 
 bool parse_packed_frame(uint8_t* data, size_t length, PackedFrame& out) {
@@ -98,6 +99,96 @@ const char* get_device_id() {
     initialized = true;
   }
   return id;
+}
+
+namespace {
+
+bool ws_host_char_valid(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.'
+         || c == '-';
+}
+
+}  // namespace
+
+bool utils_parse_ws_url(const char* url, DeskbotWsTarget* out) {
+  if (url == nullptr || out == nullptr) {
+    return false;
+  }
+  memset(out, 0, sizeof(*out));
+
+  const char* p = url;
+  while (*p == ' ') {
+    ++p;
+  }
+  if (strncmp(p, "wss://", 6) == 0) {
+    out->use_ssl = true;
+    p += 6;
+  } else if (strncmp(p, "ws://", 5) == 0) {
+    out->use_ssl = false;
+    p += 5;
+  } else {
+    return false;
+  }
+
+  const char* host_start = p;
+  const char* colon = strchr(p, ':');
+  const char* slash = strchr(p, '/');
+  const char* host_end = nullptr;
+
+  if (colon != nullptr && (slash == nullptr || colon < slash)) {
+    host_end = colon;
+    const char* port_start = colon + 1;
+    if (*port_start < '0' || *port_start > '9') {
+      return false;
+    }
+    const long port = strtol(port_start, const_cast<char**>(&p), 10);
+    if (port <= 0 || port > 65535) {
+      return false;
+    }
+    out->port = (uint16_t)port;
+    if (slash != nullptr && p > slash) {
+      p = slash;
+    }
+  } else {
+    host_end = slash != nullptr ? slash : (p + strlen(p));
+    out->port = out->use_ssl ? 443 : 80;
+    if (slash != nullptr) {
+      p = slash;
+    } else {
+      p = host_end;
+    }
+  }
+
+  const size_t host_len = (size_t)(host_end - host_start);
+  if (host_len == 0 || host_len >= sizeof(out->host)) {
+    return false;
+  }
+  for (size_t i = 0; i < host_len; ++i) {
+    if (!ws_host_char_valid(host_start[i])) {
+      return false;
+    }
+  }
+  memcpy(out->host, host_start, host_len);
+  out->host[host_len] = '\0';
+
+  if (*p == '/') {
+    const char* path_start = p;
+    const char* path_end = path_start + strlen(path_start);
+    while (path_end > path_start && path_end[-1] == '/') {
+      --path_end;
+    }
+    const size_t prefix_len = (size_t)(path_end - path_start);
+    if (prefix_len >= sizeof(out->path_prefix)) {
+      return false;
+    }
+    if (prefix_len > 0) {
+      memcpy(out->path_prefix, path_start, prefix_len);
+      out->path_prefix[prefix_len] = '\0';
+    }
+  }
+
+  out->valid = out->host[0] != '\0' && out->port != 0;
+  return out->valid;
 }
 
 bool utils_http_get_binary(const char* url, uint8_t** out_buf, size_t* out_len) {

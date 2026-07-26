@@ -62,8 +62,8 @@ void head_servo_cmd_async(uint8_t xm, uint8_t ym, int x, int y, uint8_t step_deg
  * 非数组 / null 则清空暂存；非法字段忽略。
  */
 void head_stage_pb_servo(JsonVariantConst servo_field);
-/** 直接提交 pb_servo_frame[] 到 motor 队列。 */
-void head_submit_pb_servo_frames(const pb_servo_frame* frames, size_t count);
+/** 提交 pb_servo_frame[] chunk 所有权到 motor 队列（1 chunk = 1 队列项）。 */
+void head_submit_pb_servo_chunk_owned(pb_servo_frame* frames, size_t count);
 /** @deprecated 兼容旧 JSON 路径。 */
 void head_stage_pb_servo_json(const String& servo_json);
 /** 将暂存段异步入队 motor；返回是否入队了至少一段。 */
