@@ -36,7 +36,7 @@ def test_resolve_system_llm_config_prefers_ark_env(monkeypatch):
     monkeypatch.delenv("VOLCENGINE_LLM_MODEL", raising=False)
     monkeypatch.setenv("ARK_API_KEY", "ark-test-key")
     monkeypatch.setenv("ARK_BASE_URL", "https://ark.example.test/api/v3")
-    monkeypatch.setattr("deskbot_server.llm.runtime.load_config", lambda: {"llm": {"model_name": "ep-202607020001"}})
+    monkeypatch.setattr("deskbot_server.infrastructure.llm.runtime.load_config", lambda: {"llm": {"model_name": "ep-202607020001"}})
 
     cfg = resolve_system_llm_config()
 
@@ -59,7 +59,7 @@ def test_chat_completion_stream_invokes_tts_extractor(monkeypatch):
                 on_delta(c)
         return "".join(chunks), {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
 
-    monkeypatch.setattr("deskbot_server.llm.runtime._request_chat_completion_stream", fake_stream)
+    monkeypatch.setattr("deskbot_server.infrastructure.llm.runtime._request_chat_completion_stream", fake_stream)
     cfg = ResolvedLlmConfig(
         model="qwen-flash",
         api_key="test-key",
@@ -102,7 +102,7 @@ def test_chat_completion_posts_to_openai_compatible_endpoint(monkeypatch):
             }
         )
 
-    monkeypatch.setattr("deskbot_server.llm.runtime.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("deskbot_server.infrastructure.llm.runtime.urllib.request.urlopen", fake_urlopen)
     cfg = ResolvedLlmConfig(
         model="openai/ep-202607020001",
         api_key="ark-test-key",
@@ -170,7 +170,7 @@ def test_ark_responses_completion_posts_to_responses_endpoint(monkeypatch):
             }
         )
 
-    monkeypatch.setattr("deskbot_server.llm.runtime.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("deskbot_server.infrastructure.llm.runtime.urllib.request.urlopen", fake_urlopen)
     cfg = ResolvedLlmConfig(
         model="ep-20260708093928-299x5",
         api_key="ark-test-key",
@@ -228,7 +228,7 @@ def test_ark_responses_stream_parses_output_text_delta(monkeypatch):
     def fake_urlopen(req, timeout):
         return _FakeStreamResponse()
 
-    monkeypatch.setattr("deskbot_server.llm.runtime.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("deskbot_server.infrastructure.llm.runtime.urllib.request.urlopen", fake_urlopen)
     cfg = ResolvedLlmConfig(
         model="ep-20260708093928-299x5",
         api_key="ark-test-key",

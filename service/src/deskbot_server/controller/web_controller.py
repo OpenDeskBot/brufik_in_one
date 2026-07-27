@@ -27,10 +27,11 @@ from deskbot_server.controller.runtime import get_runtime
 from deskbot_server.dao.debug_prefs_store import (
     debug_prefs_snapshot,
     get_camera_servo_auto_mode,
+    get_live_service_enabled,
     normalize_camera_servo_auto_mode,
     persist_asr_auto_reply,
     persist_camera_servo_auto_mode,
-    persist_pb_idle_auto_dispatch,
+    persist_live_service,
 )
 from deskbot_server.dao.face_expr_scenes_store import (
     design_frames_to_pb_chain,
@@ -48,7 +49,6 @@ from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
 from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_ACTION_DEFAULT, PB_ACTION_REPLACE, PB_LEVEL_DEBUG
 from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled
 from deskbot_server.service.camera_face_service import CameraFaceService
-from deskbot_server.service.pb_idle_dispatch import get_pb_idle_auto_dispatch_enabled
 from deskbot_server.utils.async_helpers import run_blocking
 from deskbot_server.utils.device_data import resolve_json_path
 from deskbot_server.utils.util import _extract_device_id, _json_msg
@@ -101,9 +101,9 @@ async def api_devices(request: Request) -> JSONResponse:
     peer = _request_peer(request)
     snap = registry.snapshot()
     if request.state.api_auth is not None and request.state.api_auth.user_id:
-        from deskbot_server.auth.device_service import device_ids_for_user
+        from deskbot_server.service.user_service import UserService
 
-        allowed = device_ids_for_user(request.state.api_auth.user_id)
+        allowed = UserService().device_ids_for_user(request.state.api_auth.user_id)
         snap = [d for d in snap if str(d.get("device_id") or "") in allowed]
     device_ids = [d.get("device_id") for d in snap]
     logger.info("[HTTP] GET /api/devices peer=%s -> %d 台设备 device_ids=%s", peer, len(snap), device_ids)
@@ -136,32 +136,30 @@ async def api_asr_auto_reply(request: Request) -> JSONResponse:
     return JSONResponse(status_code=200, content={"ok": True, "enabled": get_asr_voice_auto_reply_enabled()})
 
 
-@router.get("/api/pb_idle_auto_dispatch")
+@router.get("/api/live_service")
 @require_api_auth
-async def api_pb_idle_auto_dispatch(request: Request) -> JSONResponse:
+async def api_live_service(request: Request) -> JSONResponse:
     qargs = _request_qargs(request)
     peer = _request_peer(request)
     raw_e = qargs.get("enabled")
     if raw_e is None:
-        logger.info(
-            "[HTTP] GET /api/pb_idle_auto_dispatch -> enabled=%s peer=%s", get_pb_idle_auto_dispatch_enabled(), peer
-        )
+        logger.info("[HTTP] GET /api/live_service -> enabled=%s peer=%s", get_live_service_enabled(), peer)
     if raw_e is not None:
         se = str(raw_e).strip().lower()
         if se in ("1", "true", "yes", "on"):
-            persist_pb_idle_auto_dispatch(True)
+            persist_live_service(True)
         elif se in ("0", "false", "no", "off"):
-            persist_pb_idle_auto_dispatch(False)
+            persist_live_service(False)
         else:
             return JSONResponse(
                 status_code=400, content={"ok": False, "error": "invalid enabled; use 1/0 or true/false"}
             )
         logger.info(
-            "[HTTP] /api/pb_idle_auto_dispatch set enabled=%s peer=%s (已写入 config.yaml)",
-            get_pb_idle_auto_dispatch_enabled(),
+            "[HTTP] /api/live_service set enabled=%s peer=%s (已写入 config.yaml)",
+            get_live_service_enabled(),
             peer,
         )
-    return JSONResponse(status_code=200, content={"ok": True, "enabled": get_pb_idle_auto_dispatch_enabled()})
+    return JSONResponse(status_code=200, content={"ok": True, "enabled": get_live_service_enabled()})
 
 
 @router.get("/api/camera_servo_auto_mode")
@@ -192,8 +190,9 @@ async def api_camera_servo_auto_mode(request: Request) -> JSONResponse:
 async def api_debug_prefs(request: Request) -> JSONResponse:
     qargs = _request_qargs(request)
     raw_ar = qargs.get("asr_auto_reply")
+    raw_live = qargs.get("live_service")
     raw_mode = qargs.get("camera_servo_auto_mode")
-    if raw_ar is None and raw_mode is None:
+    if raw_ar is None and raw_live is None and raw_mode is None:
         return JSONResponse(status_code=200, content={"ok": True, **debug_prefs_snapshot()})
     if raw_ar is not None:
         se = str(raw_ar).strip().lower()
@@ -203,6 +202,14 @@ async def api_debug_prefs(request: Request) -> JSONResponse:
             persist_asr_auto_reply(False)
         else:
             return JSONResponse(status_code=400, content={"ok": False, "error": "invalid asr_auto_reply"})
+    if raw_live is not None:
+        se = str(raw_live).strip().lower()
+        if se in ("1", "true", "yes", "on"):
+            persist_live_service(True)
+        elif se in ("0", "false", "no", "off"):
+            persist_live_service(False)
+        else:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "invalid live_service"})
     if raw_mode is not None:
         if str(raw_mode).strip().lower() in ("", "off", "none"):
             persist_camera_servo_auto_mode("")
@@ -1180,4 +1187,7 @@ async def camera_view(websocket: WebSocket) -> None:
 @require_web_ws_pipeline_auth
 async def device_pipeline(websocket: WebSocket) -> None:
     rt = get_runtime()
-    await handle_device_pipeline(websocket.state.ws, rt.device_pipeline_broker, rt.registry)
+    st = websocket.state
+    await handle_device_pipeline(
+        st.ws, rt.device_pipeline_broker, rt.registry, pin_code=getattr(st, "pin_code", None)
+    )

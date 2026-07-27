@@ -20,9 +20,9 @@ from deskbot_server.service.pipeline.audio import AudioConfig
 from deskbot_server.service.pipeline_service import PipelineService
 from deskbot_server.service.vad_service import VadService
 from deskbot_server.utils.env import load_dotenv
-from deskbot_server.ws.asr_chat_hub import AsrChatHub, PbIdleSilenceServoAfterDownlink
+from deskbot_server.service.live_service import ENTER_SEC, SLEEP_MAX_SEC, SLEEP_MIN_SEC, WANDER_MAX_CYCLES, LiveService
+from deskbot_server.ws.asr_chat_hub import AsrChatHub
 from deskbot_server.ws.device_pipeline import DevicePipelineBroker
-from deskbot_server.ws.pb_idle_registry import set_pb_idle_hub
 from deskbot_server.ws.registry import DeviceRegistry
 
 logger = logging.getLogger("deskbot-server")
@@ -75,14 +75,15 @@ def build_runtime() -> AppRuntime:
     PipelineService().bind(device_pipeline_broker)
     registry = DeviceRegistry()
     asr_chat_hub = AsrChatHub(device_pb_only=pipeline.asr_chat_device_pb_only, pipeline_broker=device_pipeline_broker)
-    idle_silence_sec = app_settings.server.pb_idle_silence_sec
-    if idle_silence_sec > 0:
-        asr_chat_hub.pb_idle_silence = PbIdleSilenceServoAfterDownlink(asr_chat_hub, idle_sec=idle_silence_sec)
-        logger.info(
-            "[server] pb_idle_silence: 距上次 pb 下行 %.1fs 无新数据则下发低头沉默 x=90 y=80 xm=0 ym=0",
-            idle_silence_sec,
-        )
-    set_pb_idle_hub(asr_chat_hub)
+    LiveService().bind(asr_chat_hub)
+    logger.info(
+        "[server] live enabled=%s: 无有效对话 %.1fs 后 wander，1-%d 轮后 sleep %.0f-%.0fs，gaze 优先",
+        LiveService.active(),
+        ENTER_SEC,
+        WANDER_MAX_CYCLES,
+        SLEEP_MIN_SEC,
+        SLEEP_MAX_SEC,
+    )
     camera_face_runtime = build_camera_face_runtime(config)
     CameraFaceService().configure(camera_face_runtime)
     logger.info(

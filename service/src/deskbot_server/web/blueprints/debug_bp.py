@@ -7,14 +7,12 @@ import logging
 import mimetypes
 import os
 import time
-from functools import wraps
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
-from deskbot_server.auth.device_service import user_owns_device
-from deskbot_server.auth.permissions import current_user_is_developer, require_developer
-from deskbot_server.auth.service import list_users, set_user_developer
+from deskbot_server.auth.permissions import RequireDeveloper, current_user_is_developer
+from deskbot_server.service.user_service import UserService
 from deskbot_server.constants import CAMERA_FACE_CFG_FILE, FACE_PROFILES_FILE, SCENE_PLAYBOOKS_FILE, USER_MEMORY_FILE
 from deskbot_server.dao.camera_face_config_store import (
     load_camera_face_cfg_file,
@@ -36,16 +34,6 @@ from deskbot_server.service.application.face_registration import register_face_f
 from deskbot_server.utils.device_data import load_llm_system_prompt, resolve_json_path, save_llm_system_prompt
 from deskbot_server.utils.util import pcm_to_wav_bytes
 from deskbot_server.vision.camera_face_tune import apply_camera_face_tune
-from deskbot_server.web.flaskish import (
-    FlaskishAPIRoute,
-    current_user,
-    flash,
-    jsonify,
-    redirect,
-    render_template,
-    request,
-    url_for,
-)
 from deskbot_server.web.helpers import (
     ALLOWED_LLM_ROLES,
     beijing_time_str,
@@ -56,6 +44,19 @@ from deskbot_server.web.helpers import (
     tcp_alive,
 )
 from deskbot_server.web.session_device import get_current_device_id
+from deskbot_server.web.urls import flash, url_for
+from deskbot_server.web.deps import RequireUser, load_session_user
+from deskbot_server.web.view_helpers import (
+    ViewAPIRoute,
+    convert_view_result,
+    files_get,
+    form_get,
+    get_json,
+    is_json_request,
+    jsonify,
+    redirect,
+    render_template,
+)
 
 logger = logging.getLogger("deskbot-server")
 
@@ -77,106 +78,106 @@ def _is_consumer_api(path: str) -> bool:
     return path in _CONSUMER_API_PATHS or any(path.startswith(p) for p in _CONSUMER_API_PREFIXES)
 
 
-def _require_developer_for_debug():
+def _require_developer_for_debug(request: Request):
     """Flask before_request 等价逻辑；消费侧白名单路径放行。"""
-    path = request.path or ""
+    path = request.url.path or ""
     if path == "/health":
         return None
     if _is_consumer_api(path):
         return None
-    if not current_user.is_authenticated:
+    user = load_session_user(request)
+    if user is None:
         return None
-    if current_user_is_developer():
+    if current_user_is_developer(user):
         return None
     if path.startswith("/api/"):
         return jsonify({"ok": False, "error": "需要开发者权限"}), 403
-    flash("需要开发者权限", "error")
+    flash(request, "需要开发者权限", "error")
     return redirect(url_for("app2c.home"))
 
 
-class _DebugAPIRouter(APIRouter):
-    """在每个路由入口套用开发者权限守卫（消费侧 API 白名单除外）。"""
+class DebugAPIRoute(ViewAPIRoute):
+    """非消费侧 API 路由入口套用开发者权限守卫。"""
 
-    def add_api_route(self, path: str, endpoint, **kwargs):  # type: ignore[override]
-        @wraps(endpoint)
-        def guarded(*args, **kw):
-            blocked = _require_developer_for_debug()
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def handler(request: Request):
+            blocked = _require_developer_for_debug(request)
             if blocked is not None:
-                return blocked
-            return endpoint(*args, **kw)
+                return convert_view_result(blocked)
+            return await original(request)
 
-        return super().add_api_route(path, guarded, **kwargs)
-
-
-router = _DebugAPIRouter(route_class=FlaskishAPIRoute, tags=["debug"])
+        return handler
 
 
-def _deny_foreign_device(device_id: str):
+router = APIRouter(route_class=DebugAPIRoute, tags=["debug"])
+
+
+def _deny_foreign_device(request: Request, device_id: str, user):
     did = (device_id or "").strip()
     if not did:
         return None
-    if not user_owns_device(current_user.id, did):
+    if not UserService().user_owns_device(user.id, did):
         return jsonify({"ok": False, "error": "无权操作该设备"}), 403
     return None
 
 
-def _effective_device_id(*, required: bool = True) -> str | None:
+def _effective_device_id(request: Request, *, required: bool = True) -> str | None:
     """调试页当前设备：query/body 优先，否则 session。"""
-    did = str(request.args.get("device_id") or "").strip()
+    did = str(request.query_params.get("device_id") or "").strip()
     if not did and request.method != "GET":
-        payload = request.get_json(silent=True)
+        payload = get_json(request, silent=True)
         if isinstance(payload, dict):
             did = str(payload.get("device_id") or "").strip()
     if not did:
-        did = get_current_device_id() or ""
+        did = get_current_device_id(request) or ""
     if not did:
         return None if not required else None
     return did or None
 
 
-def _require_device_id():
-    did = _effective_device_id(required=True)
+def _require_device_id(request: Request, user):
+    did = _effective_device_id(request, required=True)
     if not did:
         return None, (jsonify({"ok": False, "error": "请先选择设备", "t": time.time()}), 400)
-    denied = _deny_foreign_device(did)
+    denied = _deny_foreign_device(request, did, user)
     if denied:
         return None, denied
     return did, None
 
 
-def _optional_device_id():
-    did = _effective_device_id(required=False)
+def _optional_device_id(request: Request, user):
+    did = _effective_device_id(request, required=False)
     if not did:
         return None, None
-    denied = _deny_foreign_device(did)
+    denied = _deny_foreign_device(request, did, user)
     if denied:
         return None, denied
     return did, None
 
 
 @router.get("/api/debug/ws_token")
-def api_debug_ws_token():
+def api_debug_ws_token(request: Request, user: RequireUser):
     """已登录用户获取调试台 WebSocket 令牌（默认 7 天有效）。"""
-    info = issue_debug_ws_token(current_user.id)
+    info = issue_debug_ws_token(user.id)
     return jsonify({"ok": True, "token": info.token, "expires_in": info.expires_in})
 
 
 @router.get("/debug/users")
-@require_developer
-def debug_users():
-    rows = list_users()
-    return render_template("debug_users.html", active_nav="users", users=rows, current_user_id=current_user.id)
+def debug_users(request: Request, user: RequireDeveloper):
+    rows = UserService().list_users()
+    return render_template(request, "debug_users.html", active_nav="users", users=rows, current_user_id=user.id)
 
 
 @router.post("/api/debug/users/{user_id}/developer")
-@require_developer
-def api_set_user_developer(user_id: str):
-    payload = request.get_json(silent=True) or {}
+def api_set_user_developer(request: Request, user: RequireDeveloper, user_id: str):
+    payload = get_json(request, silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
     try:
         is_developer = bool(payload.get("is_developer"))
-        user = set_user_developer(user_id, is_developer=is_developer)
+        user = UserService().set_developer(user_id, is_developer=is_developer)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify(
@@ -194,7 +195,7 @@ def api_set_user_developer(user_id: str):
 
 
 @router.get("/debug/devices")
-def debug_devices():
+def debug_devices(request: Request, user: RequireUser):
     from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
     from deskbot_server.pb.shapes import _default_mouth_fallback_shape, default_face_circles
 
@@ -209,18 +210,17 @@ def debug_devices():
             "extra": [],
         }
     }
-    from deskbot_server.auth.device_service import list_devices_for_user
-
-    owned = list_devices_for_user(current_user.id)
+    
+    owned = UserService().list_devices(user.id)
     owned_device_rows = [{"device_id": d.device_id, "display_name": d.display_name or d.device_id} for d in owned]
-    current = get_current_device_id()
+    current = get_current_device_id(request)
     owned_ids = {d.device_id for d in owned}
     if current and current not in owned_ids:
         current = owned[0].device_id if owned else None
 
-    debug_ws = issue_debug_ws_token(current_user.id)
+    debug_ws = issue_debug_ws_token(user.id)
 
-    return render_template(
+    return render_template(request, 
         "debug_devices.html",
         active_nav="devices",
         device_pipeline_ws_base=device_pipeline_ws_base(),
@@ -236,7 +236,7 @@ def debug_devices():
 
 
 @router.get("/debug/tts")
-def debug_tts():
+def debug_tts(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config
     from deskbot_server.infrastructure.tts.speakers import list_doubao_tts_speaker_presets
 
@@ -251,19 +251,19 @@ def debug_tts():
         "sample_rate": cfg.sample_rate,
         "audio_format": cfg.audio_format,
     }
-    return render_template(
+    return render_template(request, 
         "debug_tts.html", active_nav="tts", initial_config=initial, speaker_presets=list_doubao_tts_speaker_presets()
     )
 
 
 @router.get("/api/doubao_tts/speakers")
-def api_doubao_tts_speakers():
+def api_doubao_tts_speakers(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.speakers import (
         list_doubao_tts_consumer_speaker_presets,
         list_doubao_tts_speaker_presets,
     )
 
-    if request.args.get("scope") == "consumer":
+    if request.query_params.get("scope") == "consumer":
         speakers = list_doubao_tts_consumer_speaker_presets()
     else:
         speakers = list_doubao_tts_speaker_presets()
@@ -271,7 +271,7 @@ def api_doubao_tts_speakers():
 
 
 @router.get("/api/doubao_tts/config")
-def api_doubao_tts_config_get():
+def api_doubao_tts_config_get(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config
 
     cfg = load_doubao_tts_config()
@@ -279,11 +279,11 @@ def api_doubao_tts_config_get():
 
 
 @router.post("/api/doubao_tts/config")
-def api_doubao_tts_config_post():
+def api_doubao_tts_config_post(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config, resolve_optional_secret
     from deskbot_server.infrastructure.tts.env_store import save_doubao_tts_env
 
-    payload = request.get_json(silent=True)
+    payload = get_json(request, silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
 
@@ -370,10 +370,10 @@ def _voice_clone_payload(result) -> dict:
 
 
 @router.post("/api/doubao_tts/synthesize")
-def api_doubao_tts_synthesize():
+def api_doubao_tts_synthesize(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.doubao import synthesize_doubao_tts
 
-    payload = request.get_json(force=True, silent=True) or {}
+    payload = get_json(request, force=True, silent=True) or {}
     text = str(payload.get("text") or "").strip()
     if not text:
         return jsonify({"ok": False, "error": "空文本"}), 400
@@ -410,19 +410,21 @@ def api_doubao_tts_synthesize():
 
 
 @router.post("/api/doubao_tts/voice-clone")
-def api_doubao_tts_voice_clone():
+def api_doubao_tts_voice_clone(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.voice_clone import clone_doubao_voice, custom_speaker_id_from_name
 
-    upload = request.files.get("audio") or request.files.get("file")
+    from deskbot_server.web.view_helpers import read_upload_bytes
+
+    upload = files_get(request, "audio") or files_get(request, "file")
     if upload is None or not upload.filename:
         return jsonify({"ok": False, "error": "请先上传训练音频"}), 400
-    audio_bytes = upload.read()
+    audio_bytes = read_upload_bytes(upload)
     if not audio_bytes:
         return jsonify({"ok": False, "error": "训练音频为空"}), 400
     if len(audio_bytes) > 10 * 1024 * 1024:
         return jsonify({"ok": False, "error": "训练音频不能超过 10MB"}), 400
 
-    form = request.form
+    form = getattr(request.state, "form", None) or {}
     voice_name = str(form.get("voice_name") or form.get("display_name") or "").strip()
     if not voice_name:
         return jsonify({"ok": False, "error": "请填写音色名称"}), 400
@@ -456,10 +458,10 @@ def api_doubao_tts_voice_clone():
 
 
 @router.post("/api/doubao_tts/voice-clone/status")
-def api_doubao_tts_voice_clone_status():
+def api_doubao_tts_voice_clone_status(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.voice_clone import get_doubao_voice_clone_status
 
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
     speaker_id = str(payload.get("speaker_id") or "").strip()
@@ -477,21 +479,20 @@ def api_doubao_tts_voice_clone_status():
 
 
 @router.get("/debug/llm")
-def debug_llm():
-    from deskbot_server.auth.device_service import list_devices_for_user
+def debug_llm(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.llm.utils import llm_pb_plan_prompt_appendix
 
     cfg = load_config()
     llm_cfg = cfg.get("llm", {}) or {}
-    owned = list_devices_for_user(current_user.id)
+    owned = UserService().list_devices(user.id)
     owned_device_rows = [{"device_id": d.device_id, "display_name": d.display_name or d.device_id} for d in owned]
-    current = get_current_device_id()
+    current = get_current_device_id(request)
     owned_ids = {d.device_id for d in owned}
     if current and current not in owned_ids:
         current = owned[0].device_id if owned else None
     initial_prompt = load_llm_system_prompt(current) if current else load_llm_system_prompt()
 
-    return render_template(
+    return render_template(request, 
         "debug_llm.html",
         active_nav="llm",
         llm_model=llm_cfg.get("model_name", ""),
@@ -504,13 +505,13 @@ def debug_llm():
 
 
 @router.get("/debug/simulation")
-def debug_simulation():
+def debug_simulation(request: Request, user: RequireUser):
     from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
     from deskbot_server.pb.shapes import default_face_circles
 
     cfg = load_config()
     tts = cfg.get("tts") or {}
-    return render_template(
+    return render_template(request, 
         "debug_simulation.html",
         active_nav="sim",
         default_spk=int(tts.get("spk_id", 0)),
@@ -522,12 +523,12 @@ def debug_simulation():
 
 
 @router.post("/api/tts/phoneme_tts")
-def api_tts_phoneme_tts():
+def api_tts_phoneme_tts(request: Request, user: RequireUser):
     """豆包 TTS + 音素分片，供仿真调试等页面使用。"""
     from deskbot_server.core.settings import AppSettings
     from deskbot_server.infrastructure.tts.factory import build_tts_adapter
 
-    payload = request.get_json(force=True, silent=True) or {}
+    payload = get_json(request, force=True, silent=True) or {}
     text = str(payload.get("text") or "").strip()
     if not text:
         return jsonify({"ok": False, "error": "空文本"}), 400
@@ -560,8 +561,8 @@ def api_tts_phoneme_tts():
 
 
 @router.get("/api/llm/system_prompt")
-def api_llm_system_prompt_get():
-    device_id, err = _require_device_id()
+def api_llm_system_prompt_get(request: Request, user: RequireUser):
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
     return jsonify(
@@ -576,11 +577,11 @@ def api_llm_system_prompt_get():
 
 
 @router.post("/api/llm/system_prompt")
-def api_llm_system_prompt_post():
-    payload = request.get_json(silent=True)
+def api_llm_system_prompt_post(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object", "t": time.time()}), 400
-    device_id, err = _require_device_id()
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
     content = str(payload.get("system_prompt") or payload.get("content") or "")
@@ -602,8 +603,8 @@ def api_llm_system_prompt_post():
 
 
 @router.post("/api/llm/chat")
-def llm_chat():
-    payload = request.get_json(force=True, silent=True) or {}
+def llm_chat(request: Request, user: RequireUser):
+    payload = get_json(request, force=True, silent=True) or {}
     user_text = str(payload.get("text") or "").strip()
     raw_history = payload.get("history") or []
 
@@ -614,7 +615,7 @@ def llm_chat():
     llm_cfg = cfg.get("llm", {}) or {}
     debug_device_id = str(payload.get("device_id") or "").strip()
     if debug_device_id:
-        denied = _deny_foreign_device(debug_device_id)
+        denied = _deny_foreign_device(request, debug_device_id, user)
         if denied:
             return denied
 
@@ -779,11 +780,11 @@ def _normalize_generated_design(raw: dict) -> dict:
 
 
 @router.post("/api/face_design/generate")
-def api_face_design_generate():
-    device_id, err = _optional_device_id()
+def api_face_design_generate(request: Request, user: RequireUser):
+    device_id, err = _optional_device_id(request, user)
     if err:
         return err
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
         return jsonify({"ok": False, "error": "请先输入想要的表情风格", "t": time.time()}), 400
@@ -845,8 +846,8 @@ def api_face_design_generate():
 
 
 @router.get("/api/camera_face_config")
-def api_camera_face_config_get():
-    device_id, err = _require_device_id()
+def api_camera_face_config_get(request: Request, user: RequireUser):
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
     cfg_path = resolve_json_path(CAMERA_FACE_CFG_FILE, device_id)
@@ -874,11 +875,11 @@ def api_camera_face_config_get():
 
 
 @router.post("/api/camera_face_config")
-def api_camera_face_config_post():
-    device_id, err = _require_device_id()
+def api_camera_face_config_post(request: Request, user: RequireUser):
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
-    payload = request.get_json(silent=True)
+    payload = get_json(request, silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object", "t": time.time()}), 400
     cfg_path = resolve_json_path(CAMERA_FACE_CFG_FILE, device_id)
@@ -903,8 +904,8 @@ def api_camera_face_config_post():
 
 
 @router.get("/api/face_profiles")
-def api_face_profiles_get():
-    device_id, err = _require_device_id()
+def api_face_profiles_get(request: Request, user: RequireUser):
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
     cfg_path = resolve_json_path(FACE_PROFILES_FILE, device_id)
@@ -918,8 +919,8 @@ def api_face_profiles_get():
 
 
 @router.post("/api/face_profiles/register")
-def api_face_profiles_register():
-    payload = request.get_json(silent=True)
+def api_face_profiles_register(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object", "t": time.time()}), 400
     name = str(payload.get("name") or "").strip()
@@ -929,7 +930,7 @@ def api_face_profiles_register():
         return jsonify({"ok": False, "error": "name required", "t": time.time()}), 400
     if not device_id or face_id_raw is None:
         return jsonify({"ok": False, "error": "device_id and face_id required", "t": time.time()}), 400
-    denied = _deny_foreign_device(device_id)
+    denied = _deny_foreign_device(request, device_id, user)
     if denied:
         return denied
     try:
@@ -956,8 +957,8 @@ def api_face_profiles_register():
 
 
 @router.get("/api/user_memory")
-def api_user_memory_get():
-    device_id, err = _require_device_id()
+def api_user_memory_get(request: Request, user: RequireUser):
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
     cfg_path = resolve_json_path(USER_MEMORY_FILE, device_id)
@@ -971,14 +972,14 @@ def api_user_memory_get():
 
 
 @router.post("/api/user_memory")
-def api_user_memory_post():
-    payload = request.get_json(silent=True)
+def api_user_memory_post(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object", "t": time.time()}), 400
     text = str(payload.get("text") or "").strip()
     if not text:
         return jsonify({"ok": False, "error": "text required", "t": time.time()}), 400
-    device_id, err = _require_device_id()
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
     try:
@@ -989,8 +990,8 @@ def api_user_memory_post():
 
 
 @router.delete("/api/user_memory/{entry_id}")
-def api_user_memory_delete(entry_id: str):
-    device_id, err = _require_device_id()
+def api_user_memory_delete(request: Request, user: RequireUser, entry_id: str):
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
     try:
@@ -1003,8 +1004,8 @@ def api_user_memory_delete(entry_id: str):
 
 
 @router.get("/api/face_expr_scenes")
-def api_face_expr_scenes_get():
-    device_id = _effective_device_id(required=False)
+def api_face_expr_scenes_get(request: Request, user: RequireUser):
+    device_id = _effective_device_id(request, required=False)
     try:
         rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id or None) or []
     except (OSError, ValueError) as exc:
@@ -1013,8 +1014,8 @@ def api_face_expr_scenes_get():
 
 
 @router.get("/api/scene_playbooks")
-def api_scene_playbooks_get():
-    device_id, err = _require_device_id()
+def api_scene_playbooks_get(request: Request, user: RequireUser):
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
     cfg_path = resolve_json_path(SCENE_PLAYBOOKS_FILE, device_id)
@@ -1035,11 +1036,11 @@ def api_scene_playbooks_get():
 
 
 @router.post("/api/scene_playbooks")
-def api_scene_playbooks_post():
-    device_id, err = _require_device_id()
+def api_scene_playbooks_post(request: Request, user: RequireUser):
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
-    payload = request.get_json(silent=True)
+    payload = get_json(request, silent=True)
     cfg_path = resolve_json_path(SCENE_PLAYBOOKS_FILE, device_id)
     try:
         rows = normalize_scene_playbooks(payload if payload is not None else [])
@@ -1057,12 +1058,12 @@ def api_scene_playbooks_post():
 
 
 @router.post("/api/scene_playbook/export_plan")
-def api_scene_playbook_export_plan():
+def api_scene_playbook_export_plan(request: Request, user: RequireUser):
     """导出单条编排 + 展开后的 LLM 计划（供排查）。"""
-    device_id, err = _require_device_id()
+    device_id, err = _require_device_id(request, user)
     if err:
         return err
-    payload = request.get_json(silent=True)
+    payload = get_json(request, silent=True)
     if not isinstance(payload, dict) or not payload.get("playbook"):
         return jsonify({"ok": False, "error": "missing playbook", "t": time.time()}), 400
     try:
@@ -1076,7 +1077,7 @@ def api_scene_playbook_export_plan():
 
 
 @router.get("/api/health")
-def health():
+def health(request: Request):
     cfg = load_config()
     deskbot_host = os.environ.get("DESKBOT_SERVER_HOST") or cfg.get("server", {}).get("host", "127.0.0.1")
     if deskbot_host == "0.0.0.0":

@@ -55,13 +55,13 @@ def test_settings_test_limit_per_user_and_ip(temp_db):
 
 
 def test_api_test_llm_returns_429_when_quota_exhausted(temp_db, monkeypatch):
-    from deskbot_server.auth.device_service import bind_device
+    from tests.device_bind_helpers import bind_device_online
     from deskbot_server.auth.service import create_user
     from deskbot_server.service.application.settings_test_limit import SETTINGS_TEST_DAILY_LIMIT
     from deskbot_server.web.app import create_app
 
     user = create_user("quota@example.com", "password1234")
-    bind_device(user.id, "deskbot_quota")
+    bind_device_online(user.id, "deskbot_quota")
 
     app = create_app()
     client = app.test_client()

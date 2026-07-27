@@ -20,8 +20,11 @@ from deskbot_server.utils.device_data import device_data_dir
 
 @pytest.fixture
 def device_id(tmp_path, monkeypatch):
-    monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", tmp_path)
-    monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", tmp_path / "device")
+    from deskbot_server.utils import device_data as dd
+    from deskbot_server.ws.device_pin import set_online_pin
+
+    monkeypatch.setattr(dd, "DATA_DIR", tmp_path)
+    set_online_pin("deskbot_test001", "1234")
     return "deskbot_test001"
 
 

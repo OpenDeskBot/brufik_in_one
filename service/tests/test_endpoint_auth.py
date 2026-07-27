@@ -60,9 +60,10 @@ def test_flask_api_denies_debug_for_non_developer(temp_db):
     login = client.post("/login", data={"email": "bob@example.com", "password": "password1234"}, follow_redirects=False)
     assert login.status_code == 302
 
-    resp = client.get("/debug/llm")
-    assert resp.status_code == 302
-    assert "/app/" in resp.headers.get("Location", "")
+    resp = client.get("/debug/llm", follow_redirects=False)
+    assert resp.status_code in (302, 307)
+    loc = resp.headers.get("Location", "")
+    assert loc.startswith("/home") or "/login" in loc or loc.startswith("/app")
 
 
 def test_register_and_login_flow(temp_db):
@@ -128,13 +129,13 @@ def test_http_require_api_key_accepts_valid_key(temp_db):
 
 
 def test_http_require_device_access_enforces_ownership(temp_db):
-    from deskbot_server.auth.device_service import bind_device
+    from tests.device_bind_helpers import bind_device_online
     from deskbot_server.auth.service import create_user
     from deskbot_server.dao.api_key_service import authenticate_api_key, create_api_key
     from deskbot_server.ws.api_key_gate import http_require_device_access
 
     user = create_user("carol@example.com", "password1234")
-    bind_device(user.id, "deskbot_a")
+    bind_device_online(user.id, "deskbot_a")
     raw, _row = create_api_key(user.id, name="dev")
     auth = authenticate_api_key(raw)
     assert auth is not None

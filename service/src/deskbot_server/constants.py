@@ -13,8 +13,8 @@ PB_JSON_BIN_GAP_SEC = max(0.0, float(os.environ.get("PB_JSON_BIN_GAP_MS", "50"))
 PB_CHUNK_GAP_SEC = max(0.0, float(os.environ.get("PB_CHUNK_GAP_MS", "150")) / 1000.0)
 # 有 audio 的 pb 片：发完后等待设备 pb_ack.idx>=该片 idx 再发下一片（0=关闭）
 PB_WAIT_ACK = os.environ.get("PB_WAIT_ACK", "1").strip().lower() not in ("0", "false", "no", "off")
-# ESP32 WS 单帧 TEXT 上限（字节）；超限对端 close 1009 message too big
-PB_MAX_WIRE_JSON_BYTES = max(4096, int(os.environ.get("PB_MAX_WIRE_JSON_BYTES", "14000")))
+# ESP32 打包帧 JSON 上限（字节）；与固件 DESKBOT_MAX_PACKED_JSON_LEN 对齐
+PB_MAX_WIRE_JSON_BYTES = max(4096, int(os.environ.get("PB_MAX_WIRE_JSON_BYTES", str(64 * 1024))))
 # ESP32 WS 单帧 BINARY（PCM）上限；默认按 10s@24kHz mono s16le（10000ms→480000B）
 _PB_PCM_MS_CAP_DEFAULT = 10000
 PB_MAX_PCM_BIN_BYTES = max(
@@ -40,7 +40,6 @@ EMOTION_EXPR_MAP_FILE = str(DATA_DIR / "emotion_expr_map.json")
 SCENE_PLAYBOOKS_FILE = str(DATA_DIR / "scene_playbooks.json")
 
 CAMERA_VIEW_PATH = "/camera_view"
-CAMERA_UPLINK_PATH = "/camera_uplink"
 DEVICE_PIPELINE_PATH = "/device_pipeline"
 DEVICE_PIPELINE_MAX_EVENTS = 100
 

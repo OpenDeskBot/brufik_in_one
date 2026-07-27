@@ -17,7 +17,7 @@ cp .env.example .env   # 必填 LLM_API_KEY
 | 端口 | 服务 |
 |------|------|
 | **9000** | WebSocket + HTTP API（设备主链路） |
-| **5050** | Flask Web 控制台（`DESKBOT_START_WEB=1`，`start.sh` 默认开启） |
+| **5050** | FastAPI Web 控制台（`DESKBOT_START_WEB=1`，`start.sh` 默认开启） |
 
 ---
 
@@ -47,8 +47,8 @@ cp .env.example .env   # 必填 LLM_API_KEY
 
 | 路径 | 说明 |
 |------|------|
-| `/asr_chat?device_id=&api_key=` | **生产设备**：语音 + 可选 `camera_frame`；pb 下行（**须 API Key**） |
-| `/camera_view?device_id=&api_key=` | 调试：JPEG 预览 |
+| `/asr_chat?device_id=&pin_code=` | **生产设备**：语音 + 可选 `camera_frame`；pb 下行（**须 pin**） |
+| `/camera_view?device_id=&api_key=` | 调试：JPEG 预览（Web API Key / debug token） |
 | `/device_pipeline?role=subscriber&device=&api_key=` | 调试：流水线事件 |
 
 `device_id` 别名：`device` / `deviceid` / `id`。协议：[../docs/esp32_pb_protocol.md](../docs/esp32_pb_protocol.md)。
@@ -64,7 +64,7 @@ cp .env.example .env   # 必填 LLM_API_KEY
 | `/health` | 健康检查（免 Key） |
 | `/api/devices` | 在线设备列表 |
 
-本机 `127.0.0.1` 经 Flask 代理转发时可免 Key；**ESP32 直连须带 API Key**。
+本机 `127.0.0.1` 经 Web 代理转发时可免 Key；**ESP32 设备 WS 仅需 `device_id`（可选 `pin_code` 供绑定）**。
 
 ---
 
@@ -119,7 +119,7 @@ cp .env.example .env   # 必填 LLM_API_KEY
 ```bash
 source .venv/bin/activate
 python tools/test_client.py \
-  --ws-url "ws://127.0.0.1:9000/asr_chat?device_id=deskbot_dev&api_key=<key>" \
+  --ws-url "ws://127.0.0.1:9000/asr_chat?device_id=deskbot_dev&pin_code=1234" \
   --input-wav demo_16k_mono.wav
 ```
 

@@ -96,6 +96,7 @@ class Device(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     device_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    pin_code: Mapped[str | None] = mapped_column(String(4), nullable=True)
     owner_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     access_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)

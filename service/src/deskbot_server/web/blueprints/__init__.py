@@ -1,1 +1,1 @@
-"""Web route modules (FastAPI APIRouter + flaskish views)."""
+"""Web route modules (FastAPI APIRouter views)."""

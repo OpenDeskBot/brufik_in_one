@@ -26,7 +26,18 @@ def _migrate_legacy_schema(engine) -> None:
                 conn.execute(text("ALTER TABLE users RENAME COLUMN is_builtin TO is_developer"))
             else:
                 conn.execute(text("ALTER TABLE users ADD COLUMN is_developer BOOLEAN NOT NULL DEFAULT 0"))
-    _migrate_scheduled_tasks_schema(engine)
+
+
+def _migrate_devices_schema(engine) -> None:
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "devices" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("devices")}
+    if "pin_code" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE devices ADD COLUMN pin_code VARCHAR(4)"))
 
 
 def _migrate_scheduled_tasks_schema(engine) -> None:
@@ -151,6 +162,7 @@ def init_database() -> None:
     engine = init_engine()
     _migrate_legacy_schema(engine)
     Base.metadata.create_all(bind=engine)
+    _migrate_devices_schema(engine)
     _migrate_scheduled_tasks_schema(engine)
     _seed_free_api_key()
 

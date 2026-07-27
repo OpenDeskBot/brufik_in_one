@@ -8,7 +8,7 @@ import socket
 from deskbot_server.config import load_config as _load_config_yaml
 from deskbot_server.config import save_config as _save_config_yaml
 from deskbot_server.utils.paths import DEFAULT_CONFIG_PATH
-from deskbot_server.web.flaskish import request
+from fastapi import Request
 
 try:
     from zoneinfo import ZoneInfo
@@ -34,52 +34,66 @@ def tcp_alive(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 
-def _prefer_access_host(raw_host: str) -> str:
+def _prefer_access_host(raw_host: str, request: Request | None = None) -> str:
     host = (raw_host or "").strip()
     if host and host not in ("0.0.0.0", "::", "127.0.0.1", "localhost"):
         return host
-    try:
-        req_host = (request.host or "").split(":", 1)[0].strip()
-    except RuntimeError:
-        return "127.0.0.1"
-    if req_host and req_host not in ("0.0.0.0", "::", "localhost"):
-        return req_host
+    if request is not None:
+        req_host = (request.headers.get("host") or "").split(":", 1)[0].strip()
+        if req_host and req_host not in ("0.0.0.0", "::", "localhost"):
+            return req_host
     return "127.0.0.1"
 
 
-def deskbot_ws_base() -> tuple[str, int]:
+def deskbot_ws_base(request: Request | None = None) -> tuple[str, int]:
     cfg = load_config()
     srv = cfg.get("server") or {}
     public = (os.environ.get("DESKBOT_WEB_PUBLIC_HOST") or "").strip() or str(srv.get("web_public_host") or "").strip()
     if public:
         host = public
     else:
-        host = _prefer_access_host(os.environ.get("DESKBOT_SERVER_HOST") or srv.get("host", "127.0.0.1"))
+        host = _prefer_access_host(os.environ.get("DESKBOT_SERVER_HOST") or srv.get("host", "127.0.0.1"), request)
     port = int(os.environ.get("DESKBOT_SERVER_PORT") or srv.get("port", 9000))
     return host, port
 
 
-def deskbot_ws_default() -> str:
+def deskbot_ws_default(request: Request | None = None) -> str:
     cfg = load_config()
-    host, port = deskbot_ws_base()
+    host, port = deskbot_ws_base(request)
     ws_path = os.environ.get("DESKBOT_WS_PATH") or cfg.get("server", {}).get("ws_path", "/asr_chat")
     if not str(ws_path).startswith("/"):
         ws_path = f"/{ws_path}"
     return f"ws://{host}:{port}{ws_path}"
 
 
-def device_pipeline_ws_base() -> str:
-    host, port = deskbot_ws_base()
+def device_pipeline_ws_base(request: Request | None = None) -> str:
+    host, port = deskbot_ws_base(request)
     return f"ws://{host}:{port}/device_pipeline"
 
 
-def camera_view_ws_base() -> str:
-    host, port = deskbot_ws_base()
+def camera_view_ws_base(request: Request | None = None) -> str:
+    host, port = deskbot_ws_base(request)
     return f"ws://{host}:{port}/camera_view"
 
 
 def deskbot_http_base() -> str:
     return "/proxy/deskbot"
+
+
+def _fetch_registry_devices(*, user_id: str | None = None) -> list[dict] | None:
+    """同进程内直接读 DeviceRegistry；无 runtime（如 web_only）时返回 None。"""
+    try:
+        from deskbot_server.service.user_service import UserService
+        from deskbot_server.controller.runtime import get_runtime
+
+        snap = get_runtime().registry.snapshot()
+        uid = str(user_id or "").strip()
+        if uid:
+            allowed = UserService().device_ids_for_user(uid)
+            snap = [d for d in snap if str(d.get("device_id") or "") in allowed]
+        return [d for d in snap if isinstance(d, dict)]
+    except RuntimeError:
+        return None
 
 
 def _fetch_upstream_devices(*, user_id: str | None = None, timeout: float = 1.5) -> list[dict]:
@@ -120,7 +134,10 @@ def _fetch_upstream_devices(*, user_id: str | None = None, timeout: float = 1.5)
 def fetch_live_device_details(*, user_id: str | None = None, timeout: float = 1.5) -> dict[str, dict]:
     """查询 deskbot-server 内存注册表，返回 device_id -> {online, last_seen}。"""
     out: dict[str, dict] = {}
-    for row in _fetch_upstream_devices(user_id=user_id, timeout=timeout):
+    rows = _fetch_registry_devices(user_id=user_id)
+    if rows is None:
+        rows = _fetch_upstream_devices(user_id=user_id, timeout=timeout)
+    for row in rows:
         did = str(row.get("device_id") or "").strip()
         if not did:
             continue

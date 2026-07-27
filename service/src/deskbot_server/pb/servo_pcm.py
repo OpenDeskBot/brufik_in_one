@@ -19,8 +19,8 @@ from deskbot_server.pb.shapes import (
 
 logger = logging.getLogger("deskbot-server")
 
-# 联调：单片时长上限；受 ESP32 WS BINARY 单帧上限约束（默认 10000ms≈480KB@24kHz）
-_PB_CHUNK_MS_USER = max(100, int(os.environ.get("PB_CHUNK_MS_MAX", "10000")))
+# 分片合并：单片时长上限默认 500ms；仍受 ESP32 WS BINARY 单帧上限约束（约 10s@24kHz）
+_PB_CHUNK_MS_USER = max(100, int(os.environ.get("PB_CHUNK_MS_MAX", "500")))
 PB_CHUNK_MS_MAX = min(_PB_CHUNK_MS_USER, pb_max_chunk_ms_for_pcm(24000))
 if PB_CHUNK_MS_MAX < _PB_CHUNK_MS_USER:
     logger.info(
@@ -435,19 +435,11 @@ def attach_pb_device_hints_from_config(
 
 
 def pb_expected_binary_lengths(msg: dict[str, Any]) -> list[int]:
-    """JSON 之后按序读取的 binary 长度：PCM + ``assets[]``。"""
+    """JSON 之后按序读取的 binary 长度：仅 PCM（若有）。"""
     out: list[int] = []
     audio_n = int((msg.get("audio") or {}).get("next_bin_len") or 0)
     if audio_n > 0:
         out.append(audio_n)
-    assets = msg.get("assets")
-    if isinstance(assets, list):
-        for one in assets:
-            if not isinstance(one, dict):
-                continue
-            n = int(one.get("next_bin_len") or 0)
-            if n > 0:
-                out.append(n)
     return out
 
 
@@ -459,14 +451,13 @@ def pb_json_messages(
     channels: int,
     anim_rows: list[dict[str, Any]],
     pcm_per_idx: list[bytes],
-    assets_per_idx: list[list[bytes]] | None = None,
     opus_frames_per_idx: list[int] | None = None,
     action: str = PB_ACTION_REPLACE,
     level: int = PB_LEVEL_TASK,
     volume: int | None = None,
     cam_fps: int | None = None,
 ) -> list[tuple[dict[str, Any], list[bytes]]]:
-    """生成 ``(pb 字典, 紧随 binary 列表)``；binary 顺序：PCM（若有）→ ``assets[]``。
+    """生成 ``(pb 字典, 紧随 binary 列表)``；binary 顺序：PCM（若有）。
 
     单片 ``n == 1`` 使用 ``pb_single``；多片为 ``pb_start`` → ``pb_chunk``* → ``pb_end``。
 
@@ -479,7 +470,6 @@ def pb_json_messages(
     if n == 0:
         return []
     pairs: list[tuple[dict[str, Any], list[bytes]]] = []
-    assets_per_idx = assets_per_idx or []
     for i in range(n):
         row = anim_rows[i]
         is_first = i == 0
@@ -494,9 +484,6 @@ def pb_json_messages(
         else:
             typ = "pb_chunk"
         pcm = pcm_per_idx[i] if i < len(pcm_per_idx) else b""
-        row_assets = list(anim_rows[i].get("_assets") or [])
-        if i < len(assets_per_idx) and assets_per_idx[i]:
-            row_assets = list(assets_per_idx[i])
         anim_list = normalize_anim_list_for_wire(normalize_row_anim_list(row))
         if not anim_list:
             anim_list = [make_anim_item({}, int(row.get("chunk_ms") or 1))]
@@ -523,18 +510,9 @@ def pb_json_messages(
             if fmt == "opus" and opus_frames_per_idx and i < len(opus_frames_per_idx):
                 audio_obj["frames"] = int(opus_frames_per_idx[i])
             msg["audio"] = audio_obj
-        if row_assets:
-            from deskbot_server.pb.llm_display import jpeg_blob_dimensions
-
-            msg["assets"] = [
-                {"fmt": "jpeg", "next_bin_len": len(blob), "w": aw, "h": ah}
-                for blob in row_assets
-                for aw, ah in (jpeg_blob_dimensions(blob),)
-            ]
         attach_pb_device_hints(msg, volume=volume, cam_fps=cam_fps)
         binaries: list[bytes] = []
         if pcm:
             binaries.append(pcm)
-        binaries.extend(row_assets)
         pairs.append((msg, binaries))
     return pairs

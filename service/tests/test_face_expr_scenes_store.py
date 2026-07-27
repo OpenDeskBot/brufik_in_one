@@ -25,8 +25,7 @@ def design_file(monkeypatch):
         global_dir.mkdir()
         design_path = global_dir / "deskbot-face.json"
         design_path.write_text(json.dumps(_minimal_design_doc(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", root)
-        monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", root / "device")
+        monkeypatch.setattr("deskbot_server.utils.device_data.DATA_DIR", root)
         from deskbot_server.dao.face_design_store import clear_face_design_cache
 
         clear_face_design_cache()

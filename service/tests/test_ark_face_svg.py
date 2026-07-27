@@ -55,7 +55,6 @@ def temp_db(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "test.db"
         monkeypatch.setenv("DESKBOT_DB_PATH", str(db_path))
-        monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", Path(tmp) / "device")
         from deskbot_server.db import init_database
         from deskbot_server.db.engine import init_engine, reset_engine
 
@@ -415,7 +414,7 @@ def test_generate_face_svg_from_image_slugifies_invalid_model_names_for_pb_downl
 
 
 def test_face_design_generate_from_image_endpoint_requires_owned_device(temp_db, monkeypatch):
-    from deskbot_server.auth.device_service import bind_device
+    from tests.device_bind_helpers import bind_device_online
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
@@ -440,7 +439,7 @@ def test_face_design_generate_from_image_endpoint_requires_owned_device(temp_db,
 
     monkeypatch.setattr("deskbot_server.ark_face_svg.generate_face_svg_from_image", fake_generate)
     user = create_user("face-image2c@example.com", "password1234")
-    bind_device(user.id, "deskbot_image")
+    bind_device_online(user.id, "deskbot_image")
     app = create_app()
     client = app.test_client()
     client.post("/login", data={"email": "face-image2c@example.com", "password": "password1234"})
@@ -507,12 +506,12 @@ def test_face_design_generate_from_image_endpoint_allows_browsing_without_device
 
 
 def test_face_design_generate_from_image_rejects_unsupported_file(temp_db):
-    from deskbot_server.auth.device_service import bind_device
+    from tests.device_bind_helpers import bind_device_online
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
     user = create_user("face-image-bad2c@example.com", "password1234")
-    bind_device(user.id, "deskbot_image_bad")
+    bind_device_online(user.id, "deskbot_image_bad")
     app = create_app()
     client = app.test_client()
     client.post("/login", data={"email": "face-image-bad2c@example.com", "password": "password1234"})

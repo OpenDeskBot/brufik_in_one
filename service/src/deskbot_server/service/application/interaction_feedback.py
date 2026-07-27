@@ -12,8 +12,8 @@ from typing import Any, Optional
 from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
 from deskbot_server.dao.servo_config_store import clamp_servo_step, servo_limits
 from deskbot_server.pb.llm_plan import expand_llm_moves
-from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
-from deskbot_server.pb.shapes import PB_ACTION_DEFAULT, PB_LEVEL_IDLE
+from deskbot_server.pb.servo_pcm import PB_CHUNK_MS_MAX, attach_pb_device_hints_from_config
+from deskbot_server.pb.shapes import PB_ACTION_REPLACE, PB_LEVEL_IDLE
 from deskbot_server.service.application.camera_servo_follower import (
     _GAZE_PITCH_OFFSET,
     _MAP_PITCH_SIGN,
@@ -107,51 +107,122 @@ def llm_wait_nod_moves(*, device_id: Optional[str] = None) -> list[dict[str, Any
     return [{"move": "nod_head", "ms": _LLM_WAIT_NOD_MS}]
 
 
-def build_servo_only_pb_payload(
+def _group_servo_steps_by_chunk_ms(
+    steps: list[dict[str, Any]], *, max_chunk_ms: int = PB_CHUNK_MS_MAX
+) -> list[list[dict[str, Any]]]:
+    """将舵机步按 ``max_chunk_ms`` 分包；单步超时则拆成多段同姿态 hold。"""
+    max_ms = max(100, int(max_chunk_ms))
+    groups: list[list[dict[str, Any]]] = []
+    cur: list[dict[str, Any]] = []
+    cur_ms = 0
+    for s in steps:
+        ms = max(1, int(s.get("ms") or 0))
+        base = {
+            "xm": int(s["xm"]),
+            "ym": int(s["ym"]),
+            "x": int(s["x"]),
+            "y": int(s["y"]),
+        }
+        while ms > 0:
+            room = max_ms if not cur else max_ms - cur_ms
+            if room <= 0:
+                groups.append(cur)
+                cur = []
+                cur_ms = 0
+                room = max_ms
+            take = min(ms, room)
+            cur.append({**base, "ms": take})
+            cur_ms += take
+            ms -= take
+            if cur_ms >= max_ms:
+                groups.append(cur)
+                cur = []
+                cur_ms = 0
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def build_servo_only_pb_frames(
     moves: list[dict[str, Any]], *, device_id: str, request_id: Optional[str] = None
-) -> Optional[tuple[dict[str, Any], str]]:
-    """LLM move 列表 → 纯舵机 ``pb_single``（无 audio/assets，避免 96KB 静音 PCM）。"""
+) -> Optional[tuple[list[dict[str, Any]], str]]:
+    """LLM move 列表 → 纯舵机 pb 链（每片 ``chunk_ms`` ≤ ``PB_CHUNK_MS_MAX``）。"""
     steps = expand_llm_moves(moves, device_id=device_id)
     if not steps:
         return None
     req_id = request_id or uuid.uuid4().hex[:16]
-    chunk_ms = sum(max(1, int(s.get("ms") or 0)) for s in steps)
-    payload: dict[str, Any] = {
-        "type": "pb_single",
-        "req": req_id,
-        "idx": 0,
-        "chunk_ms": chunk_ms,
-        "pb_ver": 2,
-        "action": PB_ACTION_DEFAULT,
-        "level": PB_LEVEL_IDLE,
-        "servo": [
-            {"xm": int(s["xm"]), "ym": int(s["ym"]), "x": int(s["x"]), "y": int(s["y"]), "ms": int(s["ms"])}
-            for s in steps
-        ],
-    }
-    attach_pb_device_hints_from_config(payload)
-    return payload, req_id
+    groups = _group_servo_steps_by_chunk_ms(steps)
+    frames: list[dict[str, Any]] = []
+    n = len(groups)
+    for i, group in enumerate(groups):
+        chunk_ms = sum(max(1, int(s.get("ms") or 0)) for s in group)
+        if n == 1:
+            typ = "pb_single"
+        elif i == 0:
+            typ = "pb_start"
+        elif i == n - 1:
+            typ = "pb_end"
+        else:
+            typ = "pb_chunk"
+        payload: dict[str, Any] = {
+            "type": typ,
+            "req": req_id,
+            "idx": i,
+            "chunk_ms": chunk_ms,
+            "pb_ver": 2,
+            # replace：同级 idle 新链清空设备 ring 积压；level=0 不抢占口播。
+            # default/append 会让 live 东张西望按 chunk_ms 堆到 96 帧，anim PSRAM 易 OOM 重启。
+            "action": PB_ACTION_REPLACE,
+            "level": PB_LEVEL_IDLE,
+            "servo": [
+                {"xm": int(s["xm"]), "ym": int(s["ym"]), "x": int(s["x"]), "y": int(s["y"]), "ms": int(s["ms"])}
+                for s in group
+            ],
+        }
+        attach_pb_device_hints_from_config(payload)
+        frames.append(payload)
+    return frames, req_id
+
+
+def build_servo_only_pb_payload(
+    moves: list[dict[str, Any]], *, device_id: str, request_id: Optional[str] = None
+) -> Optional[tuple[dict[str, Any], str]]:
+    """兼容旧调用：仅当结果为单片时返回；多片请用 ``build_servo_only_pb_frames``。"""
+    built = build_servo_only_pb_frames(moves, device_id=device_id, request_id=request_id)
+    if built is None:
+        return None
+    frames, req_id = built
+    if len(frames) != 1:
+        # 多片时仍返回首片，避免静默丢动作；调用方应改用 frames API
+        logger.warning(
+            "[interaction_feedback] build_servo_only_pb_payload 得到 %d 片，仅返回首片 req=%s",
+            len(frames),
+            req_id,
+        )
+    return frames[0], req_id
 
 
 async def _send_servo_moves(
     hub: AsrChatHub, device_id: str, moves: list[dict[str, Any]], *, source: str, summary: str
 ) -> int:
-    """下发 idle 级纯舵机 ``pb_single``，可被口播等高优先级随时打断。"""
+    """下发 idle 级纯舵机 pb 链，可被口播等高优先级随时打断。"""
     if not moves:
         return 0
-    built = build_servo_only_pb_payload(moves, device_id=device_id)
+    built = build_servo_only_pb_frames(moves, device_id=device_id)
     if built is None:
         return 0
-    payload, req_id = built
-    delivered = await hub.send(device_id, payload)
+    frames, req_id = built
+    delivered = await hub.send_pb_chain_ordered(device_id, frames)
+    servo_n = sum(len(f.get("servo") or []) for f in frames)
     logger.info(
-        "[interaction_feedback] %s device_id=%s req=%s delivered=%d summary=%s servo_n=%d audio_next_bin_len=0",
+        "[interaction_feedback] %s device_id=%s req=%s delivered=%d frames=%d summary=%s servo_n=%d audio_next_bin_len=0",
         source,
         device_id,
         req_id,
         delivered,
+        len(frames),
         summary,
-        len(payload.get("servo") or []),
+        servo_n,
     )
     if delivered > 0:
         from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event

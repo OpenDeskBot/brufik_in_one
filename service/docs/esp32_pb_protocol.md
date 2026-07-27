@@ -1,6 +1,6 @@
 # ESP32 与 BotServer 通信协议（pb v2.1）
 
-单条 WebSocket：`ws://<host>:9000/asr_chat?device_id=<id>&api_key=<key>`。文本 JSON 与 binary 交替，**不用 base64**。长度由 **`next_bin_len`** 声明（上行在 JSON 根；下行在 `audio.next_bin_len`）。旧版 `audio.next_bin: 1` 已废弃。
+单条 WebSocket：`ws://<host>:9000/asr_chat?device_id=<id>&pin_code=<4位PIN>`。文本 JSON 与 binary 交替，**不用 base64**。长度由 **`next_bin_len`** 声明（上行在 JSON 根；下行在 `audio.next_bin_len`）。旧版 `audio.next_bin: 1` 已废弃。
 
 > **相关文档：** 部署与快速使用见 [README.md](../README.md)；主服务配置见 [SERVER.md](./SERVER.md)。定时任务、长期记忆、控制台管理等为**服务端能力**，不扩展本设备协议字段。
 
@@ -8,75 +8,45 @@
 
 ---
 
-## 0. 鉴权与配额（设备端必读）
+## 0. 鉴权（设备端必读）
 
 ### 0.1 适用范围
 
-| 通道 | 路径 | 是否需要 API Key |
-|------|------|------------------|
-| 生产主链路 | `/asr_chat` | **必须** |
-| 摄像头预览 | `/camera_view` | **必须** |
-| 流水线订阅 | `/device_pipeline` | **必须** |
-| HTTP API | `/api/*`（非本机） | **必须** |
+| 通道 | 路径 | 鉴权 |
+|------|------|------|
+| 生产主链路 | `/asr_chat` | **`device_id` + `pin_code`（必须）**；含语音与 `camera_frame` |
+| 摄像头预览 | `/camera_view` | Web：API Key 或 debug token |
+| 流水线订阅 | `/device_pipeline` | 订阅侧 Web 鉴权；设备侧 pin |
+| HTTP API | `/api/*`（非本机） | API Key |
 | 健康检查 | `/health` | 否 |
 
-本机调试代理（Flask `:5050` → deskbot）从 `127.0.0.1` 转发时免 Key；**ESP32 直连 `:9000` 必须携带 Key**。
+**ESP32 直连不再使用 API Key**；PIN 为 4 位数字（1000–9999），开机屏幕会显示。
 
-### 0.2 传递方式（二选一）
-
-**方式 A — URL 查询参数（推荐固件实现）**
+### 0.2 设备连接 URL
 
 ```
-ws://<host>:9000/asr_chat?device_id=deskbot_abc123&api_key=odk_xxxxxxxx
+ws://<host>:9000/asr_chat?device_id=deskbot_abc123&pin_code=1234
 ```
 
-别名也支持：`apikey`、`key`。
+### 0.3 失败行为（设备 WS）
 
-**方式 B — WebSocket 握手 Header**
+| 情况 | WebSocket |
+|------|-----------|
+| 缺少 `device_id` | 关闭码 **1008**，reason `device_id_required` |
+| 缺少/无效 PIN | **不拒绝连接**；合法 PIN 才会写入 online pin（供 Web 绑定） |
 
-```
-X-API-Key: odk_xxxxxxxx
-```
+### 0.4 Web / API Key（仅控制台与调试）
 
-或 `Authorization: Bearer odk_xxxxxxxx`。
+用户 Key（`odk_`）与免费 Key（`odk_free_`）仍用于 HTTP `/api/*` 与调试订阅；设备主链路不计量 Key 配额。
 
-### 0.3 Key 类型
-
-| 类型 | 前缀 | 说明 |
-|------|------|------|
-| 用户 Key | `odk_` | 控制台「账号设置」生成，配额不限（默认） |
-| 免费 Key | `odk_free_` | 服务器 `data/.free_api_key`，**每日 1GB 总字节** |
-
-### 0.4 失败行为
-
-| 情况 | WebSocket | HTTP |
-|------|-----------|------|
-| 缺少/无效 Key | 关闭码 **1008**，reason `api_key_required` | `401` + `api_key_required` |
-| 免费 Key 超额 | 关闭码 **1008**，reason `quota_exhausted` | `429` + `quota_exhausted` |
-
-连接前服务端会预检配额；轮次中（ASR/人脸/LLM/TTS）超额后当轮记日志，后续请求继续受配额约束。
-
-### 0.5 用量计量（按 Key + device_id）
-
-每轮对话按字节累计四类消耗，并同时记入 **API Key** 与 **device_id**（控制台「用量看板」可查看）：
-
-| 类别 | 计量来源 |
-|------|----------|
-| ASR | 上行 PCM 段字节数 |
-| 人脸 | `camera_frame` JPEG 字节数 |
-| LLM | 识别文本 + 模型回复 UTF-8 字节 |
-| TTS | 回复文本 UTF-8 字节 × 48（估算） |
-
-**固件务必在 URL 中带稳定 `device_id`**，否则不会出现在设备列表，也无法按设备统计用量。
-
-### 0.6 固件最小接入示例
+### 0.5 固件最小接入示例
 
 ```c
 // 伪代码
 const char *url =
   "ws://192.168.1.10:9000/asr_chat"
   "?device_id=deskbot_1cdbd476ab5c"
-  "&api_key=odk_free_xxxxxxxx";
+  "&pin_code=1234";
 websocket_connect(url);
 ```
 
@@ -153,7 +123,7 @@ JSON flush
 | 版本 | `pb_ver: 2`（wire v2.1） |
 | 音频 | mono **opus**（默认，`config.yaml` → `audio.output_codec`）或 **s16le**，**sr = 24000**（首包声明） |
 | 画布 | **284 × 240**，原点左上 |
-| 单包 | `chunk_ms ≤ 10000` |
+| 单包 | 硬件上限 `chunk_ms ≤ 10000`；服务端合并默认 ≤ **500**（`PB_CHUNK_MS_MAX`） |
 | 口播默认 | `level = 1`，`action = "replace"` |
 
 一条 pb JSON 可含 **`anim[]`**（表情）、**`servo[]`**（舵机）、**`audio`**（PCM 长度）。口播由服务端按音素组帧后合并为多片 `pb_start` → `pb_chunk*` → `pb_end`，或单片 **`pb_single`**。
@@ -276,13 +246,8 @@ c  = (R5 << 11) | (G6 << 5) | B5
 | `round_rect` / `round_rect_outline` | `fillRoundRect` / `drawRoundRect` | `x`,`y`,`w`,`h`, `radius` 或 `r` |
 | `rotated_rect_outline` / `rotated_rect_fill` | — | `x`,`y`,`w`,`h`,`angle`（**中心**坐标） |
 | `text` | — | `x`,`y`,`text`,`size`,`c` |
-| `image` | — | `asset`（0-based 下标）+ 见 §6.2 |
 
 三角形勿与 `rect` 的 `w`,`h` 混淆。
-
-### 5.6 可选 `assets[]`（JPEG 等）
-
-若存在 `assets[]`，读完 PCM 后按 `assets[i].next_bin_len` 依次读 binary；`shape: image` 的 `asset` 指向下标。
 
 ---
 
@@ -380,7 +345,7 @@ c  = (R5 << 11) | (G6 << 5) | B5
 
 ## 11. 固件实现清单
 
-1. 仅连 `/asr_chat?device_id=`；JSON/binary 状态机。
+1. 仅连 `/asr_chat?device_id=&pin_code=`；JSON/binary 状态机。
 2. 上行成对发送；下行处理 `pb_*`，按 `audio.next_bin_len` 收 PCM。
 3. `anim[]` 按 `ms` 切换；绘制顺序 §5.3；R6 校验 PCM 长度。
 4. `pb_start`/`pb_single` 入队（§7）；周期性 `pb_ack`。

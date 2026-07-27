@@ -13,23 +13,32 @@
       <button class="btn ghost" @click="unbind(d)">解绑</button>
     </div>
   </div>
-  <div style="display:flex;gap:8px;margin-top:16px;max-width:560px">
+  <div style="display:flex;gap:8px;margin-top:16px;max-width:560px;flex-wrap:wrap">
     <input class="tinput" v-model="newId" placeholder="设备 ID，例如 deskbot_a1b2c3" @keyup.enter="bind">
+    <input class="tinput" v-model="newPin" placeholder="Pin Code，例如 1234" inputmode="numeric" maxlength="4" style="max-width:140px" @keyup.enter="bind">
     <button class="btn primary" @click="bind">＋ 绑定新设备</button>
   </div>
-  <p class="device-id-hint">设备开机联网后，屏幕上会显示它的设备 ID（形如 <code>deskbot_xxxxxx</code>），照着输入即可绑定。</p>
+  <p class="device-id-hint">设备开机联网后，屏幕上会显示它的 <code>device_id</code> 与 <code>Pin Code</code>；设备须在线且 PIN 正确才能绑定。</p>
   <p class="lead" v-if="msg">[[ msg ]]</p>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 const { createApp } = Vue;
-createApp({ delimiters:['[[',']]'], data(){return{devices:[],current:'',newId:'',msg:''};},
+createApp({ delimiters:['[[',']]'], data(){return{devices:[],current:'',newId:'',newPin:'',msg:'',msgOk:true};},
   methods:{
-    async load(){ const r=await (await fetch('/app/api/devices')).json(); if(r.ok){ this.devices=r.devices||[]; this.current=r.current_device_id||''; } else this.msg=r.error||'加载失败'; },
-    async select(d){ const r=await (await fetch('/app/api/devices/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:d.device_id})})).json(); if(r.ok){ this.current=r.current_device_id; this.msg='已切换到 '+d.device_id; } else this.msg=r.error||'切换失败'; },
-    async bind(){ const id=this.newId.trim(); if(!id) return; const r=await (await fetch('/app/api/devices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:id})})).json(); if(r.ok){ this.newId=''; this.msg='已绑定 '+id; this.load(); } else this.msg=r.error||'绑定失败'; },
-    async unbind(d){ if(!confirm('确定解绑这台设备？')) return; const r=await (await fetch('/app/api/devices/'+encodeURIComponent(d.device_id),{method:'DELETE'})).json(); if(r.ok){ this.msg='已解绑 '+d.device_id; this.load(); } else this.msg=r.error||'解绑失败'; } },
+    async load(){ const r=await (await fetch('/app/api/devices')).json(); if(r.ok){ this.devices=r.devices||[]; this.current=r.current_device_id||''; } else { this.msgOk=false; this.msg=r.error||'加载失败'; } },
+    async select(d){ const r=await (await fetch('/app/api/devices/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:d.device_id})})).json(); if(r.ok){ this.current=r.current_device_id; this.msgOk=true; this.msg='已切换到 '+d.device_id; } else { this.msgOk=false; this.msg=r.error||'切换失败'; } },
+    async bind(){
+      const id=this.newId.trim();
+      const pin=this.newPin.trim();
+      if(!id){ this.msgOk=false; this.msg='绑定失败：请输入 device_id'; return; }
+      if(!pin){ this.msgOk=false; this.msg='绑定失败：请输入 Pin Code'; return; }
+      const r=await (await fetch('/app/api/devices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:id,pin_code:pin})})).json();
+      if(r.ok){ this.newId=''; this.newPin=''; this.msgOk=true; this.msg=r.message||'绑定成功'; this.load(); }
+      else { this.msgOk=false; this.msg=r.error||'绑定失败'; }
+    },
+    async unbind(d){ if(!confirm('确定解绑这台设备？')) return; const r=await (await fetch('/app/api/devices/'+encodeURIComponent(d.device_id),{method:'DELETE'})).json(); if(r.ok){ this.msgOk=true; this.msg='已解绑 '+d.device_id; this.load(); } else { this.msgOk=false; this.msg=r.error||'解绑失败'; } } },
   mounted(){ this.load(); } }).mount('#app');
 </script>
 {% endblock %}

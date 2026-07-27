@@ -57,7 +57,6 @@ def build_llm_error_fallback_plan(*, tts: str | None = None) -> dict[str, Any]:
             "servo": [],
             "moves": llm_error_playback_moves(),
             "anims": llm_error_playback_anims(),
-            "images": [],
             "json_ok": True,
             "need_reply": True,
             "raw": text,

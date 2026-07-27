@@ -10,6 +10,8 @@
     "/debug/devices",
     "/debug/simulation",
     "/debug/online",
+    "/debug/tts",
+    "/debug/llm",
   ];
 
   let pageHeadAssets = [];

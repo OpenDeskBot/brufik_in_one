@@ -369,7 +369,7 @@ def save_face_expr_scenes_file(rows: list[dict[str, Any]], *, device_id: Optiona
 
 
 def design_frames_to_pb_chain(frames: list[dict[str, Any]], *, runtime_req: str) -> list[dict[str, Any]]:
-    """将设计页 ``[{ ms, elements }, ...]`` 转为可下发的 pb 链（合并后 ``chunk_ms`` ≤ 10s）。"""
+    """将设计页 ``[{ ms, elements }, ...]`` 转为可下发的 pb 链（合并后 ``chunk_ms`` ≤ ``PB_CHUNK_MS_MAX``）。"""
     from deskbot_server.pb.servo_pcm import PB_CHUNK_MS_MAX, make_anim_item, merge_pb_subchunks, pb_json_messages
 
     if not frames:

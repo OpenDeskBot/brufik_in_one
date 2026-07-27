@@ -11,8 +11,8 @@ _DEFAULT_CAPTURE_FPS = 5
 _DEFAULT_WAIT_TIMEOUT_S = 4.0
 
 
-async def request_camera_uplink_boost(device_id: str, hub: Any, *, cam_fps: int = _DEFAULT_CAPTURE_FPS) -> None:
-    """通过 pb 提示设备提高相机上行帧率。"""
+async def request_camera_fps_boost(device_id: str, hub: Any, *, cam_fps: int = _DEFAULT_CAPTURE_FPS) -> None:
+    """通过 pb 提示设备提高相机上行帧率（经 /asr_chat）。"""
     dev = str(device_id or "").strip()
     if not dev or hub is None:
         return
@@ -40,5 +40,5 @@ async def capture_camera_for_device_async(
     if not dev:
         return {"ok": False, "error": "缺少 device_id"}
 
-    await request_camera_uplink_boost(dev, hub, cam_fps=cam_fps)
+    await request_camera_fps_boost(dev, hub, cam_fps=cam_fps)
     return await CameraFaceService().capture_frame_async(dev, timeout_s=wait_timeout_s)

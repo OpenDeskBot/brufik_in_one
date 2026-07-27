@@ -1,24 +1,28 @@
 from __future__ import annotations
 
-from functools import wraps
+from typing import Annotated
 
-from deskbot_server.web.flaskish import current_user, flash, jsonify, redirect, request, url_for
+from fastapi import Depends, HTTPException, Request
+
+from deskbot_server.auth.session_user import SessionUser
+from deskbot_server.web.deps import require_user
+from deskbot_server.web.urls import flash, url_for
 
 
-def current_user_is_developer() -> bool:
-    if not current_user.is_authenticated:
+def current_user_is_developer(user: SessionUser | None) -> bool:
+    if user is None:
         return False
-    return bool(getattr(current_user, "is_developer", False))
+    return bool(getattr(user, "is_developer", False))
 
 
-def require_developer(view):
-    @wraps(view)
-    def wrapped(*args, **kwargs):
-        if not current_user_is_developer():
-            if request.path.startswith("/api/") or request.accept_mimetypes.best == "application/json":
-                return jsonify({"ok": False, "error": "需要开发者权限"}), 403
-            flash("需要开发者权限", "error")
-            return redirect(url_for("app2c.home"))
-        return view(*args, **kwargs)
+def require_developer(request: Request, user: SessionUser = Depends(require_user)) -> SessionUser:
+    if not current_user_is_developer(user):
+        path = request.url.path
+        if path.startswith("/api/") or "application/json" in (request.headers.get("accept") or ""):
+            raise HTTPException(status_code=403, detail={"ok": False, "error": "需要开发者权限"})
+        flash(request, "需要开发者权限", "error")
+        raise HTTPException(status_code=307, headers={"Location": url_for("app2c.home")})
+    return user
 
-    return wrapped
+
+RequireDeveloper = Annotated[SessionUser, Depends(require_developer)]

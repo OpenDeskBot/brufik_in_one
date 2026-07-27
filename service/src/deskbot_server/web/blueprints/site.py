@@ -1,16 +1,24 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
-from deskbot_server.web.flaskish import FlaskishAPIRoute, redirect, url_for
+from deskbot_server.web.urls import url_for
+from deskbot_server.web.view_helpers import ViewAPIRoute, redirect
 
-router = APIRouter(route_class=FlaskishAPIRoute, tags=["site"])
+router = APIRouter(route_class=ViewAPIRoute, tags=["site"])
 
 
 @router.get("/")
-def index():
-    # 无独立官网首页：根路径直接进入控制台；未登录会被 @login_required 引导到登录页。
+def index(request: Request):
+    del request
     return redirect(url_for("app2c.home"))
 
 
-ENDPOINTS = {"site.index": "/"}
+@router.get("/health")
+def health(request: Request):
+    del request
+    return JSONResponse({"ok": True, "service": "deskbot-web"})
+
+
+ENDPOINTS = {"site.index": "/", "site.health": "/health"}

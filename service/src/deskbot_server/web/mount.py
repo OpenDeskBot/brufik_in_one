@@ -1,4 +1,4 @@
-"""将 Web 控制台（原 Flask :5050）挂到 FastAPI：Session、Jinja、Static、鉴权。"""
+"""将 Web 控制台挂到 FastAPI：Session、Jinja、Static、鉴权。"""
 
 from __future__ import annotations
 
@@ -14,15 +14,9 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from deskbot_server.db import init_database, remove_session
 from deskbot_server.utils.env import load_dotenv
-from deskbot_server.web.flaskish import (
-    FlaskRequestAdapter,
-    bind_request,
-    current_user,
-    register_endpoint,
-    reset_request,
-    set_templates,
-    url_for,
-)
+from deskbot_server.web.deps import load_session_user
+from deskbot_server.web.urls import register_endpoint, url_for
+from deskbot_server.web.view_helpers import set_templates
 
 logger = logging.getLogger("deskbot-server")
 
@@ -78,9 +72,6 @@ def mount_web(app: FastAPI) -> None:
 
     templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
     templates.env.globals["url_for"] = url_for
-    from deskbot_server.web.flaskish import get_flashed_messages
-
-    templates.env.globals["get_flashed_messages"] = get_flashed_messages
     set_templates(templates)
 
     static_dir = _WEB_DIR / "static"
@@ -98,10 +89,8 @@ def mount_web(app: FastAPI) -> None:
     from deskbot_server.web.blueprints.site import router as site_router
 
     @app.middleware("http")
-    async def flaskish_context(request: Request, call_next):
+    async def web_auth_middleware(request: Request, call_next):
         await _prepare_body(request)
-        adapter = FlaskRequestAdapter(request)
-        token = bind_request(adapter)
         try:
             path = request.url.path or ""
             if request.method != "OPTIONS":
@@ -136,10 +125,12 @@ def mount_web(app: FastAPI) -> None:
                     or path.startswith("/api/scene_playbooks")
                 )
 
-                if web_protected and not public and not current_user.is_authenticated:
-                    if path.startswith("/api/") or "application/json" in (request.headers.get("accept") or ""):
-                        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
-                    return RedirectResponse(url=f"/login?next={path}", status_code=302)
+                if web_protected and not public:
+                    user = load_session_user(request)
+                    if user is None:
+                        if path.startswith("/api/") or "application/json" in (request.headers.get("accept") or ""):
+                            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+                        return RedirectResponse(url=f"/login?next={path}", status_code=302)
 
             response = await call_next(request)
             if path.startswith("/debug/"):
@@ -152,7 +143,6 @@ def mount_web(app: FastAPI) -> None:
                 remove_session()
             except Exception:
                 pass
-            reset_request(token)
 
     app.include_router(site_router)
     app.include_router(auth_router)
@@ -162,7 +152,6 @@ def mount_web(app: FastAPI) -> None:
     app.include_router(debug_router)
     app.include_router(proxy_router)
 
-    # 最后添加 → 请求时最先执行，确保 flaskish 能读 request.session
     app.add_middleware(
         SessionMiddleware,
         secret_key=secret,

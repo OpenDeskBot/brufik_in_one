@@ -8,7 +8,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
-from deskbot_server.dao.device_camera_frame_store import request_camera_uplink_boost
+from deskbot_server.dao.device_camera_frame_store import request_camera_fps_boost
 from deskbot_server.infrastructure.llm.utils import parse_llm_reply
 from deskbot_server.pb.servo_pcm import parse_pb_cam_fps
 from deskbot_server.service.application.llm_tool_runner import execute_llm_tools
@@ -77,7 +77,7 @@ async def _execute_tools_round(
     cam_fps: int | None,
 ) -> list[dict[str, Any]]:
     if cam_fps and asr_chat_hub:
-        await request_camera_uplink_boost(device_id, asr_chat_hub, cam_fps=cam_fps)
+        await request_camera_fps_boost(device_id, asr_chat_hub, cam_fps=cam_fps)
 
     return await execute_llm_tools(
         tools,

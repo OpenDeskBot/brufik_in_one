@@ -12,7 +12,6 @@ from deskbot_server.core.ports.downlink import DownlinkPort, PipelineEventsPort
 from deskbot_server.core.types import ChatTurnResult
 from deskbot_server.dao.device_volume_store import persist_device_volume
 from deskbot_server.infrastructure.tts.text_split import split_tts_by_punctuation
-from deskbot_server.pb.llm_display import build_capture_image_for_display
 from deskbot_server.pb.scenes import _pb_scene_entry_by_name, _prepare_pb_scene_chain_frames
 from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_ACTION_REPLACE
 from deskbot_server.pb.wire import build_pb_wire_pairs, device_pb_json_msg, pb_wire_json_bytes
@@ -311,17 +310,6 @@ async def run_chat_turn(
         if parsed.get("volume") is not None and device_id:
             persist_device_volume(parsed["volume"], device_id=device_id)
 
-        display_images = list(parsed.get("images") or [])
-        for tr in tool_results:
-            if tr.get("ok") and tr.get("image_display"):
-                display_images.append(tr["image_display"])
-            elif tr.get("ok") and tr.get("jpeg_base64"):
-                try:
-                    display_images.append(build_capture_image_for_display(str(tr["jpeg_base64"])))
-                except ValueError:
-                    pass
-        parsed["images"] = display_images
-
         result.llm_text = reply_text
         result.llm_raw = answer or parsed.get("raw") or ""
         result.scenes = llm_scenes
@@ -374,7 +362,7 @@ async def run_chat_turn(
             logger.warning("[LLM] 输出未通过 JSON 解析，按整段文本走 TTS。device_id=%s req=%s", device_id, request_id)
 
         if not need_reply and not is_scheduled:
-            has_motion = bool(llm_moves or llm_anims or parsed.get("images"))
+            has_motion = bool(llm_moves or llm_anims)
             if has_motion:
                 logger.info(
                     "[LLM] need_reply=false 但有 moves/anims/屏幕内容，下发动作 pb device_id=%s req=%s",
@@ -751,7 +739,6 @@ async def _run_pb_playback(
                 volume=parsed.get("volume") if chunk_is_first else None,
                 cam_fps=parsed.get("cam_fps") if chunk_is_first else None,
                 device_id=device_id,
-                images=list(parsed.get("images") or []) if chunk_is_first else None,
                 action=PB_ACTION_REPLACE if chunk_is_first else PB_ACTION_APPEND,
                 leading_move_steps=int(parsed.get("leading_move_steps") or 0) if chunk_is_first else 0,
             )

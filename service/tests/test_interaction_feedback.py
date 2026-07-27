@@ -24,7 +24,8 @@ def test_listen_feedback_gaze_when_face_recent():
     assert moves[0]["ms"] == fb._MOTION_MS
 
 
-def test_build_servo_only_pb_payload_no_audio():
+def test_build_servo_only_pb_frames_respects_chunk_max():
+    from deskbot_server.pb.servo_pcm import PB_CHUNK_MS_MAX
     from deskbot_server.service.application import interaction_feedback as fb
 
     fb.clear_face_analysis("dev1")
@@ -37,26 +38,45 @@ def test_build_servo_only_pb_payload_no_audio():
         },
     )
     _kind, moves = fb.listen_feedback_moves("dev1")
-    built = fb.build_servo_only_pb_payload(moves, device_id="dev1", request_id="abc123")
+    built = fb.build_servo_only_pb_frames(moves, device_id="dev1", request_id="abc123")
     assert built is not None
-    payload, req_id = built
+    frames, req_id = built
     assert req_id == "abc123"
-    assert payload["type"] == "pb_single"
-    assert payload.get("audio") is None
-    assert len(payload["servo"]) >= 1
-    assert payload["chunk_ms"] > 0
+    assert frames
+    assert all(f.get("audio") is None for f in frames)
+    assert all(int(f["chunk_ms"]) <= PB_CHUNK_MS_MAX for f in frames)
+    assert sum(len(f.get("servo") or []) for f in frames) >= 1
+    if len(frames) == 1:
+        assert frames[0]["type"] == "pb_single"
+    else:
+        assert frames[0]["type"] == "pb_start"
+        assert frames[-1]["type"] == "pb_end"
 
 
-def test_llm_wait_nod_is_one_short_nod():
+def test_llm_wait_nod_is_one_short_nod(monkeypatch):
     from deskbot_server.service.application import interaction_feedback as fb
 
     moves = fb.llm_wait_nod_moves()
     assert moves == [{"move": "nod_head", "ms": fb._LLM_WAIT_NOD_MS}]
-    built = fb.build_servo_only_pb_payload(moves, device_id="dev-nod", request_id="nod")
+
+    def _fake_expand(moves_in, *, device_id=None):
+        assert moves_in == moves
+        return [
+            {"xm": 0, "ym": 0, "x": 90, "y": 70, "ms": 200},
+            {"xm": 0, "ym": 0, "x": 90, "y": 110, "ms": 400},
+            {"xm": 0, "ym": 0, "x": 90, "y": 90, "ms": 200},
+        ]
+
+    monkeypatch.setattr(fb, "expand_llm_moves", _fake_expand)
+    built = fb.build_servo_only_pb_frames(moves, device_id="dev-nod", request_id="nod")
     assert built is not None
-    payload, _ = built
-    assert len(payload["servo"]) == 3
-    assert payload["chunk_ms"] == fb._LLM_WAIT_NOD_MS
+    frames, _ = built
+    from deskbot_server.pb.servo_pcm import PB_CHUNK_MS_MAX
+
+    assert frames
+    assert all(int(f["chunk_ms"]) <= PB_CHUNK_MS_MAX for f in frames)
+    assert sum(int(f["chunk_ms"]) for f in frames) == fb._LLM_WAIT_NOD_MS
+    assert sum(len(f.get("servo") or []) for f in frames) >= 3
 
 
 def test_camera_face_follow_sends_latest_absolute_position(monkeypatch):
@@ -85,7 +105,7 @@ def test_camera_face_follow_sends_latest_absolute_position(monkeypatch):
         assert len(hub.payloads) == 1
         payload = hub.payloads[0]
         assert payload["action"] == "replace"
-        assert payload["level"] == 3
+        assert payload["level"] == 0
         assert payload["servo"][0]["xm"] == 0
         assert payload["servo"][0]["ym"] == 0
 

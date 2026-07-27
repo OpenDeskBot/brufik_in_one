@@ -8,7 +8,7 @@
 
 | 服务 | 默认地址 | 实现位置 | 说明 |
 |------|----------|----------|------|
-| Web 控制台 | `http://<host>:5050` | `deskbot_server.web` | Flask 页面、用户登录、设备/记忆/模型管理、调试页、代理到设备服务 |
+| Web 控制台 | `http://<host>:5050` | `deskbot_server.web` | FastAPI 页面、用户登录、设备/记忆/模型管理、调试页、代理到设备服务 |
 | deskbot 设备服务 | `ws://<host>:9000` / `http://<host>:9000` | `deskbot_server.ws` | ESP32 主链路、调试订阅、设备下发、轻量 HTTP API |
 | paddlespeech TTS 侧车 | `ws://<host>:8092` | `paddlespeech_server` | 官方流式 TTS 与音素对齐 TTS |
 
@@ -19,8 +19,8 @@
 | 范围 | 鉴权 |
 |------|------|
 | `/`、`/login`、`/register`、`/health`、`/static/*` | 公开 |
-| 其它页面 | 需要 Flask 登录态；未登录重定向到 `/login` |
-| `/api/*` | 需要 Flask 登录态；未登录返回 `401 {"ok": false, "error": "unauthorized"}` |
+| 其它页面 | 需要会话登录态；未登录重定向到 `/login` |
+| `/api/*` | 需要会话登录态；未登录返回 `401 {"ok": false, "error": "unauthorized"}` |
 | `/proxy/deskbot/*` | 需要登录态，并按当前用户绑定设备过滤/补全 `device_id` |
 
 ### deskbot 设备服务 `:9000`
@@ -29,11 +29,11 @@
 |------|------|
 | `GET /health` | 公开 |
 | `/api/*` | 需要 API Key；支持查询参数 `api_key` / `apikey` / `key`，Header `X-API-Key`，或 `Authorization: Bearer <key>` |
-| `/asr_chat` | 需要 API Key |
-| `/device_pipeline` 生产者 | 需要 API Key |
+| `/asr_chat` | 需要 `device_id`；合法 `pin_code` 可选（写入 online pin 供绑定）；含语音与 `camera_frame` |
+| `/device_pipeline` 生产者 | 需要 `device_id`；合法 `pin_code` 可选 |
 | `/device_pipeline` 订阅者、`/camera_view` | API Key 或 Web 控制台签发的 `debug_token` |
 
-常见错误：无 Key 为 `401` 或 WS close `1008 api_key_required`；免费 Key 超额为 `429` 或 WS close `1008 quota_exhausted`；用户 Key 操作未绑定设备为 `403 forbidden_device`。
+常见错误：设备缺 `device_id` 为 WS close `1008 device_id_required`；HTTP 无 Key 为 `401`；免费 Key 超额为 `429`；用户 Key 操作未绑定设备为 `403 forbidden_device`。
 
 ## Web 控制台页面与表单 `:5050`
 
@@ -174,7 +174,7 @@
 生产设备主链路。默认 URL：
 
 ```text
-ws://<host>:9000/asr_chat?device_id=<id>&api_key=<key>
+ws://<host>:9000/asr_chat?device_id=<id>&pin_code=<4位PIN>
 ```
 
 `device_id` 别名：`device_id`、`deviceid`、`device`、`id`。连接成功后服务端发送：
@@ -263,7 +263,6 @@ ws://<host>:9000/device_pipeline?role=subscriber&device_id=<id>&debug_token=<tok
 | GET | `/health` | 存活探针 | - |
 | GET | `/api/devices` | 当前在线设备列表；用户 Key 会按绑定设备过滤 | - |
 | GET | `/api/asr_auto_reply` | 查询/设置 ASR 自动应答开关 | query: `enabled=1|0|true|false` 可选 |
-| GET | `/api/pb_idle_auto_dispatch` | 查询/设置空闲 pb 自动下发开关 | query: `enabled=1|0|true|false` 可选 |
 | GET | `/api/camera_servo_auto_mode` | 查询/设置相机舵机自动模式 | query: `mode=follow|follow_frontal|gaze|off` 可选 |
 | GET | `/api/debug_prefs` | 查询/批量设置调试偏好 | query: `asr_auto_reply`, `camera_servo_auto_mode` 可选 |
 | GET | `/api/pipeline_recent` | 获取流水线事件滚动窗口 | query: `device_id` 可选，`limit` 默认最多 100 |
@@ -319,7 +318,7 @@ PaddleSpeech 官方流式 TTS WebSocket，由 `paddlespeech.server.ws.api.setup_
 
 | 范围 | 文件 |
 |------|------|
-| Flask app 注册与全局鉴权 | `service/deskbot-server/src/deskbot_server/web/app.py` |
+| FastAPI Web 挂载与全局鉴权 | `service/src/deskbot_server/web/mount.py` |
 | Web 控制台账号路由 | `service/deskbot-server/src/deskbot_server/web/blueprints/auth_bp.py` |
 | Web 管理后台路由 | `service/deskbot-server/src/deskbot_server/web/blueprints/app_bp.py` |
 | 2C 页面/API 路由 | `service/deskbot-server/src/deskbot_server/web/blueprints/app2c_bp.py` |

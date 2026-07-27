@@ -10,7 +10,6 @@ import pytest
 def temp_db(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         monkeypatch.setenv("DESKBOT_DB_PATH", str(Path(tmp) / "t.db"))
-        monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", Path(tmp) / "device")
         from deskbot_server.db import init_database
         from deskbot_server.db.engine import init_engine, reset_engine
 
@@ -21,12 +20,12 @@ def temp_db(monkeypatch):
 
 
 def _client():
-    from deskbot_server.auth.device_service import bind_device
+    from tests.device_bind_helpers import bind_device_online
     from deskbot_server.auth.service import create_user
     from deskbot_server.web.app import create_app
 
     user = create_user("map@example.com", "password1234")
-    bind_device(user.id, "deskbot_map")
+    bind_device_online(user.id, "deskbot_map")
     app = create_app()
     c = app.test_client()
     c.post("/login", data={"email": "map@example.com", "password": "password1234"})

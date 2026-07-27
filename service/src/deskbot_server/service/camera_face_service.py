@@ -468,26 +468,15 @@ class CameraFaceService(metaclass=SingletonMeta):
         import base64
 
         jpeg = row["jpeg"]
-        b64 = base64.standard_b64encode(jpeg).decode("ascii")
-        image_display: dict[str, Any] | None = None
-        try:
-            from deskbot_server.pb.llm_display import decode_llm_image_item
-
-            image_display = decode_llm_image_item({"b64": b64, "x": 0, "y": 0})
-        except Exception:
-            image_display = None
-        out: dict[str, Any] = {
+        return {
             "ok": True,
             "ts": row["ts"],
             "width": row["width"],
             "height": row["height"],
             "source": row["source"],
             "jpeg_bytes": len(jpeg),
-            "jpeg_base64": b64,
+            "jpeg_base64": base64.standard_b64encode(jpeg).decode("ascii"),
         }
-        if image_display:
-            out["image_display"] = image_display
-        return out
 
     def _tracker_for(self, device_id: str) -> FaceTracker:
         tr = self._trackers.get(device_id)
@@ -511,8 +500,8 @@ class CameraFaceService(metaclass=SingletonMeta):
         device_id: str,
         frame_bytes: bytes,
         *,
-        frame_source: str = "camera_uplink",
-        log_channel: str = "/camera_uplink",
+        frame_source: str = "asr_chat",
+        log_channel: str = "/asr_chat",
     ) -> None:
         """读到一帧 JPEG：识别 → 跟踪 / 缓存 / 推流。"""
         self._note_loop()
@@ -677,6 +666,12 @@ class CameraFaceService(metaclass=SingletonMeta):
 
         if not detect or not detect.get("landmarks"):
             clear_face_analysis(device_id)
+            try:
+                from deskbot_server.service.live_service import LiveService
+
+                LiveService().on_face_lost(device_id)
+            except Exception:
+                pass
             await self.try_emit_video_frame(
                 device_id,
                 frame_bytes,
@@ -687,8 +682,13 @@ class CameraFaceService(metaclass=SingletonMeta):
         note_face_analysis(device_id, detect)
         try:
             from deskbot_server.controller.runtime import get_runtime
+            from deskbot_server.service.live_service import LiveService
 
-            await camera_servo_follower_tick(get_runtime().asr_chat_hub, device_id, detect)
+            runtime = get_runtime()
+            live = LiveService()
+            await live.on_face_tick(device_id, detect)
+            if not live.owns_face_tracking(device_id):
+                await camera_servo_follower_tick(runtime.asr_chat_hub, device_id, detect)
         except RuntimeError:
             # 独立的人脸配置/测试路径没有完整应用运行时，跳过设备下发。
             pass

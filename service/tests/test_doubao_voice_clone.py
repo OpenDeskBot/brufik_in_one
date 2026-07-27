@@ -32,7 +32,7 @@ def test_clone_doubao_voice_posts_v3_payload(monkeypatch):
         captured["timeout"] = timeout
         return FakeResponse()
 
-    monkeypatch.setattr("deskbot_server.tts.voice_clone.urlopen", fake_urlopen)
+    monkeypatch.setattr("deskbot_server.infrastructure.tts.voice_clone.urlopen", fake_urlopen)
     cfg = DoubaoVoiceCloneConfig(app_key="app-id", access_key="access-token")
 
     result = clone_doubao_voice(
@@ -88,7 +88,7 @@ def test_get_doubao_voice_clone_status_normalizes_speaker_status(monkeypatch):
         captured["timeout"] = timeout
         return FakeResponse()
 
-    monkeypatch.setattr("deskbot_server.tts.voice_clone.urlopen", fake_urlopen)
+    monkeypatch.setattr("deskbot_server.infrastructure.tts.voice_clone.urlopen", fake_urlopen)
     cfg = DoubaoVoiceCloneConfig(app_key="app-id", access_key="access-token")
 
     result = get_doubao_voice_clone_status(cfg, "S_ready")

@@ -360,7 +360,9 @@ def normalize_elements_for_wire(elements: dict[str, Any]) -> dict[str, Any]:
             out[key] = [
                 normalize_primitive_for_wire(p)
                 for p in val
-                if isinstance(p, dict) and str(p.get("shape") or "").strip()
+                if isinstance(p, dict)
+                and str(p.get("shape") or "").strip()
+                and str(p.get("shape") or "").strip().lower() != "image"
             ]
         else:
             out[key] = copy.deepcopy(val)

@@ -13,8 +13,7 @@
     调试豆包语音 2.0 双向 WebSocket TTS（<code>wss://openspeech.bytedance.com/api/v3/tts/bidirection</code>）。
     新版控制台只需配置 <code>API Key</code>（<code>X-Api-Key</code>）与 <code>speaker</code> 音色，保存后写入 <code>.env</code>。
   </p>
-  {% raw %}
-  <div id="app" class="tts-debug">
+    <div id="app" class="tts-debug">
     <div class="tts-layout">
     <div class="tts-main">
     <div class="card">
@@ -25,7 +24,7 @@
           <input v-model="cfg.api_key" class="inp mono" type="password" :placeholder="cfg.api_key_set ? '已配置，留空不修改' : 'Seed Speech API Key'" :disabled="savingCfg" />
         </label>
         <label class="field wide">
-          <span class="lbl">Speaker（音色）<span class="muted sm" v-if="speakers.length">（{{ filteredSpeakers.length }}/{{ speakers.length }}）</span></span>
+          <span class="lbl">Speaker（音色）<span class="muted sm" v-if="speakers.length">（[[ filteredSpeakers.length ]]/[[ speakers.length ]]）</span></span>
           <input
             v-model="speakerFilter"
             class="inp"
@@ -35,7 +34,7 @@
           <select v-model="speakerPreset" class="inp speaker-select" :disabled="savingCfg" @change="applySpeakerPreset" size="8">
             <option value="">从预设选择…</option>
             <option v-for="item in filteredSpeakers" :key="item.id" :value="item.id">
-              {{ item.scene ? '[' + item.scene + '] ' : '' }}{{ item.label }} — {{ item.id }}
+              [[ item.scene ? '[' + item.scene + '] ' : '' ]][[ item.label ]] — [[ item.id ]]
             </option>
           </select>
           <input
@@ -45,7 +44,7 @@
             :disabled="savingCfg"
             @input="syncSpeakerPreset"
           />
-          <span class="muted sm" v-if="speakerHint">{{ speakerHint }}</span>
+          <span class="muted sm" v-if="speakerHint">[[ speakerHint ]]</span>
         </label>
         <label class="field">
           <span class="lbl">Resource ID</span>
@@ -75,11 +74,11 @@
       </div>
       <div class="row-actions">
         <button type="button" class="btn-primary" :disabled="savingCfg" @click="saveConfig">
-          {{ savingCfg ? "保存中…" : "保存到 .env" }}
+          [[ savingCfg ? "保存中…" : "保存到 .env" ]]
         </button>
-        <span class="muted sm" v-if="saveMsg">{{ saveMsg }}</span>
+        <span class="muted sm" v-if="saveMsg">[[ saveMsg ]]</span>
       </div>
-      <p v-if="cfgErr" class="err">{{ cfgErr }}</p>
+      <p v-if="cfgErr" class="err">[[ cfgErr ]]</p>
     </div>
 
     <div class="card">
@@ -87,21 +86,21 @@
       <textarea v-model="draft" rows="3" class="ta" placeholder="输入要合成的文本" :disabled="pending"></textarea>
       <div class="row-actions">
         <button type="button" class="btn-primary" :disabled="pending || !draft.trim()" @click="run">
-          {{ pending ? "合成中…" : "合成并播放" }}
+          [[ pending ? "合成中…" : "合成并播放" ]]
         </button>
       </div>
-      <p v-if="err" class="err">{{ err }}</p>
+      <p v-if="err" class="err">[[ err ]]</p>
     </div>
 
     <div v-if="result" class="card">
       <h2 class="h2">结果</h2>
       <div class="meta-row sm">
         <span class="lbl">API 耗时</span>
-        <span class="val">{{ result.elapsed_ms }} ms</span>
+        <span class="val">[[ result.elapsed_ms ]] ms</span>
       </div>
       <div class="meta-row sm">
         <span class="lbl">PCM 总长</span>
-        <span class="val">{{ result.pcm_total_bytes }} bytes · {{ result.sample_rate }} Hz</span>
+        <span class="val">[[ result.pcm_total_bytes ]] bytes · [[ result.sample_rate ]] Hz</span>
       </div>
       <div v-if="audioUrl" class="row-audio">
         <audio :src="audioUrl" controls preload="none" class="audio-ctrl"></audio>
@@ -110,7 +109,7 @@
       </div>
       <details class="json-block" open>
         <summary>协议事件（不含音频二进制）</summary>
-        <pre class="json-pre">{{ jsonPretty }}</pre>
+        <pre class="json-pre">[[ jsonPretty ]]</pre>
       </details>
     </div>
     </div>
@@ -131,13 +130,13 @@
           @click="replayHistory(row)"
         >
           <div class="hist-row-top">
-            <span class="mono sm hist-time">{{ row.createdAt }}</span>
-            <span v-if="row.status === 'ok' && row.elapsed_ms != null" class="sm hist-ms">{{ row.elapsed_ms }} ms</span>
+            <span class="mono sm hist-time">[[ row.createdAt ]]</span>
+            <span v-if="row.status === 'ok' && row.elapsed_ms != null" class="sm hist-ms">[[ row.elapsed_ms ]] ms</span>
             <span v-else-if="row.status === 'error'" class="sm hist-err-badge">失败</span>
           </div>
-          <div class="hist-text">{{ row.text }}</div>
-          <div v-if="row.speaker" class="mono sm hist-speaker">{{ row.speaker }}</div>
-          <div v-if="row.status === 'error' && row.error" class="sm hist-err">{{ row.error }}</div>
+          <div class="hist-text">[[ row.text ]]</div>
+          <div v-if="row.speaker" class="mono sm hist-speaker">[[ row.speaker ]]</div>
+          <div v-if="row.status === 'error' && row.error" class="sm hist-err">[[ row.error ]]</div>
         </div>
       </div>
     </aside>
@@ -238,14 +237,17 @@
     }
     @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
   </style>
-  {% endraw %}
-  <script>
+  
+{% endblock %}
+{% block extra_js %}
+<script>
     const initial = window.__DOUBAO_TTS__ || {};
     const speakers = window.__DOUBAO_TTS_SPEAKERS__ || [];
     const TTS_DEBUG_HISTORY_LS_KEY = "deskbot_tts_debug_history";
     const TTS_DEBUG_HISTORY_MAX = 20;
     const { createApp } = Vue;
     createApp({
+      delimiters: ['[[', ']]'],
       data() {
         return {
           cfg: { api_key_set: false, ...initial },

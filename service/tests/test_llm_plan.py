@@ -200,31 +200,14 @@ def test_parse_llm_reply_volume():
     assert parsed["volume"] == 75
 
 
-def test_resize_jpeg_for_lcd_display():
-    import base64
-    import io
-
-    from PIL import Image
-
-    from deskbot_server.pb.llm_display import decode_llm_image_item, jpeg_blob_dimensions
-
-    buf = io.BytesIO()
-    Image.new("RGB", (320, 240), color=(40, 120, 200)).save(buf, format="JPEG")
-    b64 = base64.standard_b64encode(buf.getvalue()).decode("ascii")
-    dec = decode_llm_image_item({"b64": b64, "x": 0, "y": 0, "w": 284, "h": 240})
-    assert dec is not None
-    assert dec["w"] == 284 and dec["h"] == 240
-    assert jpeg_blob_dimensions(dec["bytes"]) == (284, 240)
-
-
-def test_parse_llm_reply_images():
+def test_parse_llm_reply_ignores_images():
     import base64
 
     b64 = base64.standard_b64encode(b"\xff\xd8\xff\xe0" + b"\x00" * 8).decode()
     raw = json.dumps({"tts": "看", "images": [{"b64": b64, "x": 0, "y": 0, "w": 100, "h": 80}]}, ensure_ascii=False)
     parsed = parse_llm_reply(raw)
     assert parsed["json_ok"] is True
-    assert len(parsed["images"]) == 1
+    assert "images" not in parsed
 
 
 def test_device_volume_persist(tmp_path, monkeypatch):

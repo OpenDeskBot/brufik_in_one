@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
 from deskbot_server.dao.servo_config_store import clamp_servo_step, servo_limits
 from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
-from deskbot_server.pb.shapes import PB_ACTION_REPLACE, PB_LEVEL_DEBUG
+from deskbot_server.pb.shapes import PB_ACTION_REPLACE, PB_LEVEL_IDLE
 from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled
 from deskbot_server.vision.camera_face_tune import (
     get_frontal_angle_threshold_deg,
@@ -139,7 +139,8 @@ async def camera_servo_follower_tick(hub: "AsrChatHub", device_id: str, analysis
         "chunk_ms": _SERVO_MS,
         "pb_ver": 2,
         "action": PB_ACTION_REPLACE,
-        "level": PB_LEVEL_DEBUG,
+        # idle：低于口播(level=1)；设备端纯舵机叠层，不会取消正在播放的音频。
+        "level": PB_LEVEL_IDLE,
         "servo": [step],
     }
     attach_pb_device_hints_from_config(payload)

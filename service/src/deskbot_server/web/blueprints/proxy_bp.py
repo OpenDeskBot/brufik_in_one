@@ -6,30 +6,31 @@ from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
-from deskbot_server.auth.device_service import device_ids_for_user, user_owns_device
 from deskbot_server.dao.api_key_service import read_free_api_key_raw
-from deskbot_server.web.flaskish import FlaskishAPIRoute, current_user, jsonify, login_required, request
+from deskbot_server.service.user_service import UserService
+from deskbot_server.web.deps import RequireUser
 from deskbot_server.web.helpers import deskbot_upstream_base
 from deskbot_server.web.session_device import get_current_device_id
+from deskbot_server.web.view_helpers import ViewAPIRoute, get_body, get_json, is_json_request, jsonify
 
 logger = logging.getLogger("deskbot-server")
 
-router = APIRouter(route_class=FlaskishAPIRoute, prefix="/proxy/deskbot", tags=["proxy"])
+router = APIRouter(route_class=ViewAPIRoute, prefix="/proxy/deskbot", tags=["proxy"])
 
 _DEVICE_PARAM_KEYS = ("device_id", "deviceid", "device", "id")
 
 
-def _extract_device_id_from_request() -> str | None:
+def _extract_device_id_from_request(request: Request) -> str | None:
     for key in _DEVICE_PARAM_KEYS:
-        val = (request.args.get(key) or "").strip()
+        val = (request.query_params.get(key) or "").strip()
         if val:
             return val
-    if request.is_json:
-        payload = request.get_json(silent=True) or {}
+    if is_json_request(request):
+        payload = get_json(request, silent=True) or {}
         if isinstance(payload, dict):
             val = str(payload.get("device_id") or "").strip()
             if val:
@@ -57,18 +58,17 @@ def _requires_device_id(path: str) -> bool:
 
 
 @router.api_route("/{subpath:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-@login_required
-def proxy_deskbot(subpath: str):
+def proxy_deskbot(request: Request, subpath: str, user: RequireUser):
     path = "/" + subpath.lstrip("/")
     method = request.method.upper()
 
     if method == "OPTIONS":
         return Response(status_code=204)
 
-    allowed_ids = device_ids_for_user(current_user.id)
+    allowed_ids = UserService().device_ids_for_user(user.id)
 
     if path == "/api/devices":
-        upstream = _forward(method, path, user_id=current_user.id, allowed_ids=allowed_ids)
+        upstream = _forward(request, method, path, user_id=user.id, allowed_ids=allowed_ids)
         if upstream.status_code != 200:
             return upstream
         try:
@@ -82,25 +82,25 @@ def proxy_deskbot(subpath: str):
             return jsonify(data)
         return upstream
 
-    device_id = _extract_device_id_from_request()
+    device_id = _extract_device_id_from_request(request)
     if device_id:
         if device_id not in allowed_ids:
             return jsonify({"ok": False, "error": "无权操作该设备"}), 403
     elif _requires_device_id(path):
-        current = get_current_device_id()
+        current = get_current_device_id(request)
         if not current:
             return jsonify({"ok": False, "error": "请先选择设备"}), 400
         device_id = current
         if device_id not in allowed_ids:
             return jsonify({"ok": False, "error": "无权操作该设备"}), 403
 
-    if path == "/api/face_profiles/register" and request.is_json:
-        payload = request.get_json(silent=True) or {}
+    if path == "/api/face_profiles/register" and is_json_request(request):
+        payload = get_json(request, silent=True) or {}
         did = str(payload.get("device_id") or "").strip()
-        if did and not user_owns_device(current_user.id, did):
+        if did and not UserService().user_owns_device(user.id, did):
             return jsonify({"ok": False, "error": "无权操作该设备"}), 403
 
-    return _forward(method, path, device_id=device_id, user_id=current_user.id, allowed_ids=allowed_ids)
+    return _forward(request, method, path, device_id=device_id, user_id=user.id, allowed_ids=allowed_ids)
 
 
 def _upstream_auth_headers(*, user_id: str | None = None) -> dict[str, str]:
@@ -116,6 +116,7 @@ def _upstream_auth_headers(*, user_id: str | None = None) -> dict[str, str]:
 
 
 def _forward(
+    request: Request,
     method: str,
     path: str,
     *,
@@ -124,7 +125,7 @@ def _forward(
     allowed_ids: set[str] | None = None,
 ) -> Response:
     base = deskbot_upstream_base().rstrip("/")
-    query = request.query_string.decode("utf-8")
+    query = (request.url.query or "").encode("utf-8").decode("utf-8")
     if device_id and "device_id=" not in query:
         extra = urlparse.urlencode({"device_id": device_id})
         query = f"{query}&{extra}" if query else extra
@@ -135,15 +136,15 @@ def _forward(
     headers = _upstream_auth_headers(user_id=user_id)
     data = None
     if method in ("POST", "PUT", "PATCH"):
-        if request.is_json:
-            payload = request.get_json(silent=True)
+        if is_json_request(request):
+            payload = get_json(request, silent=True)
             if isinstance(payload, dict) and device_id and not payload.get("device_id"):
                 payload = {**payload, "device_id": device_id}
             data = json.dumps(payload or {}).encode("utf-8")
             headers["Content-Type"] = "application/json"
         else:
-            data = request.get_data()
-            ctype = request.content_type
+            data = get_body(request)
+            ctype = request.headers.get("content-type")
             if ctype:
                 headers["Content-Type"] = ctype
 

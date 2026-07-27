@@ -143,20 +143,6 @@ def test_resolve_pb_device_hints_no_auto_volume():
     assert resolve_pb_device_hints(None, volume=55) == 55
 
 
-def test_pb_json_messages_assets_binary_order():
-    jpeg = b"\xff\xd8\xff" + b"\x00" * 100
-    row = {
-        "chunk_ms": 200,
-        "anim": [make_anim_item({"extra": [{"shape": "image", "asset": 0, "x": 0, "y": 0, "w": 10, "h": 10}]}, 200)],
-        "_assets": [jpeg],
-    }
-    msg, bins = pb_json_messages(
-        pb_req="abc", sample_rate=24000, fmt="s16le", channels=1, anim_rows=[row], pcm_per_idx=[b""]
-    )[0]
-    assert msg["assets"][0]["next_bin_len"] == len(jpeg)
-    assert bins == [jpeg]
-
-
 def test_parse_pb_volume():
     assert parse_pb_volume(None) is None
     assert parse_pb_volume(85) == 85

@@ -7,24 +7,20 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from deskbot_server.auth.service import get_user_by_id
 from deskbot_server.infrastructure.flash.rom_flash import flash_manager, validate_port
+from deskbot_server.service.user_service import UserService
 
 logger = logging.getLogger("deskbot-server")
 
 router = APIRouter(tags=["flash-ws"])
 
 
-def _session_user_id(websocket: WebSocket) -> int | None:
+def _session_user_id(websocket: WebSocket) -> str | None:
     session = websocket.scope.get("session") or {}
-    raw = session.get("user_id")
-    if raw is None:
+    uid = str(session.get("user_id") or "").strip()
+    if not uid:
         return None
-    try:
-        uid = int(raw)
-    except (TypeError, ValueError):
-        return None
-    user = get_user_by_id(uid)
+    user = UserService().get_user(uid)
     if user is None or not getattr(user, "is_active", True):
         return None
     return uid

@@ -111,7 +111,7 @@ def test_collect_missing_servo_presets(tmp_path, monkeypatch):
             return str(servo_path)
         return str(tmp_path / str(path or "x"))
 
-    monkeypatch.setattr("deskbot_server.device_data.resolve_json_path", _resolve)
+    monkeypatch.setattr("deskbot_server.utils.device_data.resolve_json_path", _resolve)
     monkeypatch.setattr("deskbot_server.servo_config_store.resolve_json_path", _resolve)
 
     pb = {

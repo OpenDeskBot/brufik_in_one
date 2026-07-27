@@ -10,7 +10,6 @@ from starlette.websockets import WebSocketDisconnect
 from websockets.exceptions import ConnectionClosed
 
 from deskbot_server.constants import SAFE_SEND_TIMEOUT
-from deskbot_server.ws.pb_idle_registry import note_pb_idle_after_successful_asr_send
 
 logger = logging.getLogger("deskbot-server")
 
@@ -150,9 +149,5 @@ class WsUtils:
         """
         if timeout is None:
             timeout = WsUtils.send_timeout_for_message(message)
-        ok = False
         async with WsUtils.get_ws_send_lock(websocket):
-            ok = await WsUtils.safe_send_once(websocket, message, timeout=timeout)
-        if ok:
-            note_pb_idle_after_successful_asr_send(websocket)
-        return ok
+            return await WsUtils.safe_send_once(websocket, message, timeout=timeout)

@@ -7,14 +7,15 @@ import pytest
 
 @pytest.fixture()
 def session_env(tmp_path, monkeypatch):
-    from deskbot_server import device_data as dd
+    from deskbot_server.utils import device_data as dd
     from deskbot_server.dao import session_store as ss
+    from deskbot_server.ws.device_pin import set_online_pin
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setattr(dd, "DATA_DIR", data_dir)
-    monkeypatch.setattr(dd, "DEVICE_DATA_ROOT", data_dir / "device")
     monkeypatch.setattr(ss, "SESSION_IDLE_SECONDS", 600)
+    set_online_pin("deskbot_test", "1234")
     return data_dir, ss
 
 
@@ -34,7 +35,7 @@ def test_create_and_append_turn(session_env):
     assert updated["messages"][1]["role"] == "assistant"
     assert updated["messages"][1]["message"] == "今天晴"
 
-    path = data_dir / "device" / dev / "session" / f"{session['session_id']}.json"
+    path = data_dir / f"{dev}_1234" / "session" / f"{session['session_id']}.json"
     assert path.is_file()
     raw = json.loads(path.read_text(encoding="utf-8"))
     assert raw["title"] == "今天天气怎么样"

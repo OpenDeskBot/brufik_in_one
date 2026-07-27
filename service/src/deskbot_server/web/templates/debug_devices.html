@@ -52,17 +52,9 @@
                      @change="cvOnVoiceAutoReplyChange($event)" />
               <span>自动应答（关=不触发 LLM/TTS 及任何自动下发）</span>
             </label>
-            <label class="cv-voice-auto-lbl dv-config-opt" :class="{ 'dv-config-opt-off': !cvVoiceAutoReply }">
-              <input type="checkbox"
-                     :checked="cvPbIdleAutoDispatch"
-                     :disabled="!cvVoiceAutoReply || cvPbIdleAutoDispatchSaving"
-                     @change="cvOnPbIdleAutoDispatchChange($event)" />
-              <span>自动下发 idle（须开启自动应答；关=不下发低头沉默）</span>
-            </label>
           </div>
-          <p v-if="cvVoiceAutoReplySaving || cvPbIdleAutoDispatchSaving" class="muted sm dv-config-saving">保存中…</p>
+          <p v-if="cvVoiceAutoReplySaving" class="muted sm dv-config-saving">保存中…</p>
           <p v-if="cvVoiceAutoReplyErr" class="dv-err">{{ cvVoiceAutoReplyErr }}</p>
-          <p v-if="cvPbIdleAutoDispatchErr" class="dv-err">{{ cvPbIdleAutoDispatchErr }}</p>
           <p class="muted sm dv-config-status">
             订阅：<span :class="['dv-status', debugEnabled && dpConnected ? 'ok' : 'bad']">{{ debugEnabled ? dpStatus : '未开始' }}</span>
             <span v-if="debugEnabled"> · 画面 {{ cvConnected ? '已连接' : cvStatus }}</span>
@@ -2039,9 +2031,6 @@
           cvVoiceAutoReply: true,
           cvVoiceAutoReplySaving: false,
           cvVoiceAutoReplyErr: "",
-          cvPbIdleAutoDispatch: true,
-          cvPbIdleAutoDispatchSaving: false,
-          cvPbIdleAutoDispatchErr: "",
           _cvServoStatusTimer: null,
           _cvFpsTimer: null,
           _cvLastFpsSample: { ts: 0, count: 0 },
@@ -2897,44 +2886,6 @@
             this.cvVoiceAutoReplySaving = false;
           }
         },
-        async cvFetchPbIdleAutoDispatch() {
-          this.cvPbIdleAutoDispatchErr = "";
-          try {
-            const res = await fetch(this.httpBase + "/api/pb_idle_auto_dispatch", { cache: "no-store" });
-            if (!res.ok) throw new Error("HTTP " + res.status);
-            const d = await res.json();
-            const en = d && d.ok ? this._cvCoerceAutoReplyEnabled(d.enabled) : null;
-            if (en !== null) this.cvPbIdleAutoDispatch = en;
-          } catch (e) {
-            this.cvPbIdleAutoDispatchErr = "读取自动下发 idle 开关失败：" + (e && e.message ? e.message : e);
-          }
-        },
-        async cvOnPbIdleAutoDispatchChange(ev) {
-          const el = ev && ev.target;
-          const want = !!(el && el.checked);
-          const prev = this.cvPbIdleAutoDispatch;
-          this.cvPbIdleAutoDispatch = want;
-          this.cvPbIdleAutoDispatchSaving = true;
-          this.cvPbIdleAutoDispatchErr = "";
-          try {
-            const q = want ? "1" : "0";
-            const res = await fetch(this.httpBase + "/api/pb_idle_auto_dispatch?enabled=" + q, { cache: "no-store" });
-            if (!res.ok) throw new Error("HTTP " + res.status);
-            const d = await res.json();
-            if (!d || !d.ok) throw new Error((d && d.error) || "bad response");
-            const en = this._cvCoerceAutoReplyEnabled(d.enabled);
-            if (en !== null) {
-              this.cvPbIdleAutoDispatch = en;
-              if (el) el.checked = en;
-            }
-          } catch (e) {
-            this.cvPbIdleAutoDispatch = prev;
-            if (el) el.checked = prev;
-            this.cvPbIdleAutoDispatchErr = "保存自动下发 idle 开关失败：" + (e && e.message ? e.message : e);
-          } finally {
-            this.cvPbIdleAutoDispatchSaving = false;
-          }
-        },
 
         ownedDeviceRows() {
           return Array.isArray(window.__OWNED_DEVICES__) ? window.__OWNED_DEVICES__ : [];
@@ -3181,7 +3132,6 @@
             asr: "语音对话",
             text: "文本",
             device_tts: "TTS 下发",
-            auto_idle_silence: "idle·低头",
             auto_idle_snore: "idle·打盹",
             auto_face_follow: "人脸跟随",
           };
@@ -6110,7 +6060,6 @@
         void this.cvFetchSavedProfiles();
         // 人脸跟随舵机由服务端 /asr_chat camera_frame + debug.camera_servo_auto_mode 下发
         void this.cvFetchVoiceAutoReply();
-        void this.cvFetchPbIdleAutoDispatch();
         void this.cvFetchServoAutoMode();
         void this.exprScenesLoadForPreview();
         await this.spLoadFromFile();

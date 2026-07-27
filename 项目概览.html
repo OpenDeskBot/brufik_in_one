@@ -243,7 +243,7 @@
     <tr><td><b>音频播放</b></td><td>speaker</td><td>I2S 输出 + DMA 队列，支持 PCM 流 / WAV / 音量控制</td></tr>
     <tr><td><b>转头控制</b></td><td>head</td><td>双轴舵机 50Hz 刷新，斜坡平滑运动，预置点头/摇头/看向手势</td></tr>
     <tr><td><b>显示</b></td><td>oled_display</td><td>ST7789 驱动，从 pb 动画帧渲染表情/口型/文字（含 UTF-8）</td></tr>
-    <tr><td><b>摄像头</b></td><td>camera_ws / camera_http</td><td>OV2640 采 JPEG，WebSocket 上行（帧率可由后台调）</td></tr>
+    <tr><td><b>摄像头</b></td><td>asr_chat（camera_frame）</td><td>OV2640 采 JPEG，经主链路 WebSocket 上行（帧率可由后台调）</td></tr>
     <tr><td><b>配网</b></td><td>wifi_provision</td><td>NVS 存最多 10 个 SSID；无网时开热点 <code>Deskbot_Rom</code>（192.168.4.1）配网</td></tr>
   </table>
   <div class="note"><b>启动顺序的小心思：</b>舵机引脚 GPIO44/43 与 UART 复用，专门做了自定义 bootloader 钩子，避免上电/烧录时舵机被误触发抽动；摄像头初始化后才挂载舵机。</div>

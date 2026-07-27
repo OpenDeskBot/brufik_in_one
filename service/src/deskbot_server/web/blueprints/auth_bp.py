@@ -2,25 +2,16 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
-from deskbot_server.auth.flask_user import FlaskUser
-from deskbot_server.auth.service import create_user, get_user_by_email, normalize_email, verify_password
+from deskbot_server.auth.session_user import SessionUser
 from deskbot_server.db.engine import remove_session
-from deskbot_server.web.flaskish import (
-    FlaskishAPIRoute,
-    current_user,
-    flash,
-    login_required,
-    login_user,
-    logout_user,
-    redirect,
-    render_template,
-    request,
-    url_for,
-)
+from deskbot_server.service.user_service import UserService
+from deskbot_server.web.deps import RequireUser, load_session_user
+from deskbot_server.web.urls import flash, url_for
+from deskbot_server.web.view_helpers import ViewAPIRoute, form_get, redirect, render_template
 
-router = APIRouter(route_class=FlaskishAPIRoute, tags=["auth"])
+router = APIRouter(route_class=ViewAPIRoute, tags=["auth"])
 
 
 def _safe_next_url(raw: str | None) -> str:
@@ -35,53 +26,63 @@ def _safe_next_url(raw: str | None) -> str:
 
 
 @router.get("/login")
-def login():
-    if current_user.is_authenticated:
+def login(request: Request):
+    if load_session_user(request) is not None:
         return redirect(url_for("app2c.home"))
-    return render_template("auth/login.html", next_url=_safe_next_url(request.args.get("next")))
+    return render_template(
+        request,
+        "auth/login.html",
+        next_url=_safe_next_url(request.query_params.get("next")),
+    )
 
 
 @router.post("/login")
-def login_post():
-    email = normalize_email(request.form.get("email") or "")
-    password = request.form.get("password") or ""
-    next_url = _safe_next_url(request.form.get("next") or request.args.get("next"))
+def login_post(request: Request):
+    users = UserService()
+    email = users.normalize_email(form_get(request, "email") or "")
+    password = form_get(request, "password") or ""
+    next_url = _safe_next_url(form_get(request, "next") or request.query_params.get("next"))
 
-    user = get_user_by_email(email)
-    if user is None or not user.is_active or not verify_password(user, password):
-        flash("邮箱或密码错误", "error")
-        return render_template("auth/login.html", next_url=next_url, email=email), 401
+    try:
+        user = users.login(email, password)
+    except ValueError:
+        flash(request, "邮箱或密码错误", "error")
+        return render_template(request, "auth/login.html", next_url=next_url, email=email), 401
 
-    login_user(FlaskUser(user), remember=True)
+    from deskbot_server.web.view_helpers import login_user
+
+    login_user(request, SessionUser(user), remember=True)
     remove_session()
     return redirect(next_url)
 
 
 @router.get("/register")
-def register():
-    if current_user.is_authenticated:
+def register(request: Request):
+    if load_session_user(request) is not None:
         return redirect(url_for("app2c.home"))
-    return render_template("auth/register.html")
+    return render_template(request, "auth/register.html")
 
 
 @router.post("/register")
-def register_post():
-    email = normalize_email(request.form.get("email") or "")
-    password = request.form.get("password") or ""
-    confirm = request.form.get("confirm_password") or ""
+def register_post(request: Request):
+    users = UserService()
+    email = users.normalize_email(form_get(request, "email") or "")
+    password = form_get(request, "password") or ""
+    confirm = form_get(request, "confirm_password") or ""
     if password != confirm:
-        flash("两次密码不一致", "error")
-        return render_template("auth/register.html", email=email), 400
+        flash(request, "两次密码不一致", "error")
+        return render_template(request, "auth/register.html", email=email), 400
     try:
-        user = create_user(email, password)
+        user = users.register(email, password)
     except ValueError as exc:
-        flash(str(exc), "error")
-        return render_template("auth/register.html", email=email), 400
+        flash(request, str(exc), "error")
+        return render_template(request, "auth/register.html", email=email), 400
 
-    login_user(FlaskUser(user), remember=True)
+    from deskbot_server.web.view_helpers import login_user
+
+    login_user(request, SessionUser(user), remember=True)
     remove_session()
-    flash("注册成功，欢迎加入！", "success")
-    # 新用户：若还没有可用的大模型（本地未配置 Ark/LLM 密钥），先进入统一模型配置页。
+    flash(request, "注册成功，欢迎加入！", "success")
     from deskbot_server.infrastructure.llm.runtime import resolve_system_llm_config
 
     key = str(resolve_system_llm_config().api_key or "").strip()
@@ -91,11 +92,12 @@ def register_post():
 
 
 @router.post("/logout")
-@login_required
-def logout():
-    logout_user()
+def logout(request: Request, user: RequireUser):
+    from deskbot_server.web.view_helpers import logout_user
+
+    logout_user(request)
     remove_session()
-    flash("已退出登录", "info")
+    flash(request, "已退出登录", "info")
     return redirect(url_for("site.index"))
 
 

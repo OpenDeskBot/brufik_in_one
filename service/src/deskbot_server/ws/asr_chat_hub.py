@@ -2,26 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import time
-import uuid
 import weakref
 from typing import Any, Optional
 
-from deskbot_server.constants import FACE_DESIGN_FILE
-from deskbot_server.dao.face_expr_scenes_store import (
-    design_frames_to_pb_chain,
-    find_design_scene_by_name,
-    load_face_expr_scenes_file,
-)
 from deskbot_server.infrastructure.llm.utils import coerce_pb_v2_downlink_payload
 from deskbot_server.pb.payload_types import _is_pb_downlink_payload
-from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
-from deskbot_server.pb.shapes import PB_ACTION_DEFAULT, PB_LEVEL_IDLE, apply_pb_dispatch_fields
 from deskbot_server.pb.wire import device_pb_json_msg
-from deskbot_server.utils.ws_utils import WsUtils
-from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event
-from deskbot_server.ws.pb_idle_registry import note_pb_idle_for_device
 from deskbot_server.ws.ws_send import (
     _pb_ws_chain_serial_lock,
     _PerWsFireAndForget,
@@ -59,7 +45,7 @@ def _log_pb_tx_wire(device_id: str, payload: dict, wire: str, *, label: str = ""
 class AsrChatHub:
     """按 device_id 索引当前所有 /asr_chat 长连接，允许其它通道主动下发消息。
 
-    可选用途：设备经 ``/camera_uplink`` 或 ``/asr_chat`` 上行 JPEG 后，服务端只做入库/
+    可选用途：设备经 ``/asr_chat`` 上行 JPEG 后，服务端只做入库/
     调试预览，不再因相机结果经本 hub 回写设备。
 
     ``device_pb_only`` 为 true 时：经 :meth:`send` 仅接受 ``pb_*`` 载荷，且与同连接 TTS 共用
@@ -71,20 +57,10 @@ class AsrChatHub:
         self._lock = asyncio.Lock()
         # 给 ESP32 反压（比如它在播 TTS 时 RX 满）时不会卡住调用方
         self._fanout = _PerWsFireAndForget()
-        # 每条 /asr_chat WebSocket -> device_id（供下行空闲打盹计时；WeakKey 随 ws 释放）
+        # 每条 /asr_chat WebSocket -> device_id（WeakKey 随 ws 释放）
         self._asr_ws_dev = weakref.WeakKeyDictionary()
-        self.pb_idle_snore: Optional[Any] = None
-        self.pb_idle_silence: Optional[Any] = None
         self._device_pb_only = bool(device_pb_only)
         self.pipeline_broker = pipeline_broker
-        # pb_idle_silence 自身下行：跳过一次 idle 计时刷新（异步 send 回调）
-        self._skip_idle_note_once: set[str] = set()
-
-    def consume_skip_idle_note(self, device_id: str) -> bool:
-        if device_id in self._skip_idle_note_once:
-            self._skip_idle_note_once.discard(device_id)
-            return True
-        return False
 
     def ws_asr_device_id(self, ws) -> Optional[str]:
         return self._asr_ws_dev.get(ws)
@@ -101,7 +77,9 @@ class AsrChatHub:
         setattr(ws, "_asr_chat_pb_serial_queue", self._device_pb_only)
         for old in stale:
             await self._close_superseded_connection(device_id, old)
-        note_pb_idle_for_device(device_id)
+        from deskbot_server.service.live_service import LiveService
+
+        LiveService().start(device_id)
 
     async def _close_superseded_connection(self, device_id: str, ws) -> None:
         """同 device 新连接接入时关闭旧 /asr_chat，避免 delivered=2 与 zombie 连接。"""
@@ -128,9 +106,9 @@ class AsrChatHub:
         await _stop_pb_device_downlink_worker(ws)
         self._fanout.discard(ws)
         if removed_last:
-            for sched in (self.pb_idle_snore, self.pb_idle_silence):
-                if sched is not None:
-                    sched.cancel_for_device(device_id)
+            from deskbot_server.service.live_service import LiveService
+
+            LiveService().stop(device_id)
 
     async def first_ws(self, device_id: str):
         """返回该 device 任意一条已连接的 ``/asr_chat`` WebSocket（供 HTTP 下行复用）。"""
@@ -141,6 +119,7 @@ class AsrChatHub:
             return next(iter(conns), None) if conns else None
 
     async def send(self, device_id: str, payload: dict, *, skip_idle_refresh: bool = False) -> int:
+        del skip_idle_refresh  # 兼容旧调用方；idle 已由 LiveService 接管
         if not device_id:
             return 0
         payload = coerce_pb_v2_downlink_payload(payload)
@@ -150,8 +129,6 @@ class AsrChatHub:
             targets = list(self._by_device.get(device_id, ()))
         if not targets:
             return 0
-        if skip_idle_refresh:
-            self._skip_idle_note_once.add(device_id)
         wire = device_pb_json_msg(payload)
         _log_pb_tx_wire(device_id, payload, wire, label="single")
         sent = 0
@@ -161,8 +138,6 @@ class AsrChatHub:
                 sent += 1
             elif self._fanout.submit(ws, wire):
                 sent += 1
-        if skip_idle_refresh and sent <= 0:
-            self._skip_idle_note_once.discard(device_id)
         return sent
 
     async def send_pb_chain_ordered(
@@ -291,286 +266,3 @@ class AsrChatHub:
                     if ok_t and ok_b:
                         n += 1
         return n
-
-
-class PbIdleSnoreAfterDownlink:
-    """记录「距上次成功下行」的空闲时长：每次有数据写到该设备的 ``/asr_chat`` WebSocket 则重新计时；
-    连续空闲 ``idle_sec`` 秒后向该设备顺序下发指定场景。多帧链在 ``device_pb_only`` 下须原子入队；
-    ``level=0``（idle）+ ``action=default``：队列中更高优先级序列不超过 1 条时追加，否则丢弃（见 docs/esp32_pb_protocol.md §7）。
-
-    与摄像头 JPEG 同步：**``is_frontal``（正脸）** 为真时刷新空闲打盹计时且**不下发**打盹场景。
-    （调试页「注视感知」另含虹膜区间，仅用于舵机；打盹抑制只看正脸，避免虹膜略偏仍下发 sleep。）
-    """
-
-    _GAZE_STALE_SEC = 0.7
-    _GAZE_NOTE_MIN_INTERVAL = 0.25
-
-    def __init__(self, hub: AsrChatHub, *, idle_sec: float, scene_name: str) -> None:
-        self._hub = hub
-        self._idle_sec = float(idle_sec)
-        self._scene_lc = (scene_name or "").strip().lower()
-        self._tasks: dict = {}
-        self._gaze_frontal: dict[str, bool] = {}
-        self._gaze_last_mono: dict[str, float] = {}
-        self._gaze_last_note_mono: dict[str, float] = {}
-        # 下发 sleep_snore 等链时，各片会触发 note_activity；若此时 _reschedule 取消正在 await 的
-        # _sleep_then_fire，协程会在首帧后即被取消，后续 chunk/end 发不出去。
-        self._suppress_note_devices: set[str] = set()
-
-    def _gaze_blocks_idle_snore(self, device_id: str) -> bool:
-        """最近一帧摄像头仍为正脸（``is_frontal``）且流未断（无新帧超过 _GAZE_STALE_SEC 视为已离开）。"""
-        if not device_id or not self._gaze_frontal.get(device_id):
-            return False
-        last = self._gaze_last_mono.get(device_id)
-        if last is None:
-            return False
-        return (time.monotonic() - last) < self._GAZE_STALE_SEC
-
-    def on_camera_gaze_tick(self, device_id: str, frontal: bool) -> None:
-        """由 camera_frame 每帧调用：``frontal`` 为 ``is_frontal``；正脸时刷新打盹计时。"""
-        if not device_id or self._idle_sec <= 0:
-            return
-        now = time.monotonic()
-        self._gaze_last_mono[device_id] = now
-        prev = self._gaze_frontal.get(device_id)
-        self._gaze_frontal[device_id] = frontal
-        if frontal:
-            last_note = self._gaze_last_note_mono.get(device_id, 0.0)
-            if now - last_note >= self._GAZE_NOTE_MIN_INTERVAL:
-                self._gaze_last_note_mono[device_id] = now
-                self.note_activity(device_id)
-        elif prev is True:
-            self._gaze_last_note_mono.pop(device_id, None)
-            self.note_activity(device_id)
-
-    def note_activity(self, device_id: str) -> None:
-        from deskbot_server.service.pb_idle_dispatch import pb_idle_auto_dispatch_active
-
-        if not pb_idle_auto_dispatch_active():
-            self.cancel_for_device(device_id)
-            return
-        if not device_id or self._idle_sec <= 0:
-            return
-        if device_id in self._suppress_note_devices:
-            return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        loop.call_soon(self._reschedule, device_id)
-
-    def cancel_for_device(self, device_id: str) -> None:
-        if not device_id:
-            return
-        old = self._tasks.pop(device_id, None)
-        if old is not None and not old.done():
-            old.cancel()
-        self._gaze_frontal.pop(device_id, None)
-        self._gaze_last_mono.pop(device_id, None)
-        self._gaze_last_note_mono.pop(device_id, None)
-
-    def cancel_all(self) -> None:
-        for device_id in list(self._tasks.keys()):
-            self.cancel_for_device(device_id)
-
-    def _reschedule(self, device_id: str) -> None:
-        old = self._tasks.pop(device_id, None)
-        try:
-            cur = asyncio.current_task()
-        except RuntimeError:
-            cur = None
-        if old is not None and not old.done() and old is not cur:
-            old.cancel()
-        self._tasks[device_id] = asyncio.create_task(self._sleep_then_fire(device_id))
-
-    async def _sleep_then_fire(self, device_id: str) -> None:
-        this = asyncio.current_task()
-        try:
-            await asyncio.sleep(self._idle_sec)
-            await self._deliver_scene(device_id)
-        except asyncio.CancelledError:
-            raise
-        finally:
-            if self._tasks.get(device_id) is this:
-                self._tasks.pop(device_id, None)
-
-    async def _deliver_scene(self, device_id: str) -> None:
-        from deskbot_server.service.pb_idle_dispatch import pb_idle_auto_dispatch_active
-
-        if not pb_idle_auto_dispatch_active():
-            return
-        if not self._scene_lc:
-            return
-        if self._gaze_blocks_idle_snore(device_id):
-            logger.info(
-                "[pb_idle_snore] 跳过：正脸 is_frontal，重新计时 device_id=%s scene=%s", device_id, self._scene_lc
-            )
-            self.note_activity(device_id)
-            return
-        rows = load_face_expr_scenes_file(seed_if_missing=False, device_id=device_id) or []
-        ent = find_design_scene_by_name(rows, self._scene_lc)
-        if ent is None:
-            logger.warning(
-                "[pb_idle_snore] 场景 %r 不在 %s 中，无法下发 device_id=%s",
-                self._scene_lc,
-                os.path.basename(FACE_DESIGN_FILE),
-                device_id,
-            )
-            return
-        req_id = uuid.uuid4().hex[:16]
-        pairs = design_frames_to_pb_chain(ent.get("frames") or [], runtime_req=req_id)
-        if not pairs:
-            return
-        frames = [msg for msg, _bins in pairs]
-        binaries_per_frame = [list(_bins) for _msg, _bins in pairs]
-        apply_pb_dispatch_fields(frames, action=PB_ACTION_DEFAULT, level=PB_LEVEL_IDLE)
-        self._suppress_note_devices.add(device_id)
-        n = 0
-        try:
-            n = await self._hub.send_pb_chain_ordered(device_id, frames, binaries_per_frame=binaries_per_frame)
-            logger.info(
-                "[pb_idle_snore] scene=%s level=%d action=%s device_id=%s req=%s frames=%d ws_sends=%d",
-                self._scene_lc,
-                PB_LEVEL_IDLE,
-                PB_ACTION_DEFAULT,
-                device_id,
-                req_id,
-                len(frames),
-                n,
-            )
-        except Exception:
-            logger.exception("[pb_idle_snore] 下发失败 scene=%s device_id=%s", self._scene_lc, device_id)
-        finally:
-            self._suppress_note_devices.discard(device_id)
-        scene_title = str(ent.get("title") or self._scene_lc).strip()
-        await publish_auto_dispatch_event(
-            self._hub.pipeline_broker,
-            device_id=device_id,
-            request_id=req_id,
-            source="auto_idle_snore",
-            summary=f"idle 场景 {scene_title}（{len(frames)} 帧）",
-            status="ok" if n > 0 else "error",
-            error=None if n > 0 else "未送达 WebSocket",
-        )
-        # 整链发完后重新起算空闲窗口（与「任一下行刷新计时」一致）
-        self.note_activity(device_id)
-
-
-class PbIdleSilenceServoAfterDownlink:
-    """距上次成功 pb 下行空闲 ``idle_sec`` 秒后，下发低头沉默舵机（绝对 x=90 y=80）。"""
-
-    _SILENCE_SERVO_X = 90
-    _SILENCE_SERVO_Y = 80
-    _SILENCE_SERVO_MS = 500
-
-    def __init__(self, hub: AsrChatHub, *, idle_sec: float) -> None:
-        self._hub = hub
-        self._idle_sec = float(idle_sec)
-        self._tasks: dict = {}
-        # 下发低头沉默时会触发 note_activity；抑制以免取消正在 await 的计时协程
-        self._suppress_note_devices: set[str] = set()
-        # 已成功下发低头沉默，且其间无其它 pb 下行
-        self._silence_already_sent: set[str] = set()
-
-    def note_activity(self, device_id: str) -> None:
-        from deskbot_server.service.pb_idle_dispatch import pb_idle_auto_dispatch_active
-
-        if not pb_idle_auto_dispatch_active():
-            self.cancel_for_device(device_id)
-            return
-        if not device_id or self._idle_sec <= 0:
-            return
-        if device_id in self._suppress_note_devices:
-            return
-        self._silence_already_sent.discard(device_id)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        loop.call_soon(self._reschedule, device_id)
-
-    def cancel_for_device(self, device_id: str) -> None:
-        if not device_id:
-            return
-        old = self._tasks.pop(device_id, None)
-        if old is not None and not old.done():
-            old.cancel()
-        self._silence_already_sent.discard(device_id)
-
-    def cancel_all(self) -> None:
-        for device_id in list(self._tasks.keys()):
-            self.cancel_for_device(device_id)
-
-    def _reschedule(self, device_id: str) -> None:
-        old = self._tasks.pop(device_id, None)
-        try:
-            cur = asyncio.current_task()
-        except RuntimeError:
-            cur = None
-        if old is not None and not old.done() and old is not cur:
-            old.cancel()
-        self._tasks[device_id] = asyncio.create_task(self._sleep_then_fire(device_id))
-
-    async def _sleep_then_fire(self, device_id: str) -> None:
-        this = asyncio.current_task()
-        try:
-            await asyncio.sleep(self._idle_sec)
-            await self._deliver_silence_servo(device_id)
-        except asyncio.CancelledError:
-            raise
-        finally:
-            if self._tasks.get(device_id) is this:
-                self._tasks.pop(device_id, None)
-
-    async def _deliver_silence_servo(self, device_id: str) -> None:
-        from deskbot_server.service.pb_idle_dispatch import pb_idle_auto_dispatch_active
-
-        if not pb_idle_auto_dispatch_active():
-            return
-        if device_id in self._silence_already_sent:
-            logger.info("[pb_idle_silence] 跳过：上次已是低头沉默，等待其它 pb 下行 device_id=%s", device_id)
-            return
-        if not await self._hub.first_ws(device_id):
-            return
-        req_id = uuid.uuid4().hex[:16]
-        ms = self._SILENCE_SERVO_MS
-        payload = {
-            "type": "pb_single",
-            "req": req_id,
-            "idx": 0,
-            "chunk_ms": ms,
-            "pb_ver": 2,
-            "action": PB_ACTION_DEFAULT,
-            "level": PB_LEVEL_IDLE,
-            "servo": [{"xm": 0, "ym": 0, "x": self._SILENCE_SERVO_X, "y": self._SILENCE_SERVO_Y, "ms": ms}],
-        }
-        attach_pb_device_hints_from_config(payload)
-        self._suppress_note_devices.add(device_id)
-        n = 0
-        try:
-            n = await self._hub.send(device_id, payload, skip_idle_refresh=True)
-            if n <= 0:
-                return
-            self._silence_already_sent.add(device_id)
-            logger.info(
-                "[pb_idle_silence] 低头沉默 device_id=%s req=%s x=%d y=%d xm=0 ym=0 delivered=%d",
-                device_id,
-                req_id,
-                self._SILENCE_SERVO_X,
-                self._SILENCE_SERVO_Y,
-                n,
-            )
-        except Exception:
-            logger.exception("[pb_idle_silence] 下发失败 device_id=%s", device_id)
-            return
-        finally:
-            self._suppress_note_devices.discard(device_id)
-        await publish_auto_dispatch_event(
-            self._hub.pipeline_broker,
-            device_id=device_id,
-            request_id=req_id,
-            source="auto_idle_silence",
-            summary=(f"idle 低头沉默 舵机 ({self._SILENCE_SERVO_X}, {self._SILENCE_SERVO_Y})"),
-            status="ok",
-            error=None,
-        )

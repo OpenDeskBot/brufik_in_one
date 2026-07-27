@@ -68,10 +68,10 @@ async def ws_require_debug_subscriber_auth(
         await websocket.close(code=1008, reason="device_id_required")
         return False
     if did:
-        from deskbot_server.auth.device_service import user_owns_device
+        from deskbot_server.service.user_service import UserService
 
         try:
-            allowed = user_owns_device(user_id, did)
+            allowed = UserService().user_owns_device(user_id, did)
         except Exception:
             logger.exception("debug subscriber WS device ownership check failed user_id=%s device_id=%s", user_id, did)
             await websocket.close(code=1008, reason="auth_db_error")
@@ -151,9 +151,9 @@ def http_require_device_access(auth: ApiKeyAuth | None, device_id: str | None) -
     did = str(device_id or "").strip()
     if not did:
         return
-    from deskbot_server.auth.device_service import user_owns_device
+    from deskbot_server.service.user_service import UserService
 
-    if not user_owns_device(auth.user_id, did):
+    if not UserService().user_owns_device(auth.user_id, did):
         raise PermissionError("forbidden_device")
 
 

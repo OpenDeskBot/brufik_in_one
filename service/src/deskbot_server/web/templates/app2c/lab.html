@@ -179,7 +179,7 @@
 
   <section v-show="active==='camera'" class="lab-grid">
     <div class="lab-panel">
-      <div class="lab-head"><div><b>摄像头</b><small>订阅 camera_view，设备侧可经 /camera_uplink 或 /asr_chat camera_frame 上行。</small></div></div>
+      <div class="lab-head"><div><b>摄像头</b><small>订阅 camera_view；设备经 /asr_chat 上行 camera_frame。</small></div></div>
       <div class="lab-stream">
         <img v-if="camera.imageUrl" :src="camera.imageUrl" alt="camera frame">
         <span v-else style="color:#fff">[[ camera.status || '未连接' ]]</span>
@@ -312,14 +312,13 @@
 
   <section v-show="active==='logs'" class="lab-grid">
     <div class="lab-panel">
-      <div class="lab-head"><div><b>ASR / 自动行为</b><small>控制自动应答、空闲 PB 自动下发和流水订阅。</small></div></div>
+      <div class="lab-head"><div><b>ASR / 自动行为</b><small>控制自动应答和流水订阅。</small></div></div>
       <div class="lab-form-grid two">
         <button type="button" class="btn ghost" @click="toggleAsrAuto">[[ toggles.asr_auto_reply ? '关闭自动应答' : '开启自动应答' ]]</button>
-        <button type="button" class="btn ghost" @click="togglePbIdle">[[ toggles.pb_idle_auto_dispatch ? '关闭空闲 PB' : '开启空闲 PB' ]]</button>
         <button type="button" class="btn primary" @click="openPipeline">连接实时流水</button>
         <button type="button" class="btn ghost" @click="loadPipelineRecent">拉取最近事件</button>
       </div>
-      <small class="lab-note">接口：/proxy/deskbot/api/asr_auto_reply · /proxy/deskbot/api/pb_idle_auto_dispatch · /proxy/deskbot/api/pipeline_recent</small>
+      <small class="lab-note">接口：/proxy/deskbot/api/asr_auto_reply · /proxy/deskbot/api/pipeline_recent</small>
       <small class="lab-note">WebSocket：devicePipelineWsBase</small>
     </div>
     <div class="lab-panel">
@@ -375,7 +374,7 @@ createApp({
       direct:{x:90,y:90,xm:0,ym:0,ms:450,action:'replace',with_scene:''},
     },
     camera:{ws:null,status:'',imageUrl:'',frameBytes:0,mode:''},
-    toggles:{asr_auto_reply:false,pb_idle_auto_dispatch:false},
+    toggles:{asr_auto_reply:false},
     scene:{playbooks:[], export:null},
     pb:{
       scenes:[], selectedScene:'', catalog:null, faceKind:'emotion', faceName:'',
@@ -821,10 +820,8 @@ createApp({
     async loadRuntimeToggles(options){
       if(!this.requireDevice(options)) return;
       try{ const a=await this.api(this.proxyPath('/api/asr_auto_reply')); this.toggles.asr_auto_reply=!!a.enabled; }catch(_e){}
-      try{ const p=await this.api(this.proxyPath('/api/pb_idle_auto_dispatch')); this.toggles.pb_idle_auto_dispatch=!!p.enabled; }catch(_e){}
     },
     async toggleAsrAuto(){ const v=this.toggles.asr_auto_reply?0:1; const d=await this.api(this.proxyPath('/api/asr_auto_reply',{enabled:v})); this.toggles.asr_auto_reply=!!d.enabled; },
-    async togglePbIdle(){ const v=this.toggles.pb_idle_auto_dispatch?0:1; const d=await this.api(this.proxyPath('/api/pb_idle_auto_dispatch',{enabled:v})); this.toggles.pb_idle_auto_dispatch=!!d.enabled; },
     async openPipeline(){
       if(!this.requireDevice()) return;
       if(this.pipeline.ws){ try{ this.pipeline.ws.close(); }catch(_e){} }

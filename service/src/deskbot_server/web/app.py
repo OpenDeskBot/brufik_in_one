@@ -14,7 +14,15 @@ def web_debug_enabled() -> bool:
 
 def create_app() -> FastAPI:
     """仅挂载 Web（测试 / ``python -m deskbot_server.web``）。"""
-    return create_fastapi_app(None, web_only=True)
+    app = create_fastapi_app(None, web_only=True)
+
+    def test_client():
+        from tests.web_test_client import WebTestClient
+
+        return WebTestClient(app)
+
+    app.test_client = test_client  # type: ignore[attr-defined]
+    return app
 
 
 app = create_app()

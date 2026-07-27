@@ -13,7 +13,6 @@ from deskbot_server.constants import SERVO_CFG_FILE
 from deskbot_server.dao.face_design_store import resolve_face_design_path
 from deskbot_server.dao.face_expr_scenes_store import load_face_expr_scenes_file
 from deskbot_server.dao.servo_config_store import load_servo_cfg_file
-from deskbot_server.pb.llm_display import parse_llm_images
 from deskbot_server.pb.servo_pcm import parse_pb_cam_fps, parse_pb_volume
 from deskbot_server.utils.device_data import resolve_json_path
 
@@ -164,8 +163,7 @@ def llm_device_screen_appendix(device_id: Optional[str] = None) -> str:
         f"  - 逻辑分辨率：**{FACE_LCD_WIDTH}×{FACE_LCD_HEIGHT}** 像素，原点左上角 (0,0)。\n"
         f"  - 当前播放音量：**{vol}**（0–100）。JSON 中写 ``volume`` 会下发到 ESP32 并**持久保存**；"
         "省略则保持当前音量。\n"
-        "  - 屏幕仅支持 ``images`` 数组展示图片（``{b64, x?, y?, w?, h?}``，base64 JPEG/PNG），"
-        "服务端转为 pb 下发；**不要**使用 ``screen_text`` 等屏幕文字字段。\n"
+        "  - 屏幕通过表情/图元（``anims`` / 场景）展示，**不要**使用 ``images`` / ``screen_text`` 字段。\n"
     )
 
 
@@ -180,7 +178,7 @@ def llm_tools_prompt_appendix() -> str:
         "face_id 见每轮 user 消息「图像识别」；仅一张脸时可省略 face_id；多人须指定 face_id 或先向用户澄清。\n"
         '  - capture_camera: {"tool":"capture_camera"}\n'
         "    获取 ESP32 **最近上传**的一帧相机 JPEG（返回 ``jpeg_base64`` 与尺寸）。"
-        "用于：给主人「拍照」后在屏幕 ``images`` 展示；或结合画面内容做判断。"
+        "用于结合画面内容做判断（返回 ``jpeg_base64``）。"
         "若返回无帧，请提示主人确认相机上行已开启。\n"
         '  - memory_add: {"tool":"memory_add","text":"要记住的内容"}\n'
         '  - memory_delete: {"tool":"memory_delete","id":"记忆id"}\n'
@@ -402,7 +400,6 @@ def _coerce_llm_reply_object(obj: Any) -> Optional[dict[str, Any]]:
                 "anims",
                 "volume",
                 "cam_fps",
-                "images",
                 "scenes",
                 "servo",
             ):
@@ -493,7 +490,6 @@ def parse_llm_reply(raw: str) -> dict:
                         scenes_out.append(v)
         vol = parse_pb_volume(parsed.get("volume"))
         cam_fps = parse_pb_cam_fps(parsed.get("cam_fps"))
-        images_out = parse_llm_images(parsed.get("images"))
         return {
             "reply": reply,
             "moves": moves_out,
@@ -503,7 +499,6 @@ def parse_llm_reply(raw: str) -> dict:
             "servo": servo_out,
             "volume": vol,
             "cam_fps": cam_fps,
-            "images": images_out,
             "need_reply": _parsed_json_need_reply(parsed),
             "json_ok": True,
             "raw": text,
@@ -518,7 +513,6 @@ def parse_llm_reply(raw: str) -> dict:
         "servo": [],
         "volume": None,
         "cam_fps": None,
-        "images": [],
         "need_reply": True,
         "json_ok": False,
         "raw": text,

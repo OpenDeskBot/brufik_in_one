@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
-from deskbot_server.auth.device_service import bind_device, list_devices_for_user, unbind_device, user_owns_device
-from deskbot_server.auth.service import change_password, update_display_name
+from deskbot_server.web.deps import RequireUser
+from deskbot_server.web.urls import flash, url_for
+from deskbot_server.web.view_helpers import ViewAPIRoute, form_get, get_json, jsonify, redirect
+
+from deskbot_server.service.user_service import UserService
 from deskbot_server.dao.api_key_service import create_api_key, revoke_api_key
 from deskbot_server.dao.face_profiles_store import (
     delete_face_profile,
@@ -50,21 +53,10 @@ from deskbot_server.service.scheduled_task_service import (
     delete_scheduled_task,
     list_scheduled_tasks_for_device,
 )
-from deskbot_server.web.flaskish import (
-    FlaskishAPIRoute,
-    current_user,
-    flash,
-    jsonify,
-    login_required,
-    redirect,
-    request,
-    session,
-    url_for,
-)
 from deskbot_server.web.helpers import fetch_live_device_details
 from deskbot_server.web.session_device import clear_current_device, get_current_device_id, set_current_device_id
 
-router = APIRouter(route_class=FlaskishAPIRoute, prefix="/app", tags=["app"])
+router = APIRouter(route_class=ViewAPIRoute, prefix="/app", tags=["app"])
 
 
 def _fmt_bytes(n: int) -> str:
@@ -111,65 +103,60 @@ def _flatten_usage_daily_rows(
 
 
 @router.post("/settings/profile")
-@login_required
-def update_profile_post():
+def update_profile_post(request: Request, user: RequireUser):
     try:
-        update_display_name(current_user.id, request.form.get("display_name") or "")
+        UserService().update_display_name(user.id, form_get(request, "display_name") or "")
     except ValueError as exc:
-        flash(str(exc), "error")
+        flash(request, str(exc), "error")
         return redirect(url_for("app2c.advanced"))
-    flash("用户名称已更新", "success")
+    flash(request, "用户名称已更新", "success")
     return redirect(url_for("app2c.advanced"))
 
 
 @router.post("/settings/password")
-@login_required
-def change_password_post():
-    old_password = request.form.get("old_password") or ""
-    new_password = request.form.get("new_password") or ""
-    confirm = request.form.get("confirm_password") or ""
+def change_password_post(request: Request, user: RequireUser):
+    old_password = form_get(request, "old_password") or ""
+    new_password = form_get(request, "new_password") or ""
+    confirm = form_get(request, "confirm_password") or ""
     if new_password != confirm:
-        flash("两次新密码不一致", "error")
+        flash(request, "两次新密码不一致", "error")
         return redirect(url_for("app2c.advanced"))
     try:
-        change_password(current_user.id, old_password, new_password)
+        UserService().change_password(user.id, old_password, new_password)
     except ValueError as exc:
-        flash(str(exc), "error")
+        flash(request, str(exc), "error")
         return redirect(url_for("app2c.advanced"))
-    flash("密码已更新", "success")
+    flash(request, "密码已更新", "success")
     return redirect(url_for("app2c.advanced"))
 
 
 @router.post("/settings/api-keys")
-@login_required
-def create_api_key_post():
-    name = (request.form.get("key_name") or "default").strip()
+def create_api_key_post(request: Request, user: RequireUser):
+    name = (form_get(request, "key_name") or "default").strip()
     try:
-        raw, _row = create_api_key(current_user.id, name=name)
+        raw, _row = create_api_key(user.id, name=name)
     except ValueError as exc:
-        flash(str(exc), "error")
+        flash(request, str(exc), "error")
         return redirect(url_for("app2c.advanced"))
-    session["new_api_key_raw"] = raw
-    flash("API Key 已创建，请立即复制保存（仅显示一次）", "success")
+    request.session["new_api_key_raw"] = raw
+    flash(request, "API Key 已创建，请立即复制保存（仅显示一次）", "success")
     return redirect(url_for("app2c.advanced"))
 
 
 @router.post("/settings/api-keys/{key_id}/revoke")
-@login_required
-def revoke_api_key_post(key_id: str):
-    if not revoke_api_key(current_user.id, key_id):
-        flash("API Key 不存在", "error")
+def revoke_api_key_post(request: Request, user: RequireUser, key_id: str):
+    if not revoke_api_key(user.id, key_id):
+        flash(request, "API Key 不存在", "error")
     else:
-        flash("API Key 已吊销", "success")
+        flash(request, "API Key 已吊销", "success")
     return redirect(url_for("app2c.advanced"))
 
 
 @router.get("/api/devices")
-@login_required
-def api_list_devices():
-    devices = list_devices_for_user(current_user.id)
-    live_map = fetch_live_device_details(user_id=current_user.id)
-    current = get_current_device_id()
+def api_list_devices(request: Request, user: RequireUser):
+    devices = UserService().list_devices(user.id)
+    live_map = fetch_live_device_details(user_id=user.id)
+    current = get_current_device_id(request)
     return jsonify(
         {
             "ok": True,
@@ -191,55 +178,61 @@ def api_list_devices():
 
 
 @router.post("/api/devices")
-@login_required
-def api_bind_device():
-    payload = request.get_json(silent=True) or {}
-    device_id = str(payload.get("device_id") or request.form.get("device_id") or "").strip()
+def api_bind_device(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True) or {}
+    device_id = str(payload.get("device_id") or form_get(request, "device_id") or "").strip()
+    pin_code = str(payload.get("pin_code") or form_get(request, "pin_code") or "").strip()
     display_name = str(payload.get("display_name") or "").strip() or None
     if not device_id:
-        return jsonify({"ok": False, "error": "device_id required"}), 400
+        return jsonify({"ok": False, "error": "绑定失败：请输入 device_id"}), 400
+    if not pin_code:
+        return jsonify({"ok": False, "error": "绑定失败：请输入 Pin Code"}), 400
     try:
-        device = bind_device(current_user.id, device_id, display_name=display_name)
+        device = UserService().bind_device(user.id, device_id, pin_code, display_name=display_name)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    set_current_device_id(device.device_id)
-    return jsonify({"ok": True, "device": {"device_id": device.device_id}, "current_device_id": device.device_id})
+    set_current_device_id(request, device.device_id)
+    return jsonify(
+        {
+            "ok": True,
+            "message": "绑定成功",
+            "device": {"device_id": device.device_id, "pin_code": device.pin_code},
+            "current_device_id": device.device_id,
+        }
+    )
 
 
 @router.post("/api/devices/select")
-@login_required
-def api_select_device():
-    payload = request.get_json(silent=True) or {}
+def api_select_device(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True) or {}
     device_id = str(payload.get("device_id") or "").strip()
     if not device_id:
-        clear_current_device()
+        clear_current_device(request)
         return jsonify({"ok": True, "current_device_id": None})
-    if not user_owns_device(current_user.id, device_id):
+    if not UserService().user_owns_device(user.id, device_id):
         return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
-    set_current_device_id(device_id)
+    set_current_device_id(request, device_id)
     return jsonify({"ok": True, "current_device_id": device_id})
 
 
 @router.delete("/api/devices/{device_id}")
-@login_required
-def api_unbind_device(device_id: str):
-    if not unbind_device(current_user.id, device_id):
+def api_unbind_device(request: Request, user: RequireUser, device_id: str):
+    if not UserService().unbind_device(user.id, device_id):
         return jsonify({"ok": False, "error": "设备不存在"}), 404
-    if get_current_device_id() == device_id:
-        clear_current_device()
+    if get_current_device_id(request) == device_id:
+        clear_current_device(request)
     return jsonify({"ok": True})
 
 
 @router.get("/api/scheduled-tasks")
-@login_required
-def api_list_scheduled_tasks():
-    device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
+def api_list_scheduled_tasks(request: Request, user: RequireUser):
+    device_id = str(request.query_params.get("device_id") or get_current_device_id(request) or "").strip()
     if not device_id:
         return jsonify({"ok": False, "error": "请先选择设备"}), 400
-    if not user_owns_device(current_user.id, device_id):
+    if not UserService().user_owns_device(user.id, device_id):
         return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
-    page = max(1, int(request.args.get("page") or 1))
-    per_page = int(request.args.get("per_page") or 10)
+    page = max(1, int(request.query_params.get("page") or 1))
+    per_page = int(request.query_params.get("per_page") or 10)
     if per_page not in (10, 50, 100, 200):
         per_page = 10
     total = count_scheduled_tasks_for_device(device_id)
@@ -262,24 +255,22 @@ def api_list_scheduled_tasks():
 
 
 @router.get("/api/face-profiles")
-@login_required
-def api_list_face_profiles():
-    device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
+def api_list_face_profiles(request: Request, user: RequireUser):
+    device_id = str(request.query_params.get("device_id") or get_current_device_id(request) or "").strip()
     if not device_id:
         return jsonify({"ok": False, "error": "请先选择设备"}), 400
-    if not user_owns_device(current_user.id, device_id):
+    if not UserService().user_owns_device(user.id, device_id):
         return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
     profiles = list_face_profiles_summary(device_id=device_id)
     return jsonify({"ok": True, "device_id": device_id, "profiles": profiles})
 
 
 @router.delete("/api/face-profiles/{person_id}")
-@login_required
-def api_delete_face_profile(person_id: int):
-    device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
+def api_delete_face_profile(request: Request, user: RequireUser, person_id: int):
+    device_id = str(request.query_params.get("device_id") or get_current_device_id(request) or "").strip()
     if not device_id:
         return jsonify({"ok": False, "error": "请先选择设备"}), 400
-    if not user_owns_device(current_user.id, device_id):
+    if not UserService().user_owns_device(user.id, device_id):
         return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
     if not delete_face_profile(person_id, device_id=device_id):
         return jsonify({"ok": False, "error": "人脸档案不存在"}), 404
@@ -288,14 +279,13 @@ def api_delete_face_profile(person_id: int):
 
 @router.put("/api/face-profiles/{person_id}")
 @router.patch("/api/face-profiles/{person_id}")
-@login_required
-def api_update_face_profile(person_id: int):
-    device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
+def api_update_face_profile(request: Request, user: RequireUser, person_id: int):
+    device_id = str(request.query_params.get("device_id") or get_current_device_id(request) or "").strip()
     if not device_id:
         return jsonify({"ok": False, "error": "请先选择设备"}), 400
-    if not user_owns_device(current_user.id, device_id):
+    if not UserService().user_owns_device(user.id, device_id):
         return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     name = str(payload.get("name") or "").strip()
     if not name:
         return jsonify({"ok": False, "error": "name 不能为空"}), 400
@@ -308,16 +298,16 @@ def api_update_face_profile(person_id: int):
     return jsonify({"ok": True, "profile": profile})
 
 
-def _require_owned_device_id() -> tuple[str | None, tuple | None]:
-    device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
+def _require_owned_device_id(request: Request, user) -> tuple[str | None, tuple | None]:
+    device_id = str(request.query_params.get("device_id") or get_current_device_id(request) or "").strip()
     if not device_id:
         return None, (jsonify({"ok": False, "error": "请先选择设备"}), 400)
-    if not user_owns_device(current_user.id, device_id):
+    if not UserService().user_owns_device(user.id, device_id):
         return None, (jsonify({"ok": False, "error": "设备不属于当前账号"}), 403)
     return device_id, None
 
 
-def _consume_settings_test_quota():
+def _consume_settings_test_quota(request: Request, user):
     from deskbot_server.service.application.settings_test_limit import (
         SETTINGS_TEST_DAILY_LIMIT,
         SettingsTestLimitExceeded,
@@ -326,7 +316,7 @@ def _consume_settings_test_quota():
     )
 
     try:
-        snap = check_and_consume_settings_test(user_id=current_user.id, client_ip=client_ip_from_request(request))
+        snap = check_and_consume_settings_test(user_id=user.id, client_ip=client_ip_from_request(request))
     except SettingsTestLimitExceeded as exc:
         return None, (jsonify({"ok": False, "error": str(exc), "daily_limit": SETTINGS_TEST_DAILY_LIMIT}), 429)
     return {
@@ -337,9 +327,8 @@ def _consume_settings_test_quota():
 
 
 @router.get("/api/memories")
-@login_required
-def api_list_memories():
-    device_id, err = _require_owned_device_id()
+def api_list_memories(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
@@ -348,14 +337,13 @@ def api_list_memories():
 
 
 @router.post("/api/memories")
-@login_required
-def api_create_memory():
-    device_id, err = _require_owned_device_id()
+def api_create_memory(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
-    payload = request.get_json(silent=True) or {}
-    text = str(payload.get("text") or request.form.get("text") or "").strip()
+    payload = get_json(request, silent=True) or {}
+    text = str(payload.get("text") or form_get(request, "text") or "").strip()
     if not text:
         return jsonify({"ok": False, "error": "text 不能为空"}), 400
     try:
@@ -366,9 +354,8 @@ def api_create_memory():
 
 
 @router.get("/api/memories/{entry_id}")
-@login_required
-def api_get_memory(entry_id: str):
-    device_id, err = _require_owned_device_id()
+def api_get_memory(request: Request, user: RequireUser, entry_id: str):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
@@ -380,13 +367,12 @@ def api_get_memory(entry_id: str):
 
 @router.put("/api/memories/{entry_id}")
 @router.patch("/api/memories/{entry_id}")
-@login_required
-def api_update_memory(entry_id: str):
-    device_id, err = _require_owned_device_id()
+def api_update_memory(request: Request, user: RequireUser, entry_id: str):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     text = str(payload.get("text") or "").strip()
     if not text:
         return jsonify({"ok": False, "error": "text 不能为空"}), 400
@@ -400,9 +386,8 @@ def api_update_memory(entry_id: str):
 
 
 @router.delete("/api/memories/{entry_id}")
-@login_required
-def api_delete_memory(entry_id: str):
-    device_id, err = _require_owned_device_id()
+def api_delete_memory(request: Request, user: RequireUser, entry_id: str):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
@@ -412,9 +397,8 @@ def api_delete_memory(entry_id: str):
 
 
 @router.get("/api/llm-models")
-@login_required
-def api_list_llm_models():
-    device_id, err = _require_owned_device_id()
+def api_list_llm_models(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
@@ -449,13 +433,12 @@ def api_list_llm_models():
 
 
 @router.post("/api/llm-models")
-@login_required
-def api_create_llm_model():
-    device_id, err = _require_owned_device_id()
+def api_create_llm_model(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     try:
         model = add_llm_model(
             device_id,
@@ -471,16 +454,15 @@ def api_create_llm_model():
 
 
 @router.post("/api/llm-models/test")
-@login_required
-def api_test_llm_model():
-    device_id, err = _require_owned_device_id()
+def api_test_llm_model(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
-    quota, limit_err = _consume_settings_test_quota()
+    quota, limit_err = _consume_settings_test_quota(request, user)
     if limit_err:
         return limit_err
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     model_id = str(payload.get("model_id") or "").strip() or None
     name = str(payload.get("name") or "").strip()
     model_name = str(payload.get("model_name") or "").strip()
@@ -537,13 +519,12 @@ def api_test_llm_model():
 
 
 @router.put("/api/llm-models/{model_id}")
-@login_required
-def api_update_llm_model(model_id: str):
-    device_id, err = _require_owned_device_id()
+def api_update_llm_model(request: Request, user: RequireUser, model_id: str):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     try:
         model = update_llm_model(
             device_id,
@@ -562,9 +543,8 @@ def api_update_llm_model(model_id: str):
 
 
 @router.delete("/api/llm-models/{model_id}")
-@login_required
-def api_delete_llm_model(model_id: str):
-    device_id, err = _require_owned_device_id()
+def api_delete_llm_model(request: Request, user: RequireUser, model_id: str):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
@@ -574,13 +554,12 @@ def api_delete_llm_model(model_id: str):
 
 
 @router.post("/api/llm-models/select")
-@login_required
-def api_select_llm_model():
-    device_id, err = _require_owned_device_id()
+def api_select_llm_model(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     model_id = payload.get("model_id")
     if model_id is not None:
         model_id = str(model_id).strip() or None
@@ -617,8 +596,7 @@ def _tts_cfg_from_payload(payload: dict):
 
 
 @router.get("/api/tts/config")
-@login_required
-def api_tts_config_get():
+def api_tts_config_get(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config
 
     cfg = load_doubao_tts_config()
@@ -626,12 +604,11 @@ def api_tts_config_get():
 
 
 @router.post("/api/tts/config")
-@login_required
-def api_tts_config_post():
+def api_tts_config_post(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config
     from deskbot_server.infrastructure.tts.env_store import save_doubao_tts_env
 
-    payload = request.get_json(silent=True)
+    payload = get_json(request, silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
 
@@ -650,26 +627,24 @@ def api_tts_config_post():
 
 
 @router.get("/api/tts/speakers")
-@login_required
-def api_tts_speakers():
+def api_tts_speakers(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.speakers import list_doubao_tts_speaker_presets
 
     return jsonify({"ok": True, "speakers": list_doubao_tts_speaker_presets()})
 
 
 @router.post("/api/tts/preview")
-@login_required
-def api_tts_preview():
+def api_tts_preview(request: Request, user: RequireUser):
     import asyncio
     import base64
 
     from deskbot_server.infrastructure.tts.doubao import synthesize_doubao_tts
     from deskbot_server.utils.util import pcm_to_wav_bytes
 
-    quota, limit_err = _consume_settings_test_quota()
+    quota, limit_err = _consume_settings_test_quota(request, user)
     if limit_err:
         return limit_err
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     text = str(payload.get("text") or "").strip()
     if not text:
         return jsonify({"ok": False, "error": "试听文本不能为空"}), 400
@@ -696,12 +671,11 @@ def api_tts_preview():
 
 
 @router.delete("/api/scheduled-tasks/{task_id}")
-@login_required
-def api_delete_scheduled_task(task_id: str):
-    device_id = str(request.args.get("device_id") or get_current_device_id() or "").strip()
+def api_delete_scheduled_task(request: Request, user: RequireUser, task_id: str):
+    device_id = str(request.query_params.get("device_id") or get_current_device_id(request) or "").strip()
     if not device_id:
         return jsonify({"ok": False, "error": "请先选择设备"}), 400
-    if not user_owns_device(current_user.id, device_id):
+    if not UserService().user_owns_device(user.id, device_id):
         return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
     if not delete_scheduled_task(task_id, device_id=device_id):
         return jsonify({"ok": False, "error": "任务不存在"}), 404
@@ -712,16 +686,15 @@ def api_delete_scheduled_task(task_id: str):
 
 
 @router.get("/api/miot/status")
-@login_required
-def api_miot_status():
-    device_id, err = _require_owned_device_id()
+def api_miot_status(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
     ok_sdk, sdk_err = miot_sdk_available()
     if not ok_sdk:
         return jsonify({"ok": False, "error": sdk_err, "sdk_ok": False}), 503
-    refresh = str(request.args.get("refresh") or "").strip().lower() in ("1", "true", "yes")
+    refresh = str(request.query_params.get("refresh") or "").strip().lower() in ("1", "true", "yes")
     try:
         status = get_status(device_id, refresh=refresh)
     except Exception as exc:
@@ -741,9 +714,8 @@ def api_miot_status():
 
 
 @router.post("/api/miot/bind-url")
-@login_required
-def api_miot_bind_url():
-    device_id, err = _require_owned_device_id()
+def api_miot_bind_url(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
@@ -768,13 +740,12 @@ def api_miot_bind_url():
 
 
 @router.post("/api/miot/authorize")
-@login_required
-def api_miot_authorize():
-    device_id, err = _require_owned_device_id()
+def api_miot_authorize(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     code = str(payload.get("code") or "").strip()
     state = str(payload.get("state") or "").strip()
     callback = str(payload.get("callback_url") or payload.get("url") or payload.get("payload") or "").strip()
@@ -792,9 +763,8 @@ def api_miot_authorize():
 
 
 @router.post("/api/miot/sync")
-@login_required
-def api_miot_sync():
-    device_id, err = _require_owned_device_id()
+def api_miot_sync(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
@@ -818,9 +788,8 @@ def api_miot_sync():
 
 
 @router.post("/api/miot/unbind")
-@login_required
-def api_miot_unbind():
-    device_id, err = _require_owned_device_id()
+def api_miot_unbind(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None
@@ -832,9 +801,8 @@ def api_miot_unbind():
 
 
 @router.get("/api/miot/homes")
-@login_required
-def api_miot_homes():
-    device_id, err = _require_owned_device_id()
+def api_miot_homes(request: Request, user: RequireUser):
+    device_id, err = _require_owned_device_id(request, user)
     if err:
         return err
     assert device_id is not None

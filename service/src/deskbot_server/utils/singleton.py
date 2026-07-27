@@ -13,7 +13,8 @@ class SingletonMeta(type):
     """
 
     _instances: dict[type, Any] = {}
-    _lock = threading.Lock()
+    # RLock：构造 A 时若 __init__ 再构造其它 Singleton（如 UserService→UserDao）可重入
+    _lock = threading.RLock()
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
         if cls not in cls._instances:

@@ -124,8 +124,7 @@ def test_save_emotions_to_design_file(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", tmp_path)
-    monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", tmp_path / "device")
+    monkeypatch.setattr("deskbot_server.utils.device_data.DATA_DIR", tmp_path)
     from deskbot_server.dao.face_design_store import clear_face_design_cache
     from deskbot_server.dao.face_expr_scenes_store import load_face_expr_scenes_file, save_face_expr_scenes_file
 
@@ -155,7 +154,7 @@ def test_resolve_face_design_path_uses_global(tmp_path, monkeypatch):
     device_dir.mkdir(parents=True)
     (device_dir / "deskbot-face.json").write_text('{"name":"d","phonemes":[],"emotions":[]}', encoding="utf-8")
     monkeypatch.setattr("deskbot_server.face_design_store.FACE_DESIGN_FILE", str(global_path))
-    monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", tmp_path)
+    monkeypatch.setattr("deskbot_server.utils.device_data.DATA_DIR", tmp_path)
     from deskbot_server.dao.face_design_store import resolve_face_design_path
 
     assert resolve_face_design_path(device_id="dev1") == str(global_path)

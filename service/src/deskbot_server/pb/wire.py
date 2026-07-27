@@ -11,7 +11,6 @@ from typing import Any, Optional
 
 from deskbot_server.constants import PB_MAX_WIRE_JSON_BYTES
 from deskbot_server.pb.face_bundle import resolve_pb_face_bundle
-from deskbot_server.pb.llm_display import apply_llm_display_to_rows
 from deskbot_server.pb.llm_plan import (
     build_anim_rows_for_llm_plan,
     expand_llm_anims,
@@ -84,7 +83,6 @@ def build_pb_wire_pairs(
     volume: int | None = None,
     cam_fps: int | None = None,
     device_id: Optional[str] = None,
-    images: list[dict[str, Any]] | None = None,
     action: str = PB_ACTION_REPLACE,
     leading_move_steps: int = 0,
 ) -> tuple[list[tuple[dict[str, Any], list[bytes]]], str, int, int]:
@@ -162,8 +160,6 @@ def build_pb_wire_pairs(
         logger.info(
             "[pb TX] 分片合并 %d → %d（单包 chunk_ms 上限 %d ms）", len(anim_rows), len(merged_rows), PB_CHUNK_MS_MAX
         )
-    apply_llm_display_to_rows(merged_rows, images=images)
-
     pb_req = request_id or uuid.uuid4().hex[:16]
     from deskbot_server.pb.servo_pcm import parse_pb_cam_fps
 

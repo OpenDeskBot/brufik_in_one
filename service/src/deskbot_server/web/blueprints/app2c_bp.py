@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import mimetypes
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
-from deskbot_server.auth.device_service import list_devices_for_user, user_owns_device
-from deskbot_server.auth.service import change_password, get_user_by_id, update_display_name
+from deskbot_server.web.deps import RequireUser
+from deskbot_server.web.urls import flash, url_for
+from deskbot_server.web.view_helpers import ViewAPIRoute, files_get, form_get, get_json, is_json_request, jsonify, redirect, render_template
+
+from deskbot_server.service.user_service import UserService
 from deskbot_server.dao.api_key_service import (
     create_api_key,
     get_api_key_usage_today,
@@ -28,21 +31,11 @@ from deskbot_server.infrastructure.llm.runtime import (
     resolve_system_llm_config,
 )
 from deskbot_server.web.blueprints.app_bp import _flatten_usage_daily_rows
-from deskbot_server.web.flaskish import (
-    FlaskishAPIRoute,
-    current_user,
-    jsonify,
-    login_required,
-    redirect,
-    render_template,
-    request,
-    url_for,
-)
 from deskbot_server.web.helpers import camera_view_ws_base, device_pipeline_ws_base
 from deskbot_server.web.session_device import get_current_device_id
 
 # No url_prefix: 2C consumer routes live at root (/home, /voice, /my/*)
-router = APIRouter(route_class=FlaskishAPIRoute, tags=["app2c"])
+router = APIRouter(route_class=ViewAPIRoute, tags=["app2c"])
 
 
 def _default_robot_face_payload() -> dict:
@@ -66,29 +59,25 @@ def _default_robot_face_payload() -> dict:
 
 
 @router.get("/home")
-@login_required
-def home():
-    return render_template(
+def home(request: Request, user: RequireUser):
+    return render_template(request, 
         "app2c/home.html", active_nav="home", camera_view_ws_base=camera_view_ws_base(), **_default_robot_face_payload()
     )
 
 
 @router.get("/voice")
-@login_required
-def voice():
-    return render_template("app2c/voice.html", active_nav="voice")
+def voice(request: Request, user: RequireUser):
+    return render_template(request, "app2c/voice.html", active_nav="voice")
 
 
 @router.get("/expr")
-@login_required
-def expr():
-    return render_template("app2c/expr.html", active_nav="expr")
+def expr(request: Request, user: RequireUser):
+    return render_template(request, "app2c/expr.html", active_nav="expr")
 
 
 @router.get("/lab")
-@login_required
-def lab():
-    return render_template(
+def lab(request: Request, user: RequireUser):
+    return render_template(request, 
         "app2c/lab.html",
         active_nav="lab",
         camera_view_ws_base=camera_view_ws_base(),
@@ -98,44 +87,37 @@ def lab():
 
 
 @router.get("/my/memories")
-@login_required
-def memories():
-    return render_template("app2c/memories.html", active_nav="memory")
+def memories(request: Request, user: RequireUser):
+    return render_template(request, "app2c/memories.html", active_nav="memory")
 
 
 @router.get("/my/reminders")
-@login_required
-def reminders():
-    return render_template("app2c/reminders.html", active_nav="remind")
+def reminders(request: Request, user: RequireUser):
+    return render_template(request, "app2c/reminders.html", active_nav="remind")
 
 
 @router.get("/my/people")
-@login_required
-def people():
-    return render_template("app2c/people.html", active_nav="people")
+def people(request: Request, user: RequireUser):
+    return render_template(request, "app2c/people.html", active_nav="people")
 
 
 @router.get("/my/devices")
-@login_required
-def devices():
-    return render_template("app2c/devices.html", active_nav="device")
+def devices(request: Request, user: RequireUser):
+    return render_template(request, "app2c/devices.html", active_nav="device")
 
 
 @router.get("/my/miot")
-@login_required
-def miot():
-    return render_template("app2c/miot.html", active_nav="miot")
+def miot(request: Request, user: RequireUser):
+    return render_template(request, "app2c/miot.html", active_nav="miot")
 
 
 @router.get("/advanced")
-@login_required
-def advanced():
-    return render_template("app2c/advanced.html", active_nav="advanced")
+def advanced(request: Request, user: RequireUser):
+    return render_template(request, "app2c/advanced.html", active_nav="advanced")
 
 
 @router.get("/onboarding")
-@login_required
-def onboarding():
+def onboarding(request: Request, user: RequireUser):
     return redirect(url_for("app2c.advanced", tab="llm"))
 
 
@@ -161,15 +143,13 @@ def _system_llm_payload() -> dict:
 
 
 @router.get("/api/setup/llm")
-@login_required
-def setup_llm_get():
+def setup_llm_get(request: Request, user: RequireUser):
     return jsonify({"ok": True, **_system_llm_payload()})
 
 
 @router.post("/api/setup/llm")
-@login_required
-def setup_llm_post():
-    payload = request.get_json(silent=True) or {}
+def setup_llm_post(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True) or {}
     api_key = str(payload.get("api_key") or "").strip()
     model_name = str(payload.get("model_name") or "").strip() or DEFAULT_TEXT_MODEL
     protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
@@ -192,9 +172,8 @@ def setup_llm_post():
 
 
 @router.post("/api/setup/llm/test")
-@login_required
-def setup_llm_test():
-    payload = request.get_json(silent=True) or {}
+def setup_llm_test(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True) or {}
     current = resolve_system_llm_config()
     model_name = str(payload.get("model_name") or "").strip() or DEFAULT_TEXT_MODEL
     protocol = str(payload.get("protocol") or "ark").strip().lower() or "ark"
@@ -262,9 +241,8 @@ def _list_ark_models(api_key: str, base_url: str | None = None) -> list[dict]:
 
 
 @router.post("/api/setup/llm/models")
-@login_required
-def setup_llm_models():
-    payload = request.get_json(silent=True) or {}
+def setup_llm_models(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True) or {}
     api_key = str(payload.get("api_key") or "").strip()
     if not api_key or "*" in api_key or "•" in api_key:
         api_key = str(resolve_system_llm_config().api_key or "").strip()
@@ -278,19 +256,17 @@ def setup_llm_models():
 
 
 @router.post("/api/debug/reset-account")
-@login_required
-def debug_reset_account():
+def debug_reset_account(request: Request, user: RequireUser):
     """调试用：把当前账号重置回新用户状态（解绑所有设备、吊销 API Key、清除本机大模型配置）。"""
-    from deskbot_server.auth.device_service import unbind_device
     from deskbot_server.dao.api_key_service import revoke_api_key
     from deskbot_server.infrastructure.llm.env_store import clear_llm_env
     from deskbot_server.web.session_device import clear_current_device
 
-    uid = current_user.id
+    uid = user.id
     cleared = {"devices": 0, "api_keys": 0}
-    for d in list_devices_for_user(uid):
+    for d in UserService().list_devices(uid):
         try:
-            if unbind_device(uid, d.device_id):
+            if UserService().unbind_device(uid, d.device_id):
                 cleared["devices"] += 1
         except Exception:  # noqa: BLE001 - best effort
             pass
@@ -300,7 +276,7 @@ def debug_reset_account():
                 cleared["api_keys"] += 1
         except Exception:  # noqa: BLE001 - best effort
             pass
-    clear_current_device()
+    clear_current_device(request)
     clear_llm_env()
     return jsonify({"ok": True, "cleared": cleared})
 
@@ -350,15 +326,14 @@ def _llm_config_message(*, device_selected: bool, api_key_set: bool, source: str
 
 
 @router.get("/api/advanced")
-@login_required
-def advanced_summary_get():
-    user = get_user_by_id(current_user.id)
-    devices = list_devices_for_user(current_user.id)
-    current_device_id = get_current_device_id()
-    keys = list_api_keys_for_user(current_user.id)
-    usage = get_user_usage_summary(current_user.id, days=14)
-    device_usage = get_user_device_usage_summary(current_user.id, days=14)
-    user_today = get_user_usage_today(current_user.id)
+def advanced_summary_get(request: Request, user: RequireUser):
+    user = UserService().get_user(user.id)
+    devices = UserService().list_devices(user.id)
+    current_device_id = get_current_device_id(request)
+    keys = list_api_keys_for_user(user.id)
+    usage = get_user_usage_summary(user.id, days=14)
+    device_usage = get_user_device_usage_summary(user.id, days=14)
+    user_today = get_user_usage_today(user.id)
     device_daily_rows = _flatten_usage_daily_rows(
         device_usage.get("device_stats") or [], label_key="display_name", sub_id_key="device_id"
     )
@@ -384,7 +359,7 @@ def advanced_summary_get():
         "api_base": system_default.api_base or "",
         "api_key_set": _llm_api_key_set(system_default.api_key),
     }
-    if current_device_id and user_owns_device(current_user.id, current_device_id):
+    if current_device_id and UserService().user_owns_device(user.id, current_device_id):
         llm["models"] = list_llm_models(current_device_id, mask_key=True)
         llm["active_model_id"] = get_active_model_id(current_device_id)
         try:
@@ -447,14 +422,13 @@ def advanced_summary_get():
 
 
 @router.patch("/api/advanced/profile")
-@login_required
-def advanced_profile_patch():
-    payload = request.get_json(silent=True) or {}
+def advanced_profile_patch(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True) or {}
     try:
-        update_display_name(current_user.id, str(payload.get("display_name") or ""))
+        UserService().update_display_name(user.id, str(payload.get("display_name") or ""))
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    user = get_user_by_id(current_user.id)
+    user = UserService().get_user(user.id)
     return jsonify(
         {
             "ok": True,
@@ -464,71 +438,68 @@ def advanced_profile_patch():
 
 
 @router.post("/api/advanced/password")
-@login_required
-def advanced_password_post():
-    payload = request.get_json(silent=True) or {}
+def advanced_password_post(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True) or {}
     old_password = str(payload.get("old_password") or "")
     new_password = str(payload.get("new_password") or "")
     confirm = str(payload.get("confirm_password") or "")
     if new_password != confirm:
         return jsonify({"ok": False, "error": "两次新密码不一致"}), 400
     try:
-        change_password(current_user.id, old_password, new_password)
+        UserService().change_password(user.id, old_password, new_password)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify({"ok": True})
 
 
 @router.post("/api/advanced/api-keys")
-@login_required
-def advanced_api_key_post():
-    payload = request.get_json(silent=True) or {}
+def advanced_api_key_post(request: Request, user: RequireUser):
+    payload = get_json(request, silent=True) or {}
     name = str(payload.get("name") or "default").strip()
     try:
-        raw, row = create_api_key(current_user.id, name=name)
+        raw, row = create_api_key(user.id, name=name)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify({"ok": True, "raw_key": raw, "api_key": _api_key_payload(row)})
 
 
 @router.delete("/api/advanced/api-keys/{key_id}")
-@login_required
-def advanced_api_key_delete(key_id: str):
-    if not revoke_api_key(current_user.id, key_id):
+def advanced_api_key_delete(request: Request, user: RequireUser, key_id: str):
+    if not revoke_api_key(user.id, key_id):
         return jsonify({"ok": False, "error": "API Key 不存在"}), 404
     return jsonify({"ok": True})
 
 
-def _owned_device_or_error():
-    device_id = (request.args.get("device_id") or "").strip()
-    if not device_id and request.is_json:
-        payload = request.get_json(silent=True) or {}
+def _owned_device_or_error(request: Request, user):
+    device_id = (request.query_params.get("device_id") or "").strip()
+    if not device_id and is_json_request(request):
+        payload = get_json(request, silent=True) or {}
         if isinstance(payload, dict):
             device_id = str(payload.get("device_id") or "").strip()
     if not device_id:
-        device_id = str(request.form.get("device_id") or "").strip()
+        device_id = str(form_get(request, "device_id") or "").strip()
     if not device_id:
-        device_id = (get_current_device_id() or "").strip()
+        device_id = (get_current_device_id(request) or "").strip()
     if not device_id:
         return None, (jsonify({"ok": False, "error": "请先选择设备"}), 400)
-    if not user_owns_device(current_user.id, device_id):
+    if not UserService().user_owns_device(user.id, device_id):
         return None, (jsonify({"ok": False, "error": "设备不属于当前账号"}), 403)
     return device_id, None
 
 
-def _optional_owned_device_or_error():
-    device_id = (request.args.get("device_id") or "").strip()
-    if not device_id and request.is_json:
-        payload = request.get_json(silent=True) or {}
+def _optional_owned_device_or_error(request: Request, user):
+    device_id = (request.query_params.get("device_id") or "").strip()
+    if not device_id and is_json_request(request):
+        payload = get_json(request, silent=True) or {}
         if isinstance(payload, dict):
             device_id = str(payload.get("device_id") or "").strip()
     if not device_id:
-        device_id = str(request.form.get("device_id") or "").strip()
+        device_id = str(form_get(request, "device_id") or "").strip()
     if not device_id:
-        device_id = (get_current_device_id() or "").strip()
+        device_id = (get_current_device_id(request) or "").strip()
     if not device_id:
         return "", None
-    if not user_owns_device(current_user.id, device_id):
+    if not UserService().user_owns_device(user.id, device_id):
         return None, (jsonify({"ok": False, "error": "设备不属于当前账号"}), 403)
     return device_id, None
 
@@ -553,21 +524,19 @@ def _image_mime_from_upload(filename: str, content_type: str, image_bytes: bytes
 
 
 @router.get("/api/emotion_expr_map")
-@login_required
-def emotion_expr_map_get():
-    device_id, err = _owned_device_or_error()
+def emotion_expr_map_get(request: Request, user: RequireUser):
+    device_id, err = _owned_device_or_error(request, user)
     if err:
         return err
     return jsonify({"ok": True, "device_id": device_id, "map": load_emotion_expr_map(device_id=device_id)})
 
 
 @router.post("/api/emotion_expr_map")
-@login_required
-def emotion_expr_map_post():
-    device_id, err = _owned_device_or_error()
+def emotion_expr_map_post(request: Request, user: RequireUser):
+    device_id, err = _owned_device_or_error(request, user)
     if err:
         return err
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     mapping = payload.get("map")
     if not isinstance(mapping, dict):
         return jsonify({"ok": False, "error": "map 必须是对象"}), 400
@@ -579,9 +548,8 @@ def emotion_expr_map_post():
 
 
 @router.get("/api/face_expr_scenes")
-@login_required
-def face_expr_scenes_get():
-    device_id, err = _owned_device_or_error()
+def face_expr_scenes_get(request: Request, user: RequireUser):
+    device_id, err = _owned_device_or_error(request, user)
     if err:
         return err
     try:
@@ -592,12 +560,11 @@ def face_expr_scenes_get():
 
 
 @router.post("/api/face_expr_scenes")
-@login_required
-def face_expr_scenes_post():
-    device_id, err = _owned_device_or_error()
+def face_expr_scenes_post(request: Request, user: RequireUser):
+    device_id, err = _owned_device_or_error(request, user)
     if err:
         return err
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     scenes = payload.get("scenes")
     if scenes is None:
         scenes = payload.get("config")
@@ -613,9 +580,8 @@ def face_expr_scenes_post():
 
 
 @router.get("/api/face_mouth_by_phoneme")
-@login_required
-def face_mouth_by_phoneme_get():
-    device_id, err = _owned_device_or_error()
+def face_mouth_by_phoneme_get(request: Request, user: RequireUser):
+    device_id, err = _owned_device_or_error(request, user)
     if err:
         return err
     try:
@@ -626,12 +592,11 @@ def face_mouth_by_phoneme_get():
 
 
 @router.post("/api/face_mouth_by_phoneme")
-@login_required
-def face_mouth_by_phoneme_post():
-    device_id, err = _owned_device_or_error()
+def face_mouth_by_phoneme_post(request: Request, user: RequireUser):
+    device_id, err = _owned_device_or_error(request, user)
     if err:
         return err
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     groups = payload.get("mouth_by_phoneme_groups")
     if not isinstance(groups, list):
         return jsonify({"ok": False, "error": "mouth_by_phoneme_groups 必须是数组"}), 400
@@ -645,12 +610,11 @@ def face_mouth_by_phoneme_post():
 
 
 @router.post("/api/scene_playbook/export_plan")
-@login_required
-def scene_playbook_export_plan_post():
-    device_id, err = _owned_device_or_error()
+def scene_playbook_export_plan_post(request: Request, user: RequireUser):
+    device_id, err = _owned_device_or_error(request, user)
     if err:
         return err
-    payload = request.get_json(silent=True) or {}
+    payload = get_json(request, silent=True) or {}
     playbook = payload.get("playbook")
     if not isinstance(playbook, dict):
         return jsonify({"ok": False, "error": "missing playbook"}), 400
@@ -666,16 +630,17 @@ def scene_playbook_export_plan_post():
 
 
 @router.post("/api/face_design/generate-from-image")
-@login_required
-def face_design_generate_from_image_post():
-    device_id, err = _optional_owned_device_or_error()
+def face_design_generate_from_image_post(request: Request, user: RequireUser):
+    device_id, err = _optional_owned_device_or_error(request, user)
     if err:
         return err
-    upload = request.files.get("image") or request.files.get("file")
+    from deskbot_server.web.view_helpers import read_upload_bytes
+
+    upload = files_get(request, "image") or files_get(request, "file")
     if upload is None or not upload.filename:
         return jsonify({"ok": False, "error": "请先上传图片"}), 400
-    image_bytes = upload.read()
-    prompt = str(request.form.get("prompt") or "").strip()
+    image_bytes = read_upload_bytes(upload)
+    prompt = str(form_get(request, "prompt") or "").strip()
     mime_type = _image_mime_from_upload(
         upload.filename, getattr(upload, "mimetype", None) or getattr(upload, "content_type", None) or "", image_bytes
     )

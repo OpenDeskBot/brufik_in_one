@@ -9,7 +9,6 @@ from typing import Optional
 from deskbot_server.constants import PB_CHUNK_GAP_SEC, PB_MAX_PCM_BIN_BYTES, SAFE_SEND_TIMEOUT
 from deskbot_server.service.application.asr_chat_uplink import pack_ws_downlink_frame
 from deskbot_server.utils.ws_utils import WsUtils
-from deskbot_server.ws.pb_idle_registry import note_pb_idle_after_successful_asr_send
 
 logger = logging.getLogger("deskbot-server")
 
@@ -149,8 +148,6 @@ async def _safe_send_pb_json_then_binaries(
         ok = await WsUtils.safe_send_once(
             websocket, frame, timeout=WsUtils.send_timeout_for_message(frame, base=timeout)
         )
-        if ok:
-            note_pb_idle_after_successful_asr_send(websocket)
         return ok, ok
 
 

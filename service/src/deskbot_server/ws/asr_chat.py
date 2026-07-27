@@ -25,10 +25,10 @@ from deskbot_server.service.application.interaction_feedback import (
     start_llm_wait_nod_feedback,
     stop_llm_wait_nod_feedback,
 )
+from deskbot_server.service.live_service import LiveService
 from deskbot_server.service.application.ws_chat_turn import publish_ws_chat_turn, run_ws_chat_turn
 from deskbot_server.service.asr_service import AsrService
 from deskbot_server.service.camera_face_service import CameraFaceService
-from deskbot_server.service.chat_app_service import ChatAppService
 from deskbot_server.service.pipeline.audio import AudioConfig, ConnectionSession
 from deskbot_server.service.vad_service import VadService
 from deskbot_server.utils.async_helpers import spawn
@@ -42,7 +42,6 @@ from deskbot_server.utils.util import (
     pcm_to_wav_bytes,
 )
 from deskbot_server.utils.ws_utils import WsUtils
-from deskbot_server.ws.api_key_gate import record_turn_usage
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
 from deskbot_server.ws.device_pipeline import DevicePipelineBroker
 from deskbot_server.ws.registry import DeviceRegistry
@@ -67,7 +66,6 @@ async def _feed_rom_uplink(
     registry: Optional[DeviceRegistry] = None,
     turn_task_holder: Optional[list] = None,
     device_pb_only: bool = False,
-    api_key_id: Optional[str] = None,
 ) -> None:
     utterance, uplink_started, _ = await session.feed_audio(
         payload, codec, sample_rate=sample_rate, channels=channels, opus_frames=opus_frames
@@ -94,7 +92,6 @@ async def _feed_rom_uplink(
             registry=registry,
             asr_chat_hub=asr_chat_hub,
             turn_task_holder=turn_task_holder or [],
-            api_key_id=api_key_id,
             uplink_sample_rate=session.rom_sr,
             uplink_channels=session.rom_ch,
             uplink_codec=session.rom_codec,
@@ -113,7 +110,6 @@ async def _schedule_asr_turn(
     registry: DeviceRegistry,
     asr_chat_hub: AsrChatHub,
     turn_task_holder: list,
-    api_key_id: Optional[str] = None,
     uplink_sample_rate: Optional[int] = None,
     uplink_channels: int = 1,
     uplink_codec: str = "pcm16",
@@ -136,7 +132,6 @@ async def _schedule_asr_turn(
                 dp_broker=dp_broker,
                 registry=registry,
                 asr_chat_hub=asr_chat_hub,
-                api_key_id=api_key_id,
                 uplink_sample_rate=uplink_sample_rate,
                 uplink_channels=uplink_channels,
                 uplink_codec=uplink_codec,
@@ -154,7 +149,6 @@ async def _ingest_asr_chat_camera_frame(
     payload: bytes,
     device_id: Optional[str],
     camera_face_enabled: bool,
-    api_key_id: Optional[str],
     enc: str = "binary",
 ) -> None:
     """读循环外异步处理：交给 CameraFaceService，不阻塞 WS 继续收帧。"""
@@ -167,8 +161,6 @@ async def _ingest_asr_chat_camera_frame(
             enc,
         )
         return
-    if api_key_id:
-        record_turn_usage(api_key_id, device_id=device_id, face_bytes=nbytes)
     # 接收结果与识别耗时由 CameraFaceService.process 统一打印
     await CameraFaceService().process(device_id, payload, frame_source="asr_chat", log_channel="/asr_chat")
 
@@ -279,7 +271,6 @@ async def _run_asr_turn(
     dp_broker: DevicePipelineBroker,
     registry: DeviceRegistry,
     asr_chat_hub: Optional[AsrChatHub] = None,
-    api_key_id: Optional[str] = None,
     uplink_sample_rate: Optional[int] = None,
     uplink_channels: int = 1,
     uplink_codec: str = "pcm16",
@@ -293,8 +284,6 @@ async def _run_asr_turn(
         text = await asr_svc.transcribe(pcm_segment, sample_rate)
     except RuntimeError:
         text = await pipeline.asr(pcm_segment, sample_rate=sample_rate)
-    if api_key_id:
-        record_turn_usage(api_key_id, device_id=device_id, asr_bytes=len(pcm_segment))
     t_asr_text = time.monotonic()
     asr_ms = _ms_between(t_asr_start, t_asr_text)
     if not text:
@@ -376,6 +365,8 @@ async def _run_asr_turn(
         asr_ms,
         text,
     )
+    if device_id:
+        LiveService().note_conversation_start(device_id)
     await _publish_asr_capture(
         dp_broker,
         device_id,
@@ -440,6 +431,8 @@ async def _run_asr_turn(
     finally:
         if nod_done is not None:
             await stop_llm_wait_nod_feedback(nod_done, nod_task)
+        if device_id:
+            LiveService().note_conversation_end(device_id)
     await publish_ws_chat_turn(
         dp_broker,
         registry,
@@ -451,11 +444,6 @@ async def _run_asr_turn(
         flow=flow,
         request_id=request_id,
     )
-    if api_key_id:
-        llm_out = flow.get("llm_raw") or flow.get("llm_text") or ""
-        llm_bytes = len(text.encode("utf-8")) + len(str(llm_out).encode("utf-8"))
-        tts_bytes = len(str(flow.get("llm_text") or "").encode("utf-8")) * 48
-        record_turn_usage(api_key_id, device_id=device_id, llm_bytes=llm_bytes, tts_bytes=tts_bytes)
 
 
 async def _dispatch_rom_flush(
@@ -470,7 +458,6 @@ async def _dispatch_rom_flush(
     asr_chat_hub: AsrChatHub,
     device_pb_only: bool,
     turn_task_holder: list,
-    api_key_id: Optional[str] = None,
 ) -> None:
     loop = asyncio.get_running_loop()
     flushed = await loop.run_in_executor(None, session.flush)
@@ -499,7 +486,6 @@ async def _dispatch_rom_flush(
             registry=registry,
             asr_chat_hub=asr_chat_hub,
             turn_task_holder=turn_task_holder,
-            api_key_id=api_key_id,
             uplink_sample_rate=flushed.sample_rate,
             uplink_channels=flushed.channels,
             uplink_codec=flushed.codec,
@@ -515,7 +501,6 @@ async def _dispatch_rom_flush(
             dp_broker=dp_broker,
             registry=registry,
             asr_chat_hub=asr_chat_hub,
-            api_key_id=api_key_id,
             uplink_sample_rate=flushed.sample_rate,
             uplink_channels=flushed.channels,
             uplink_codec=flushed.codec,
@@ -531,13 +516,12 @@ async def handle_asr_chat(
     dp_broker: DevicePipelineBroker,
     asr_chat_hub: AsrChatHub,
     *,
-    api_key_id: Optional[str] = None,
+    pin_code: Optional[str] = None,
 ) -> None:
     """/asr_chat WS：音频/文本上行；可选 ``camera_frame`` + JPEG（``next_bin_len``）。
 
     相机帧仅服务端入库/调试预览，不因相机结果向本连接回写。
     """
-    ChatAppService().bind(pipeline)
     try:
         session = VadService().create_connection_session(pipeline)
     except RuntimeError:
@@ -549,9 +533,9 @@ async def handle_asr_chat(
     camera_face_enabled = bool(device_id and CameraFaceService().is_configured())
 
     if device_id:
-        await registry.connect(device_id, "asr_chat", websocket)
+        await registry.connect(device_id, "asr_chat", websocket, pin_code=pin_code)
         await asr_chat_hub.attach(device_id, websocket)
-        logger.info("[/asr_chat] 接入 device_id=%s peer=%s (已登记到 DeviceRegistry)", device_id, peer)
+        logger.info("[/asr_chat] 接入 device_id=%s pin=%s peer=%s (已登记到 DeviceRegistry)", device_id, pin_code, peer)
     else:
         logger.warning(
             "[/asr_chat] 接入缺失 device_id peer=%s —— 不会出现在 /api/devices 设备列表，"
@@ -609,7 +593,6 @@ async def handle_asr_chat(
                                 payload=payload,
                                 device_id=device_id,
                                 camera_face_enabled=camera_face_enabled,
-                                api_key_id=api_key_id,
                                 enc="binary",
                             ),
                             name=f"asr_chat_camera:{device_id or '?'}",
@@ -632,7 +615,6 @@ async def handle_asr_chat(
                         registry=registry,
                         turn_task_holder=turn_task_holder,
                         device_pb_only=device_pb_only,
-                        api_key_id=api_key_id,
                     )
                     if uplink_flush:
                         await _dispatch_rom_flush(
@@ -646,7 +628,6 @@ async def handle_asr_chat(
                             asr_chat_hub=asr_chat_hub,
                             device_pb_only=device_pb_only,
                             turn_task_holder=turn_task_holder,
-                            api_key_id=api_key_id,
                         )
                     continue
 
@@ -671,7 +652,6 @@ async def handle_asr_chat(
                             registry=registry,
                             turn_task_holder=turn_task_holder,
                             device_pb_only=device_pb_only,
-                            api_key_id=api_key_id,
                         )
                         continue
                 else:
@@ -736,6 +716,8 @@ async def handle_asr_chat(
                         send_client=False,
                         event_fields={"asr_text": ut, "asr_ms": 0, "source": "text"},
                     )
+                    if device_id:
+                        LiveService().note_conversation_start(device_id)
                     nod_done, nod_task = start_llm_wait_nod_feedback(asr_chat_hub, device_id)
                     try:
                         flow = await run_ws_chat_turn(
@@ -751,6 +733,8 @@ async def handle_asr_chat(
                         )
                     finally:
                         await stop_llm_wait_nod_feedback(nod_done, nod_task)
+                        if device_id:
+                            LiveService().note_conversation_end(device_id)
                     await publish_ws_chat_turn(
                         dp_broker,
                         registry,
@@ -777,7 +761,6 @@ async def handle_asr_chat(
                         asr_chat_hub=asr_chat_hub,
                         device_pb_only=device_pb_only,
                         turn_task_holder=turn_task_holder,
-                        api_key_id=api_key_id,
                     )
                     continue
 
@@ -798,7 +781,6 @@ async def handle_asr_chat(
                                 payload=payload,
                                 device_id=device_id,
                                 camera_face_enabled=camera_face_enabled,
-                                api_key_id=api_key_id,
                                 enc="base64",
                             ),
                             name=f"asr_chat_camera:{device_id or '?'}",
@@ -820,7 +802,6 @@ async def handle_asr_chat(
                                     payload=attached_media,
                                     device_id=device_id,
                                     camera_face_enabled=camera_face_enabled,
-                                    api_key_id=api_key_id,
                                     enc="binary",
                                 ),
                                 name=f"asr_chat_camera:{device_id or '?'}",
@@ -879,7 +860,6 @@ async def handle_asr_chat(
                                 registry=registry,
                                 turn_task_holder=turn_task_holder,
                                 device_pb_only=device_pb_only,
-                                api_key_id=api_key_id,
                             )
                             if want_flush:
                                 await _dispatch_rom_flush(
@@ -893,7 +873,6 @@ async def handle_asr_chat(
                                     asr_chat_hub=asr_chat_hub,
                                     device_pb_only=device_pb_only,
                                     turn_task_holder=turn_task_holder,
-                                    api_key_id=api_key_id,
                                 )
                             continue
                         pending = PendingUplinkBinary(
@@ -935,7 +914,6 @@ async def handle_asr_chat(
                             registry=registry,
                             turn_task_holder=turn_task_holder,
                             device_pb_only=device_pb_only,
-                            api_key_id=api_key_id,
                         )
                     if want_flush:
                         await _dispatch_rom_flush(
@@ -949,7 +927,6 @@ async def handle_asr_chat(
                             asr_chat_hub=asr_chat_hub,
                             device_pb_only=device_pb_only,
                             turn_task_holder=turn_task_holder,
-                            api_key_id=api_key_id,
                         )
                     continue
 

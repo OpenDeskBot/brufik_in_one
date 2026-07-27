@@ -59,13 +59,13 @@ def test_update_face_profile_api(monkeypatch, tmp_path):
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "test.db"
         monkeypatch.setenv("DESKBOT_DB_PATH", str(db_path))
-        monkeypatch.setattr("deskbot_server.device_data.ensure_device_data_initialized", lambda _device_id: False)
+        monkeypatch.setattr("deskbot_server.utils.device_data.ensure_device_data_initialized", lambda _device_id: False)
         monkeypatch.setattr(
             "deskbot_server.face_profiles_store.resolve_json_path",
             lambda _default, device_id=None: str(tmp_path / (device_id or "global") / "face_profiles.json"),
         )
 
-        from deskbot_server.auth.device_service import bind_device
+        from tests.device_bind_helpers import bind_device_online
         from deskbot_server.auth.service import create_user
         from deskbot_server.dao.face_profiles_store import save_face_profiles
         from deskbot_server.db import init_database
@@ -76,7 +76,7 @@ def test_update_face_profile_api(monkeypatch, tmp_path):
         init_engine(db_path)
         init_database()
         user = create_user("face-api@example.com", "password1234")
-        bind_device(user.id, "deskbot_face")
+        bind_device_online(user.id, "deskbot_face")
         save_face_profiles(
             [{"person_id": 1, "name": "旧名字", "descriptor": [0.1] * 512, "descriptor_kind": "embedding"}],
             device_id="deskbot_face",

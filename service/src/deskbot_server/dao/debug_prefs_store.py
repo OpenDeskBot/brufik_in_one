@@ -7,14 +7,13 @@ from typing import Any
 
 from deskbot_server.config import load_config, save_config
 from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled, set_asr_voice_auto_reply_enabled
-from deskbot_server.service.pb_idle_dispatch import get_pb_idle_auto_dispatch_enabled, set_pb_idle_auto_dispatch_enabled
-from deskbot_server.ws.pb_idle_registry import cancel_all_pb_idle_schedulers
 
 logger = logging.getLogger("deskbot-server")
 
 _VALID_SERVO_AUTO_MODES = frozenset({"", "follow", "follow_frontal", "gaze"})
 
 _camera_servo_auto_mode: str = ""
+_live_service_enabled: bool = True
 
 
 def normalize_camera_servo_auto_mode(raw: object) -> str:
@@ -32,10 +31,19 @@ def set_camera_servo_auto_mode(mode: object) -> str:
     return _camera_servo_auto_mode
 
 
+def get_live_service_enabled() -> bool:
+    return _live_service_enabled
+
+
+def set_live_service_enabled(enabled: bool) -> None:
+    global _live_service_enabled
+    _live_service_enabled = bool(enabled)
+
+
 def debug_prefs_snapshot() -> dict[str, Any]:
     return {
         "asr_auto_reply": get_asr_voice_auto_reply_enabled(),
-        "pb_idle_auto_dispatch": get_pb_idle_auto_dispatch_enabled(),
+        "live_service": get_live_service_enabled(),
         "camera_servo_auto_mode": get_camera_servo_auto_mode(),
     }
 
@@ -59,8 +67,8 @@ def apply_debug_prefs_from_config(cfg: dict[str, Any] | None = None) -> None:
         return
     if "asr_auto_reply" in debug:
         set_asr_voice_auto_reply_enabled(bool(debug.get("asr_auto_reply")))
-    if "pb_idle_auto_dispatch" in debug:
-        set_pb_idle_auto_dispatch_enabled(bool(debug.get("pb_idle_auto_dispatch")))
+    if "live_service" in debug:
+        set_live_service_enabled(bool(debug.get("live_service")))
     if "camera_servo_auto_mode" in debug:
         mode = debug.get("camera_servo_auto_mode")
         if not get_asr_voice_auto_reply_enabled():
@@ -71,18 +79,15 @@ def apply_debug_prefs_from_config(cfg: dict[str, Any] | None = None) -> None:
 def persist_asr_auto_reply(enabled: bool) -> None:
     set_asr_voice_auto_reply_enabled(enabled)
     if not enabled:
-        cancel_all_pb_idle_schedulers()
         set_camera_servo_auto_mode("")
         _persist_debug_section(asr_auto_reply=False, camera_servo_auto_mode="")
         return
     _persist_debug_section(asr_auto_reply=True)
 
 
-def persist_pb_idle_auto_dispatch(enabled: bool) -> None:
-    set_pb_idle_auto_dispatch_enabled(enabled)
-    if not enabled:
-        cancel_all_pb_idle_schedulers()
-    _persist_debug_section(pb_idle_auto_dispatch=bool(enabled))
+def persist_live_service(enabled: bool) -> None:
+    set_live_service_enabled(enabled)
+    _persist_debug_section(live_service=bool(enabled))
 
 
 def persist_camera_servo_auto_mode(mode: object) -> str:

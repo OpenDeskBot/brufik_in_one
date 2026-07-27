@@ -25,7 +25,7 @@ camera_face:
     alpha: 1.0
 debug:
   asr_auto_reply: true
-  pb_idle_auto_dispatch: true
+  live_service: false
   camera_servo_auto_mode: follow
 server:
   host: 0.0.0.0
@@ -36,8 +36,6 @@ server:
   send_face_info_to_asr_chat: false
   asr_chat_device_pb_only: true
   asr_chat_minimal_device_downlink: false
-  pb_idle_snore_sec: 5
-  pb_idle_silence_sec: 2
   max_concurrent_asr: 6
 audio:
   input_codec: opus

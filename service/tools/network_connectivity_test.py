@@ -197,7 +197,7 @@ async def _mock_uplink_camera(
     jpeg: bytes,
     stats: dict[str, Any],
 ) -> None:
-    """经 /camera_uplink 模拟 JPEG 上行（JSON next_bin_len + binary）。"""
+    """经 /asr_chat 模拟 JPEG 上行（JSON next_bin_len + binary）。"""
     sent = 0
     failed = 0
     interval = 1.0 / max(0.5, fps)
@@ -292,7 +292,7 @@ async def _monitor_real_camera_log(
     duration_sec: float,
     stats: dict[str, Any],
 ) -> None:
-    """从服务端日志统计真机 camera_uplink 帧数（device_id 精确匹配，排除 _nettest）。"""
+    """从服务端日志统计真机 camera_frame 帧数（device_id 精确匹配，排除 _nettest）。"""
     needle = f"camera_frame ok device_id={device_id} "
     t_end = time.monotonic() + duration_sec
     pos = 0
@@ -364,12 +364,10 @@ async def run_tests(args: argparse.Namespace) -> TestReport:
     ch = dev.get("channels") or {}
     report.ok(
         f"设备在线 channels={ch} last_seen={dev.get('last_seen')} "
-        f"asr_chat={ch.get('asr_chat', 0)} camera_uplink={ch.get('camera_uplink', 0)}"
+        f"asr_chat={ch.get('asr_chat', 0)}"
     )
     if not ch.get("asr_chat"):
-        report.fail("asr_chat 通道未连接")
-    if args.require_camera and not ch.get("camera_uplink"):
-        report.fail("camera_uplink 通道未连接（加 --no-require-camera 可跳过）")
+        report.fail("asr_chat 通道未连接（语音与 camera_frame 同连接）")
 
     # --- 2. 单次 PB 往返 ---
     for i in range(args.pb_single_rounds):
@@ -424,14 +422,16 @@ async def run_tests(args: argparse.Namespace) -> TestReport:
 
     # --- 4. 并发压测（mock 客户端 + 真实设备 PB）---
     if args.concurrent_sec > 0:
-        mock_id = f"{device_id}_nettest"
+        # 音频与相机 mock 分两个 device_id，避免 keep_only_one_link 互踢
+        mock_audio_id = f"{device_id}_nettest_a"
+        mock_cam_id = f"{device_id}_nettest_c"
         ws_base = base.replace("http://", "ws://").replace("https://", "wss://")
-        asr_url = f"{ws_base}/asr_chat?device_id={mock_id}"
+        asr_url = f"{ws_base}/asr_chat?device_id={mock_audio_id}"
+        cam_url = f"{ws_base}/asr_chat?device_id={mock_cam_id}"
         if api_key:
-            asr_url += f"&api_key={urllib.parse.quote(api_key)}"
-        cam_url = f"{ws_base}/camera_uplink?device_id={mock_id}"
-        if api_key:
-            cam_url += f"&api_key={urllib.parse.quote(api_key)}"
+            q = urllib.parse.quote(api_key)
+            asr_url += f"&api_key={q}"
+            cam_url += f"&api_key={q}"
 
         jpeg = _make_test_jpeg()
         audio_stats: dict[str, Any] = {}
@@ -554,7 +554,7 @@ def main() -> int:
     p.add_argument(
         "--server-log",
         default="",
-        help="服务端日志路径，用于统计真机 camera_uplink 帧数",
+        help="服务端日志路径，用于统计真机 camera_frame 帧数",
     )
     p.add_argument(
         "--require-real-camera",
@@ -562,8 +562,6 @@ def main() -> int:
         default=False,
         help="并发压测期间必须检测到真机相机上传",
     )
-    p.add_argument("--require-camera", action="store_true", default=True)
-    p.add_argument("--no-require-camera", action="store_false", dest="require_camera")
     args = p.parse_args()
 
     report = asyncio.run(run_tests(args))

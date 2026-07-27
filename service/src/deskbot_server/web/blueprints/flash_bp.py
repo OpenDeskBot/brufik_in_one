@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Request
 
 from deskbot_server.infrastructure.flash.rom_flash import (
     flash_manager,
@@ -13,51 +12,48 @@ from deskbot_server.infrastructure.flash.rom_flash import (
     validate_port,
     validate_rom_id,
 )
-from deskbot_server.web.flaskish import FlaskishAPIRoute, jsonify, login_required, render_template, request
+from deskbot_server.web.deps import RequireUser
+from deskbot_server.web.view_helpers import ViewAPIRoute, args_get, get_json, jsonify, render_template
 
-router = APIRouter(route_class=FlaskishAPIRoute, tags=["flash"])
+router = APIRouter(route_class=ViewAPIRoute, tags=["flash"])
 
 
 @router.get("/flash")
-@login_required
-def flash_page():
-    return render_template("app2c/flash_rom.html", active_nav="flash")
+def flash_page(request: Request, user: RequireUser):
+    return render_template(request, "app2c/flash_rom.html", active_nav="flash")
 
 
 @router.get("/api/flash/ports")
-@login_required
-def api_flash_ports():
+def api_flash_ports(request: Request, user: RequireUser):
     return jsonify({"ok": True, "ports": list_serial_ports()})
 
 
 @router.get("/api/flash/roms")
-@login_required
-def api_flash_roms():
+def api_flash_roms(request: Request, user: RequireUser):
     return jsonify({"ok": True, "roms": [r.to_dict() for r in list_roms()]})
 
 
 @router.get("/api/flash/roms/{rom_id}/download")
-@login_required
-def api_flash_rom_download(rom_id: str):
+def api_flash_rom_download(request: Request, rom_id: str, user: RequireUser):
     try:
         path = resolve_rom_path(validate_rom_id(rom_id))
     except FileNotFoundError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 404
     except (PermissionError, ValueError) as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
+    from fastapi.responses import FileResponse
+
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
 
 @router.get("/api/flash/status")
-@login_required
-def api_flash_status():
-    since = request.args.get("since", 0, type=int)
+def api_flash_status(request: Request, user: RequireUser):
+    since = args_get(request, "since", 0, type=int)
     return jsonify({"ok": True, **flash_manager.status(), "log": flash_manager.log_snapshot(since=since)})
 
 
 @router.post("/api/flash/build")
-@login_required
-def api_flash_build():
+def api_flash_build(request: Request, user: RequireUser):
     try:
         job = flash_manager.start_build()
     except RuntimeError as exc:
@@ -68,9 +64,8 @@ def api_flash_build():
 
 
 @router.post("/api/flash/upload")
-@login_required
-def api_flash_upload():
-    body = request.get_json(silent=True) or {}
+def api_flash_upload(request: Request, user: RequireUser):
+    body = get_json(request, silent=True) or {}
     port = (body.get("port") or "").strip()
     rom_id = (body.get("rom_id") or "source").strip()
     try:
@@ -85,16 +80,14 @@ def api_flash_upload():
 
 
 @router.post("/api/flash/cancel")
-@login_required
-def api_flash_cancel():
+def api_flash_cancel(request: Request, user: RequireUser):
     cancelled = flash_manager.cancel()
     return jsonify({"ok": True, "cancelled": cancelled})
 
 
 @router.post("/api/flash/monitor/start")
-@login_required
-def api_flash_monitor_start():
-    body = request.get_json(silent=True) or {}
+def api_flash_monitor_start(request: Request, user: RequireUser):
+    body = get_json(request, silent=True) or {}
     port = (body.get("port") or "").strip()
     try:
         port = validate_port(port)
@@ -109,16 +102,14 @@ def api_flash_monitor_start():
 
 
 @router.post("/api/flash/monitor/stop")
-@login_required
-def api_flash_monitor_stop():
+def api_flash_monitor_stop(request: Request, user: RequireUser):
     flash_manager.serial.stop()
     return jsonify({"ok": True})
 
 
 @router.post("/api/flash/monitor/send")
-@login_required
-def api_flash_monitor_send():
-    body = request.get_json(silent=True) or {}
+def api_flash_monitor_send(request: Request, user: RequireUser):
+    body = get_json(request, silent=True) or {}
     text = body.get("text")
     if text is None or str(text).strip() == "":
         return jsonify({"ok": False, "error": "text 不能为空"}), 400

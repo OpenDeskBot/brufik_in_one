@@ -1,12 +1,12 @@
-"""Web 登录用户对象（不再依赖 flask_login）。"""
+"""Web 登录用户对象（FastAPI session 鉴权）。"""
 
 from __future__ import annotations
 
 from deskbot_server.db.models import User
 
 
-class FlaskUser:
-    """兼容旧名；供会话鉴权与模板使用。"""
+class SessionUser:
+    """供会话鉴权与模板使用的登录用户。"""
 
     def __init__(self, user: User):
         self._user = user
@@ -44,3 +44,6 @@ class FlaskUser:
 
     def __getattr__(self, name: str):
         return getattr(self._user, name)
+
+
+# 兼容旧 import，迁移完成后可删除。

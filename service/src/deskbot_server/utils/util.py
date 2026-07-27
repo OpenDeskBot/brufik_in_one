@@ -141,6 +141,17 @@ def _extract_device_id(qargs: dict) -> Optional[str]:
     return None
 
 
+def _extract_pin_code(qargs: dict) -> Optional[str]:
+    """从 URL 查询参数取 pin_code（别名 ``pin`` / ``pincode``）。"""
+    for key in ("pin_code", "pincode", "pin"):
+        v = qargs.get(key)
+        if v:
+            v = str(v).strip()
+            if v:
+                return v
+    return None
+
+
 def _new_request_id() -> str:
     """生成 /asr_chat 每一轮的 request_id（短 uuid），用于跨阶段追踪。"""
     return uuid.uuid4().hex[:16]

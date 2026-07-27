@@ -1,7 +1,7 @@
-"""``/asr_chat`` / ``/camera_uplink`` 打包帧：``u32be(json_len) + json_utf8 + optional_binary``。
+"""``/asr_chat`` 打包帧：``u32be(json_len) + json_utf8 + optional_binary``。
 
 与固件 ``PackedFrame`` / ``parse_packed_frame`` / ``send_packed_bin`` 对称。
-不再使用 TEXT + 独立 BIN（服务端仍兼容旧上行：裸 audio / TEXT+BIN）。
+服务端仍兼容旧上行：裸 audio / TEXT+BIN。
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ logger = logging.getLogger("deskbot-server")
 PendingKind = Literal["audio", "camera_frame"]
 
 _MAX_NEXT_BIN_LEN = 512 * 1024
-_MAX_PACKED_JSON_LEN = 16 * 1024
+# 与固件 ``DESKBOT_MAX_PACKED_JSON_LEN`` 对齐（TTS anim 音素帧易超 16KB）
+_MAX_PACKED_JSON_LEN = 64 * 1024
 
 
 @dataclass

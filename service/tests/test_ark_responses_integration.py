@@ -24,8 +24,7 @@ def device_env(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         monkeypatch.setenv("DESKBOT_DB_PATH", str(root / "test.db"))
-        monkeypatch.setattr("deskbot_server.device_data.DATA_DIR", root)
-        monkeypatch.setattr("deskbot_server.device_data.DEVICE_DATA_ROOT", root / "device")
+        monkeypatch.setattr("deskbot_server.utils.device_data.DATA_DIR", root)
         from deskbot_server.db import init_database
         from deskbot_server.db.engine import init_engine, reset_engine
 
@@ -88,7 +87,7 @@ def test_live_ark_responses_stream_tts_prefetch():
 
 
 def test_api_add_select_test_ark_model(device_env, monkeypatch):
-    from deskbot_server.auth.device_service import bind_device
+    from tests.device_bind_helpers import bind_device_online
     from deskbot_server.auth.service import create_user
     from deskbot_server.dao.llm_config_store import get_active_llm_model
     from deskbot_server.infrastructure.llm.runtime import resolve_llm_config
@@ -96,7 +95,7 @@ def test_api_add_select_test_ark_model(device_env, monkeypatch):
 
     device_id = device_env
     user = create_user("ark-e2e@example.com", "password1234")
-    bind_device(user.id, device_id)
+    bind_device_online(user.id, device_id)
 
     app = create_app()
     client = app.test_client()
@@ -144,7 +143,7 @@ def test_api_add_select_test_ark_model(device_env, monkeypatch):
 def test_openai_adapter_with_ark_device(device_env, monkeypatch):
     import asyncio
 
-    from deskbot_server.auth.device_service import bind_device
+    from tests.device_bind_helpers import bind_device_online
     from deskbot_server.auth.service import create_user
     from deskbot_server.config import load_config
     from deskbot_server.core.settings import AppSettings
@@ -153,7 +152,7 @@ def test_openai_adapter_with_ark_device(device_env, monkeypatch):
 
     device_id = device_env
     create_user("ark-adapter@example.com", "password1234")
-    bind_device(create_user("ark-adapter2@example.com", "password1234").id, device_id)
+    bind_device_online(create_user("ark-adapter2@example.com", "password1234").id, device_id)
 
     model = add_llm_model(
         device_id,
@@ -178,14 +177,14 @@ def test_openai_adapter_with_ark_device(device_env, monkeypatch):
 
 
 def test_debug_llm_chat_with_ark_device(device_env):
-    from deskbot_server.auth.device_service import bind_device
+    from tests.device_bind_helpers import bind_device_online
     from deskbot_server.auth.service import create_user
     from deskbot_server.dao.llm_config_store import add_llm_model, set_active_llm_model
     from deskbot_server.web.app import create_app
 
     device_id = device_env
     user = create_user("ark-debug@example.com", "password1234")
-    bind_device(user.id, device_id)
+    bind_device_online(user.id, device_id)
 
     model = add_llm_model(
         device_id,

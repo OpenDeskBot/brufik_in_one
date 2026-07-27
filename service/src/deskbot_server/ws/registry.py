@@ -7,6 +7,7 @@ import time
 from typing import Any, Optional
 
 from deskbot_server.utils.util import _format_ts
+from deskbot_server.ws.device_pin import clear_online_pin, set_online_pin
 
 logger = logging.getLogger("deskbot-server")
 
@@ -25,7 +26,7 @@ class DeviceRegistry:
         self._ws_to_key: dict = {}
         self._lock = asyncio.Lock()
 
-    async def connect(self, device_id: str, channel: str, ws) -> dict:
+    async def connect(self, device_id: str, channel: str, ws, *, pin_code: str | None = None) -> dict:
         if not device_id:
             return {}
         async with self._lock:
@@ -41,6 +42,8 @@ class DeviceRegistry:
                     "total_connections": 0,
                 }
                 self._devices[device_id] = dev
+            if pin_code:
+                dev["pin_code"] = pin_code
             chs = dev.setdefault("channels", {})
             chs[channel] = int(chs.get(channel) or 0) + 1
             dev["last_seen_ts"] = now
@@ -50,6 +53,10 @@ class DeviceRegistry:
             self._ws_to_key[id(ws)] = (device_id, channel)
             snapshot_ch = dict(chs)
             total_devices = len(self._devices)
+            stored_pin = str(dev.get("pin_code") or pin_code or "").strip() or None
+            dev_snapshot = dict(dev)
+        if stored_pin:
+            set_online_pin(device_id, stored_pin)
         logger.info(
             "[DeviceRegistry] %s device_id=%s channel=%s channels=%s 设备表容量=%d",
             "注册新设备" if is_new else "复用已注册设备",
@@ -58,15 +65,25 @@ class DeviceRegistry:
             snapshot_ch,
             total_devices,
         )
+        from deskbot_server.service.user_service import UserService
         from deskbot_server.utils.device_data import ensure_device_data_initialized
 
         try:
-            initialized = await asyncio.to_thread(ensure_device_data_initialized, device_id)
+            if stored_pin:
+                await asyncio.to_thread(UserService().sync_device_pin_if_missing, device_id, stored_pin)
+                initialized = await asyncio.to_thread(ensure_device_data_initialized, device_id, stored_pin)
+            else:
+                initialized = False
             if initialized:
-                logger.info("[DeviceRegistry] 已初始化设备数据目录 device_id=%s", device_id)
+                logger.info("[DeviceRegistry] 已初始化设备数据目录 device_id=%s pin=%s", device_id, stored_pin)
         except Exception as exc:
-            logger.warning("[DeviceRegistry] 初始化设备数据目录失败 device_id=%s err=%s", device_id, exc)
-        return dict(dev)
+            logger.warning(
+                "[DeviceRegistry] 初始化设备数据目录失败 device_id=%s pin=%s err=%s",
+                device_id,
+                stored_pin,
+                exc,
+            )
+        return dev_snapshot
 
     async def disconnect(self, ws) -> Optional[dict]:
         async with self._lock:
@@ -89,6 +106,8 @@ class DeviceRegistry:
             dev["online"] = bool(chs)
             snapshot_ch = dict(chs)
             still_online = dev["online"]
+        if not still_online:
+            clear_online_pin(device_id)
         logger.info(
             "[DeviceRegistry] 注销 device_id=%s channel=%s 剩余通道=%s online=%s",
             device_id,

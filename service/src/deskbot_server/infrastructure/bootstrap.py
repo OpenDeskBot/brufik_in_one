@@ -8,7 +8,6 @@ from deskbot_server.infrastructure.llm.openai_compat import OpenAiLlmAdapter
 from deskbot_server.infrastructure.tts.factory import build_tts_adapter
 from deskbot_server.service.application.chat_service import ChatService
 from deskbot_server.service.asr_service import AsrService
-from deskbot_server.service.chat_app_service import ChatAppService
 from deskbot_server.service.llm_service import LlmService
 from deskbot_server.service.tts_service import TtsService
 
@@ -23,6 +22,4 @@ def build_chat_service(config: dict) -> ChatService:
     LlmService().bind(llm)
     TtsService().bind(tts)
 
-    chat = ChatService(settings, asr=asr, llm=llm, tts=tts)
-    ChatAppService().bind(chat)
-    return chat
+    return ChatService(settings, asr=asr, llm=llm, tts=tts)
