@@ -8,9 +8,7 @@
 
 #include <Arduino.h>
 #include "esp_camera.h"
-#include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
-#include <freertos/task.h>
+#include <atomic>
 
 /* Seeed XIAO ESP32S3 Sense 摄像头引脚（esp32-camera 示例同源） */
 #define PWDN_GPIO_NUM  -1
@@ -33,14 +31,11 @@
 static constexpr bool kCameraCaptureEnabled = true;
 
 static bool s_camera_ok = false;
-static volatile uint32_t s_interval_ms = 1000u;
-static QueueHandle_t s_notify_q = nullptr;
+static bool s_task_ready = false;
+static std::atomic<uint32_t> s_interval_ms{1000u};
+static std::atomic<bool> s_capture_enabled{false};
+static uint32_t s_last_capture_ms = 0;
 static uint32_t s_seq = 0;
-/** queue 尚未创建时暂存最新通知（boot 阶段 camera_ws ready 可能早于 task_setup_camera）。 */
-static bool s_has_pending_notify = false;
-static CamNotify s_pending_notify = kCamStop;
-
-static void camera_capture_task(void*);
 
 bool setup_camera() {
   camera_config_t config;
@@ -106,51 +101,31 @@ void task_setup_camera() {
     log_warn("[CAMERA] task_setup_camera skipped (setup_camera not ok)");
     return;
   }
-
-  s_notify_q = xQueueCreate(1, sizeof(CamNotify));
-  if (!s_notify_q) {
-    log_error("[CAMERA] notify queue failed");
-    return;
-  }
-
-  BaseType_t ok = xTaskCreatePinnedToCore(camera_capture_task, "camera_cap", 4096, nullptr, 1, nullptr, 0);
-  if (ok != pdPASS) {
-    log_error("[CAMERA] task create failed");
-    return;
-  }
-  log_warn("[CAMERA] capture task started (notify-queue gated) interval=%ums",
-           (unsigned)s_interval_ms);
-
-  /* 补放 boot 期间暂存的 notify（常见：WS ready 早于本任务）。 */
-  if (s_has_pending_notify) {
-    const CamNotify n = s_pending_notify;
-    s_has_pending_notify = false;
-    xQueueReset(s_notify_q);
-    (void)xQueueSend(s_notify_q, &n, 0);
-    log_warn("[CAMERA] flushed pending notify=%d", (int)n);
-  }
+  s_task_ready = true;
+  log_warn("[CAMERA] capture folded into ws_transport (no camera_cap task) interval=%ums",
+           (unsigned)s_interval_ms.load(std::memory_order_relaxed));
 }
 
 void camera_set_fps(uint32_t fps) {
   if (fps == 0) {
     return;
   }
-  s_interval_ms = 1000u / fps;
-  log_warn("[CAMERA] set fps=%u interval=%ums", (unsigned)fps, (unsigned)s_interval_ms);
+  const uint32_t interval = 1000u / fps;
+  s_interval_ms.store(interval, std::memory_order_relaxed);
+  log_warn("[CAMERA] set fps=%u interval=%ums", (unsigned)fps, (unsigned)interval);
 }
 
 void camera_notify_capture(CamNotify n) {
   if (!kCameraCaptureEnabled && n == kCamGo) {
     return;
   }
-  if (!s_notify_q) {
-    s_pending_notify = n;
-    s_has_pending_notify = true;
+  if (n == kCamStop) {
+    s_capture_enabled.store(false, std::memory_order_release);
     return;
   }
-  /* 单槽：先清空再放入最新通知。 */
-  xQueueReset(s_notify_q);
-  (void)xQueueSend(s_notify_q, &n, 0);
+  /* GO：发一张的额度；先等满 interval 再拍（对齐旧 delay-after-GO）。 */
+  s_last_capture_ms = millis();
+  s_capture_enabled.store(true, std::memory_order_release);
 }
 
 static void release_camera_fb(void* ctx) {
@@ -201,7 +176,7 @@ static bool capture_and_enqueue_one() {
     return false;
   }
 
-  /* 入队成功后所有权交给 ws_transport：发完/丢弃时调 releaser；失败则本处立刻 return。 */
+  /* 入队成功后所有权交给 ws_transport：打包后立刻 return fb。 */
   if (!ws_transport_enqueue_image_borrow(header, fb->buf, fb->len, release_camera_fb, fb)) {
     esp_camera_fb_return(fb);
     return false;
@@ -209,40 +184,29 @@ static bool capture_and_enqueue_one() {
   return true;
 }
 
-static void camera_capture_task(void*) {
-  for (;;) {
-    CamNotify n;
-    if (xQueueReceive(s_notify_q, &n, portMAX_DELAY) != pdTRUE) {
-      continue;
-    }
-    if (n == kCamStop) {
-      log_warn("[CAMERA] capture stopped");
-      continue;
-    }
-
-    /* GO：先按 fps 间隔 delay；STOP 若在 delay 期间入队，随后 peek 会停住。 */
-    vTaskDelay(pdMS_TO_TICKS(s_interval_ms));
-
-    if (!kCameraCaptureEnabled) {
-      continue;
-    }
-
-    CamNotify peek;
-    if (xQueueReceive(s_notify_q, &peek, 0) == pdTRUE) {
-      if (peek == kCamStop) {
-        log_warn("[CAMERA] capture stopped before shoot");
-        continue;
-      }
-      /* 多余 GO 丢弃 */
-    }
-
-    if (!kCameraCaptureEnabled) {
-      continue;
-    }
-
-    if (!capture_and_enqueue_one()) {
-      vTaskDelay(pdMS_TO_TICKS(100));
-      camera_notify_capture(kCamGo);
-    }
+bool camera_try_capture_and_enqueue(void) {
+  if (!s_camera_ok || !s_task_ready || !kCameraCaptureEnabled) {
+    return false;
   }
+  if (!s_capture_enabled.load(std::memory_order_acquire)) {
+    return false;
+  }
+  const uint32_t now = millis();
+  const uint32_t interval = s_interval_ms.load(std::memory_order_relaxed);
+  if ((uint32_t)(now - s_last_capture_ms) < interval) {
+    return false;
+  }
+  /* TX 满则下轮再试，不推进节拍（避免长时间无图）。 */
+  if (ws_transport_tx_slots_free() == 0) {
+    return false;
+  }
+  /* camera_ws 未就绪时 enqueue 会失败；推进节拍避免空转狂抓，保留额度下轮再试。 */
+  if (!capture_and_enqueue_one()) {
+    s_last_capture_ms = now;
+    return false;
+  }
+  s_last_capture_ms = now;
+  /* 一张在途：等 drain_tx 完成后再 kCamGo（与旧 notify 握手一致）。 */
+  s_capture_enabled.store(false, std::memory_order_release);
+  return true;
 }

@@ -1,6 +1,7 @@
 #include "ws_transport.h"
 
 #include "asr_ws.h"
+#include "camera.h"
 #include "camera_ws.h"
 #include "logger.h"
 #include "mic.h"
@@ -100,22 +101,22 @@ static void discard_queue(QueueHandle_t q) {
   }
 }
 
-/** 丢掉指定 type，其余按原序回填。 */
+/** 丢掉指定 type；其余按原相对顺序转到队尾（O(1) 栈，不倒整表）。 */
 static void discard_tx_of_type(WsTxType type) {
-  WsTxItem keep[kTxDepth];
-  UBaseType_t n = 0;
-  WsTxItem item{};
-  while (xQueueReceive(s_tx_q, &item, 0) == pdTRUE) {
+  if (!s_tx_q) {
+    return;
+  }
+  const UBaseType_t n = uxQueueMessagesWaiting(s_tx_q);
+  for (UBaseType_t i = 0; i < n; ++i) {
+    WsTxItem item{};
+    if (xQueueReceive(s_tx_q, &item, 0) != pdTRUE) {
+      break;
+    }
     if (item.type == type) {
       ws_tx_free_item(&item);
-    } else if (n < kTxDepth) {
-      keep[n++] = item;
-    } else {
+    } else if (xQueueSend(s_tx_q, &item, 0) != pdTRUE) {
       ws_tx_free_item(&item);
     }
-  }
-  for (UBaseType_t i = 0; i < n; ++i) {
-    (void)xQueueSend(s_tx_q, &keep[i], 0);
   }
   if (s_tx_active && s_tx_active_item.type == type) {
     ws_tx_free_item(&s_tx_active_item);
@@ -162,41 +163,12 @@ static bool enqueue_tx(WsTxItem* item) {
   return false;
 }
 
-/** 取队头：state > audio > image，避免 JPEG 堵死 /asr_chat。 */
+/** 取队头：纯 FIFO。 */
 static bool take_next_tx_item(WsTxItem* out) {
   if (!out || !s_tx_q) {
     return false;
   }
-  WsTxItem keep[kTxDepth];
-  UBaseType_t n = 0;
-  WsTxItem item{};
-  int best = -1;
-  uint8_t best_rank = 255;
-  while (n < kTxDepth && xQueueReceive(s_tx_q, &item, 0) == pdTRUE) {
-    keep[n] = item;
-    const uint8_t rank = (item.type == WsTxType::kState)   ? 0
-                         : (item.type == WsTxType::kAudio) ? 1
-                                                           : 2;
-    if (rank < best_rank) {
-      best_rank = rank;
-      best = (int)n;
-    }
-    ++n;
-  }
-  if (n == 0 || best < 0) {
-    return false;
-  }
-  *out = keep[(UBaseType_t)best];
-  for (UBaseType_t i = 0; i < n; ++i) {
-    if ((int)i == best) {
-      continue;
-    }
-    if (xQueueSend(s_tx_q, &keep[i], 0) != pdTRUE) {
-      ws_tx_free_item(&keep[i]);
-      log_warn("[WS_TRANSPORT] TX requeue drop type=%u", (unsigned)keep[i].type);
-    }
-  }
-  return true;
+  return xQueueReceive(s_tx_q, out, 0) == pdTRUE;
 }
 
 static bool build_tx_item(WsTxType type, const char* json, const uint8_t* bin, size_t bin_len,
@@ -291,9 +263,11 @@ static void ws_transport_task(void* /*arg*/) {
     ws_camera_auto_reconnect();
     const bool did_rx = ws_transport_drain_rx();
     const bool did_tx = ws_transport_drain_tx();
+    /* 相机抓帧并入本任务：省掉 camera_cap 栈 + notify xQueue。 */
+    const bool did_cam = camera_try_capture_and_enqueue();
     owner_unlock();
 
-    if (did_rx || did_tx || tx_busy() || queue_waiting(s_rx_q) > 0) {
+    if (did_rx || did_tx || did_cam || tx_busy() || queue_waiting(s_rx_q) > 0) {
       taskYIELD();
     } else {
       vTaskDelay(pdMS_TO_TICKS(2));

@@ -276,13 +276,12 @@ void log_stack_heap_tick() {
   };
   const StackWatch kTasks[] = {
       {"loopTask", (uint32_t)getArduinoLoopTaskStackSize()},
-      {"mic", 40 * 1024},
-      {"speaker", 8 * 1024},
+      {"mic", 28 * 1024},
+      {"speaker", 28 * 1024},
       {"ws_transport", 32 * 1024},
       {"pb_runtime", 24 * 1024},
       {"display_render", 24 * 1024},
       {"motor", 8 * 1024},
-      {"camera_cap", 6 * 1024},
       {"cpu_stats", 4 * 1024},
   };
 

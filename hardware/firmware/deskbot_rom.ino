@@ -100,9 +100,9 @@ void setup() {
   task_setup_head();
 
   if (s_camera_ok) {
-    task_setup_camera();
+    task_setup_camera(); /* 无独立任务；抓帧并入 ws_transport */
   } else {
-    log_warn("[BOOT] Skipping camera uplink task (no camera)");
+    log_warn("[BOOT] Skipping camera uplink (no camera)");
   }
 
   log_info("[BOOT] firmware=%s %s %s", VERSION, __DATE__, __TIME__);

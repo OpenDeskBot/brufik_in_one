@@ -1,7 +1,7 @@
 #include "head.h"
 
 #include <ESP32Servo.h>
-#include <math.h>
+#include <atomic>
 #include <driver/gpio.h>
 #include <soc/gpio_periph.h>
 #include <soc/io_mux_reg.h>
@@ -124,7 +124,7 @@ namespace {
 constexpr uint16_t   k_head_gesture_hold_ms = 15;
 constexpr TickType_t k_tick_ticks           = pdMS_TO_TICKS(SERVO_TICK_MS);
 
-/** 与下行 JSON `servo` 同形（另含斜坡/同步字段）。xm/ym 见 head.h HEAD_SERVO_*。 */
+/** 与 pb_servo_frame 同形（另含斜坡/同步字段）。xm/ym 见 head.h HEAD_SERVO_*。 */
 struct MotorCmd {
   uint8_t xm, ym;
   int     x,  y;
@@ -133,20 +133,31 @@ struct MotorCmd {
   uint8_t  step_deg;
 };
 
-enum class MotorJobKind : uint8_t {
-  kCmd = 0,
-  kPbServoChunk = 1,
+/** 执行器任务元素 type；cancel 走 xQueue 队尾，作旧/新任务分界。 */
+enum class MotorJobType : uint8_t {
+  kCancel = 0,
+  kCmd = 1,
+  kPbServoChunk = 2,
 };
 
 struct MotorJob {
-  MotorJobKind kind = MotorJobKind::kCmd;
+  MotorJobType type = MotorJobType::kCmd;
   MotorCmd cmd{};
   pb_servo_frame* servo_frames = nullptr;
   size_t servo_count = 0;
 };
 
-QueueHandle_t     s_motor_queue       = nullptr;
-TaskHandle_t      s_motor_task        = nullptr;
+QueueHandle_t s_motor_queue = nullptr;
+TaskHandle_t  s_motor_task  = nullptr;
+std::atomic<bool> s_need_cancel{false};
+
+static void free_motor_job(MotorJob& job) {
+  if (job.type == MotorJobType::kPbServoChunk) {
+    pb_servo_frames_free(job.servo_frames);
+    job.servo_frames = nullptr;
+    job.servo_count = 0;
+  }
+}
 
 /** 根据 xm/ym 模式将命令值转换为目标角度。 */
 static int resolve_target(uint8_t mode, int cur, int val, int lo, int hi) {
@@ -161,11 +172,33 @@ static int step_toward(int cur, int target, int step) {
   return cur + (d > step ? step : d < -step ? -step : d);
 }
 
-static void execute_motor_cmd(const MotorCmd& cmd) {
+/**
+ * need_cancel==false → false。
+ * 否则非阻塞丢弃旧任务，见到 cancel 则清 flag 并 return true（其后新任务保留）。
+ * 队列空且未见 cancel → return true，保持 need_cancel。
+ */
+static bool poll_cancel() {
+  if (!s_need_cancel.load(std::memory_order_acquire)) {
+    return false;
+  }
+  MotorJob j{};
+  while (xQueueReceive(s_motor_queue, &j, 0) == pdTRUE) {
+    if (j.type == MotorJobType::kCancel) {
+      s_need_cancel.store(false, std::memory_order_release);
+      log_info("[HEAD] cancel");
+      return true;
+    }
+    free_motor_job(j);
+  }
+  return true;
+}
+
+/** @return false 若中途 need_cancel。 */
+static bool execute_motor_cmd(const MotorCmd& cmd) {
   int x = s_logical_x;
   int y = s_logical_y;
   if (!head_servo_ensure_attached(x, y)) {
-    return;
+    return true;
   }
   const int x_target = resolve_target(cmd.xm, x, cmd.x, X_MIN_LIMIT, X_MAX_LIMIT);
   const int y_target = resolve_target(cmd.ym, y, cmd.y, Y_MIN_LIMIT, Y_MAX_LIMIT);
@@ -178,6 +211,10 @@ static void execute_motor_cmd(const MotorCmd& cmd) {
 
     TickType_t last_wake = xTaskGetTickCount();
     for (int i = 1; i <= total_ticks; i++) {
+      if (poll_cancel()) {
+        head_sync_logical_pos(x, y);
+        return false;
+      }
       const int new_x = x_start + (long)dx_total * i / total_ticks;
       const int new_y = y_start + (long)dy_total * i / total_ticks;
       if (new_x != x) { x = new_x; head_servo_write_x(x); }
@@ -185,23 +222,51 @@ static void execute_motor_cmd(const MotorCmd& cmd) {
       vTaskDelayUntil(&last_wake, k_tick_ticks);
     }
     const uint32_t used_ms = (uint32_t)total_ticks * SERVO_TICK_MS;
-    if (used_ms < cmd.ms) vTaskDelay(pdMS_TO_TICKS(cmd.ms - used_ms));
+    if (used_ms < cmd.ms) {
+      const uint32_t rem = cmd.ms - used_ms;
+      TickType_t wake = xTaskGetTickCount();
+      for (uint32_t left = rem; left > 0;) {
+        if (poll_cancel()) {
+          head_sync_logical_pos(x, y);
+          return false;
+        }
+        const uint32_t slice = left > SERVO_TICK_MS ? SERVO_TICK_MS : left;
+        vTaskDelayUntil(&wake, pdMS_TO_TICKS(slice));
+        left -= slice;
+      }
+    }
 
   } else {
     const int step = cmd.step_deg ? cmd.step_deg : 1;
     TickType_t last_wake = xTaskGetTickCount();
     while (x != x_target || y != y_target) {
+      if (poll_cancel()) {
+        head_sync_logical_pos(x, y);
+        return false;
+      }
       if (x != x_target) { x = step_toward(x, x_target, step); head_servo_write_x(x); }
       if (y != y_target) { y = step_toward(y, y_target, step); head_servo_write_y(y); }
       vTaskDelayUntil(&last_wake, k_tick_ticks);
     }
-    if (cmd.hold_ms) vTaskDelay(pdMS_TO_TICKS(cmd.hold_ms));
+    if (cmd.hold_ms) {
+      TickType_t wake = xTaskGetTickCount();
+      for (uint32_t left = cmd.hold_ms; left > 0;) {
+        if (poll_cancel()) {
+          head_sync_logical_pos(x, y);
+          return false;
+        }
+        const uint32_t slice = left > SERVO_TICK_MS ? SERVO_TICK_MS : left;
+        vTaskDelayUntil(&wake, pdMS_TO_TICKS(slice));
+        left -= slice;
+      }
+    }
   }
 
   head_sync_logical_pos(x, y);
+  return true;
 }
 
-static void execute_pb_servo_frame(const pb_servo_frame& frame) {
+static bool execute_pb_servo_frame(const pb_servo_frame& frame) {
   const uint16_t ms =
       frame.ms > 0 ? (uint16_t)constrain(frame.ms, 0, 65535) : (uint16_t)SERVO_TICK_MS;
   MotorCmd cmd{};
@@ -210,51 +275,50 @@ static void execute_pb_servo_frame(const pb_servo_frame& frame) {
   cmd.x = frame.x;
   cmd.y = frame.y;
   cmd.ms = ms;
-  execute_motor_cmd(cmd);
+  return execute_motor_cmd(cmd);
 }
 
-static void free_motor_job(MotorJob& job) {
-  if (job.kind == MotorJobKind::kPbServoChunk) {
-    pb_servo_frames_free(job.servo_frames);
-    job.servo_frames = nullptr;
-    job.servo_count = 0;
+static void execute_job(MotorJob& job) {
+  if (job.type == MotorJobType::kPbServoChunk) {
+    if (job.servo_frames && job.servo_count > 0) {
+      for (size_t i = 0; i < job.servo_count; ++i) {
+        if (!execute_pb_servo_frame(job.servo_frames[i])) {
+          break;
+        }
+      }
+    }
+    free_motor_job(job);
+    return;
   }
+  (void)execute_motor_cmd(job.cmd);
 }
 
 /* ---- motor_task ---- */
 
-void motor_task(void* /*arg*/) {
+static void motor_task(void* /*arg*/) {
   MotorJob job{};
   for (;;) {
-    if (xQueueReceive(s_motor_queue, &job, portMAX_DELAY) != pdTRUE) continue;
-
-    if (job.kind == MotorJobKind::kPbServoChunk) {
-      if (job.servo_frames && job.servo_count > 0) {
-        for (size_t i = 0; i < job.servo_count; ++i) {
-          execute_pb_servo_frame(job.servo_frames[i]);
-        }
-      }
-      free_motor_job(job);
+    (void)poll_cancel();
+    if (xQueueReceive(s_motor_queue, &job, portMAX_DELAY) != pdTRUE) {
       continue;
     }
-
-    execute_motor_cmd(job.cmd);
-  }
-}
-
-/** 丢弃队列中尚未被 motor_task 取走的命令。 */
-void drain_motor_queue_nonblocking() {
-  if (!s_motor_queue) return;
-  MotorJob dropped{};
-  while (xQueueReceive(s_motor_queue, &dropped, 0) == pdTRUE) {
-    free_motor_job(dropped);
+    if (job.type == MotorJobType::kCancel) {
+      /*
+       * 空闲时 task 阻塞在 Receive，Cancel 会直接出队，不会经过 poll_cancel。
+       * 若不在此清 flag，s_need_cancel 会永久为 true，后续舵机动作全被丢掉。
+       */
+      if (s_need_cancel.exchange(false, std::memory_order_acq_rel)) {
+        log_info("[HEAD] cancel");
+      }
+      continue;
+    }
+    execute_job(job);
   }
 }
 
 /** 非阻塞入队。队列满时保留既有动作，丢弃新命令而不破坏正在排队的手势序列。 */
 static bool enqueue_motor_job(MotorJob job) {
-  task_setup_head();
-  if (!s_motor_queue || xQueueSend(s_motor_queue, &job, 0) != pdTRUE) {
+  if (xQueueSend(s_motor_queue, &job, 0) != pdTRUE) {
     free_motor_job(job);
     log_warn("[HEAD] motor queue full; drop new command");
     return false;
@@ -262,19 +326,18 @@ static bool enqueue_motor_job(MotorJob job) {
   return true;
 }
 
-static bool enqueue_motor(const MotorCmd& cmd) {
-  MotorJob job{};
-  job.kind = MotorJobKind::kCmd;
-  job.cmd = cmd;
-  return enqueue_motor_job(job);
-}
-
 static bool enqueue_motion(uint8_t xm, int x, uint8_t ym, int y,
                            uint16_t hold_ms = 0, uint8_t step_deg = 0, uint16_t ms = 0) {
-  MotorCmd cmd{};
-  cmd.xm = xm; cmd.x = x; cmd.ym = ym; cmd.y = y;
-  cmd.ms = ms; cmd.hold_ms = hold_ms; cmd.step_deg = step_deg;
-  return enqueue_motor(cmd);
+  MotorJob job{};
+  job.type = MotorJobType::kCmd;
+  job.cmd.xm = xm;
+  job.cmd.x = x;
+  job.cmd.ym = ym;
+  job.cmd.y = y;
+  job.cmd.ms = ms;
+  job.cmd.hold_ms = hold_ms;
+  job.cmd.step_deg = step_deg;
+  return enqueue_motor_job(job);
 }
 
 }  // namespace
@@ -285,108 +348,22 @@ static bool enqueue_motion(uint8_t xm, int x, uint8_t ym, int y,
 
 void task_setup_head() {
   if (s_motor_queue && s_motor_task) return;
-  if (!s_motor_queue)       s_motor_queue       = xQueueCreate(HEAD_MOTOR_QUEUE_DEPTH, sizeof(MotorJob));
+  s_motor_queue       = xQueueCreate(HEAD_MOTOR_QUEUE_DEPTH, sizeof(MotorJob));
   if (!s_motor_queue) {
     log_error("[HEAD] motor queue create failed");
     return;
   }
-  if (!s_motor_task) {
-    /* core 1 (APP_CPU)，优先级 3：高于 act/anim，低于音频（5），确保 I2S 不被抢占。
-     * 栈 8KB：servo.write + FreeRTOS 帧；FFat 已移出本任务。 */
-    const BaseType_t rc =
-        xTaskCreatePinnedToCore(motor_task, "motor", 8 * 1024, nullptr, 3, &s_motor_task, APP_CPU_NUM);
-    if (rc != pdPASS) {
-      log_error("[HEAD] motor task create rc=%d", (int)rc);
-    } else {
-      log_info("[HEAD] motor task started");
-    }
+  const BaseType_t rc =
+      xTaskCreatePinnedToCore(motor_task, "motor", 8 * 1024, nullptr, 3, &s_motor_task, APP_CPU_NUM);
+  if (rc != pdPASS) {
+    log_error("[HEAD] motor task create rc=%d", (int)rc);
+  } else {
+    log_info("[HEAD] motor task started");
   }
 }
 
 void head_servo_cmd_async(uint8_t xm, uint8_t ym, int x, int y, uint8_t step_deg, uint16_t ms) {
   (void)enqueue_motion(xm, x, ym, y, /*hold_ms=*/0, step_deg, ms);
-}
-
-/* ---- pb 下行 servo[] 暂存（与 audio/anim 同 chunk 对齐 flush） ---- */
-
-namespace {
-constexpr size_t kHeadMaxPbServoSegs = 32;
-struct HeadPbServoSeg {
-  int xm = HEAD_SERVO_HOLD;
-  int ym = HEAD_SERVO_HOLD;
-  int x = 0;
-  int y = 0;
-  uint16_t ms = 0;
-};
-HeadPbServoSeg s_pb_servo_segs[kHeadMaxPbServoSegs]{};
-size_t s_pb_servo_count = 0;
-
-static int head_json_number_to_int(JsonVariantConst v, int defv) {
-  if (v.isNull()) {
-    return defv;
-  }
-  return (int)lround(v.as<double>());
-}
-}  // namespace
-
-void head_clear_pb_servo_pending() {
-  s_pb_servo_count = 0;
-}
-
-size_t head_pb_servo_pending_count() {
-  return s_pb_servo_count;
-}
-
-void head_stage_pb_servo(JsonVariantConst servo_field) {
-  s_pb_servo_count = 0;
-  if (servo_field.isNull()) {
-    return;
-  }
-  if (!servo_field.is<JsonArrayConst>()) {
-    log_warn("[HEAD] pb servo must be array; ignore");
-    return;
-  }
-  JsonArrayConst arr = servo_field.as<JsonArrayConst>();
-  for (JsonObjectConst item : arr) {
-    if (s_pb_servo_count >= kHeadMaxPbServoSegs) {
-      log_warn("[HEAD] pb servo[] truncated at %u", (unsigned)kHeadMaxPbServoSegs);
-      break;
-    }
-    HeadPbServoSeg& seg = s_pb_servo_segs[s_pb_servo_count++];
-    seg.xm = constrain(head_json_number_to_int(item["xm"], HEAD_SERVO_HOLD), 0, 2);
-    seg.ym = constrain(head_json_number_to_int(item["ym"], HEAD_SERVO_HOLD), 0, 2);
-    seg.x = head_json_number_to_int(item["x"], 0);
-    seg.y = head_json_number_to_int(item["y"], 0);
-    seg.ms = (uint16_t)constrain(head_json_number_to_int(item["ms"], 0), 0, 65535);
-  }
-  if (s_pb_servo_count > 0) {
-    log_info("[HEAD] pb servo[] staged segs=%u", (unsigned)s_pb_servo_count);
-  }
-}
-
-void head_stage_pb_servo_json(const String& servo_json) {
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, servo_json);
-  if (err || !doc.is<JsonArray>()) {
-    head_clear_pb_servo_pending();
-    log_warn("[HEAD] pb servo JSON invalid: %s", err ? err.c_str() : "not array");
-    return;
-  }
-  head_stage_pb_servo(doc.as<JsonVariantConst>());
-}
-
-bool head_flush_pb_servo() {
-  if (s_pb_servo_count == 0) {
-    return false;
-  }
-  const size_t n = s_pb_servo_count;
-  for (size_t i = 0; i < n; i++) {
-    const HeadPbServoSeg& seg = s_pb_servo_segs[i];
-    const uint16_t ms = (seg.ms > 0) ? seg.ms : (uint16_t)SERVO_TICK_MS;
-    head_servo_cmd_async((uint8_t)seg.xm, (uint8_t)seg.ym, seg.x, seg.y, /*step_deg=*/0, ms);
-  }
-  s_pb_servo_count = 0;
-  return true;
 }
 
 void head_submit_pb_servo_chunk_owned(pb_servo_frame* frames, size_t count) {
@@ -397,7 +374,7 @@ void head_submit_pb_servo_chunk_owned(pb_servo_frame* frames, size_t count) {
     return;
   }
   MotorJob job{};
-  job.kind = MotorJobKind::kPbServoChunk;
+  job.type = MotorJobType::kPbServoChunk;
   job.servo_frames = frames;
   job.servo_count = count;
   if (enqueue_motor_job(job)) {
@@ -551,22 +528,15 @@ void head_roll_right() {
 
 /* ---- 任务管理 ---- */
 
-void head_clear_motor_pending() {
-  task_setup_head();
-  drain_motor_queue_nonblocking();
+void head_abort() {
+  MotorJob job{};
+  job.type = MotorJobType::kCancel;
+  s_need_cancel.store(true, std::memory_order_release);
+  (void)xQueueSend(s_motor_queue, &job, portMAX_DELAY);
 }
 
-bool head_drop_oldest_motor_pending() {
-  task_setup_head();
-  if (!s_motor_queue) return false;
-  MotorJob dropped{};
-  if (xQueueReceive(s_motor_queue, &dropped, 0) != pdTRUE) return false;
-  free_motor_job(dropped);
-  log_warn("[HEAD] drop oldest motor command for PB scheduler");
-  return true;
-}
+void head_clear_motor_pending() { head_abort(); }
 
 unsigned head_motor_input_queue_depth() {
-  task_setup_head();
-  return s_motor_queue ? (unsigned)uxQueueMessagesWaiting(s_motor_queue) : 0u;
+  return (unsigned)uxQueueMessagesWaiting(s_motor_queue);
 }

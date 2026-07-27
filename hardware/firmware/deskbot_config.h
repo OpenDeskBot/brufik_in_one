@@ -16,7 +16,7 @@
 #define DESKBOT_AP_OFFER_TIMEOUT_MS 20000
 #endif
 
-#define DESKBOT_WS_HOST "192.168.31.145" 
+#define DESKBOT_WS_HOST "192.168.31.145"
 // "10.220.138.26"
 #define DESKBOT_WS_PORT 9000
 
@@ -159,5 +159,22 @@ static inline size_t deskbot_pdm_voice_hangover_thr(size_t ema) {
 /** disconnect 后泵 loop 清空 lwIP 发送队列（ms）。 */
 #ifndef DESKBOT_WS_DISCONNECT_DRAIN_MS
 #define DESKBOT_WS_DISCONNECT_DRAIN_MS         1500
+#endif
+
+/* ========== pb 执行器缓冲 / 调度 ==========
+ * xQueue：pb_runtime → 执行器（跨任务，深度约 50）。
+ * 预取目标约 1s（墙钟信用）；abort 置 need_cancel 后队尾入队 cancel。
+ */
+#ifndef DESKBOT_PB_EXECUTOR_QUEUE_DEPTH
+#define DESKBOT_PB_EXECUTOR_QUEUE_DEPTH 50
+#endif
+#ifndef DESKBOT_PB_MODEL_RING_CAPACITY
+#define DESKBOT_PB_MODEL_RING_CAPACITY 50
+#endif
+#ifndef DESKBOT_PB_PREFETCH_TARGET_MS
+#define DESKBOT_PB_PREFETCH_TARGET_MS 1000
+#endif
+#ifndef DESKBOT_PB_CREDIT_TICK_MS
+#define DESKBOT_PB_CREDIT_TICK_MS 100
 #endif
 

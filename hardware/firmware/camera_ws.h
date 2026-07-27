@@ -13,12 +13,12 @@ int camera_ws_state(void);
 
 bool camera_ws_try_begin_send(void);
 void camera_ws_end_send_ok(void);
-/** 断线或发送失败：state=-1，并 camera_notify_capture(kCamStop)。 */
+/** 断线或发送失败：state=-1，并 camera_notify_capture(kCamStop) 关门控。 */
 void camera_ws_mark_disconnected(void);
 
 /**
  * 图片已处理完（成功发送，或队列里扔掉/跳过）：camera_notify_capture(kCamGo)。
- * 不改变 state=-1 的错误态（错误请走 mark_disconnected）。
+ * 抓帧由 ws_transport 按 fps 轮询；此处仅恢复门控。不改变 state=-1。
  */
 void camera_ws_on_image_finished(void);
 

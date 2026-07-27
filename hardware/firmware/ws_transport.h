@@ -21,8 +21,8 @@ enum class WsTxType : uint8_t {
 bool setup_ws_transport(void);
 
 /**
- * 创建 FreeRTOS 任务：每轮 asr/camera 重连 → 1×RX → 1×TX。
- * WS loop/send 仅此任务；其它模块只 enqueue。
+ * 创建 FreeRTOS 任务：每轮 asr/camera 重连 → 1×RX → 1×TX → 条件抓帧入队。
+ * WS loop/send / 相机抓帧仅此任务；其它模块只 enqueue。
  */
 bool task_setup_ws_transport(void);
 

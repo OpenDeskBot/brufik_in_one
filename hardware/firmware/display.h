@@ -35,25 +35,27 @@ void display_boot_screen_reset();
 Adafruit_GFX* display_guide_target_begin(bool clear_black);
 void display_guide_target_end();
 
-enum DisplayScene : uint8_t {
-  DISPLAY_SCENE_PB_VECTOR_JSON = 0,
-  DISPLAY_SCENE_PB_ANIM_FRAMES = 1,
-  DISPLAY_SCENE_RESET,
+/** 执行器任务元素 type；cancel 走 xQueue 队尾，作旧/新任务分界。 */
+enum DisplayJobType : uint8_t {
+  DISPLAY_JOB_CANCEL = 0,
+  DISPLAY_JOB_PB_ANIM_FRAMES = 1,
 };
 
 void task_setup_display();
 
-/** 提交 pb anim[] JSON；播放时长由数组内各段 ms 之和决定（与 chunk_ms 无关）。 */
-void display_render_submit_pb_vector_json(const char* json, size_t json_len, bool wait_done = false);
-/** 与上相同，但 json 堆缓冲所有权转移给渲染任务（失败时内部 free）。 */
-void display_render_submit_pb_vector_json_owned(char* json, size_t json_len, bool wait_done = false);
-
-/** 直接提交 pb_anim_frame[]；frames 所有权转移给渲染任务。 */
+/** 提交 pb_anim_frame[]；frames 所有权转移给渲染任务。 */
 void display_render_submit_pb_anim_frames_owned(pb_anim_frame* frames, size_t frame_count,
                                                 bool wait_done = false);
 
+/**
+ * 打断：置 need_cancel，再队尾入队 type=cancel。
+ * 正在渲染的插值循环在下一短 delay 经 poll_cancel 退出。
+ */
+void display_abort();
+/** 同 display_abort（兼容旧名）。 */
 void display_render_reset();
 
+/** xQueue 缓冲深度（供 pb 回压）。 */
 unsigned display_render_input_queue_depth();
 
 /** 麦克风上行是否有效：屏顶麦克风图标，绿=开麦，红=关麦（跟 mic_capture_allowed）。 */

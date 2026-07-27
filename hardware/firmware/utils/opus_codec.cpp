@@ -5,10 +5,10 @@
 #include "opus.h"
 
 /*
- * 下行 decode（loopTask / ws_transport_drain_rx）。
- * 上行 encode 已迁至 mic.cpp（mic 任务内 opus_encode + batch enqueue）。
+ * 下行 decode：speaker_task 内 play_pb_audio_owned → opus_decode。
+ * 上行 encode：mic 任务内 opus_encode + batch enqueue。
  *
- * s_dec 非线程安全：仅 loopTask 使用。
+ * s_dec 非线程安全：仅 speaker_task 使用。
  */
 
 namespace {

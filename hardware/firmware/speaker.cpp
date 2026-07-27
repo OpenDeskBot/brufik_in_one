@@ -19,17 +19,19 @@ namespace {
 
 constexpr int kDmaBufCount = 8;
 constexpr int kDmaBufLen = 1024;
+/** opus_decode 栈开销与 mic 端 encode 同量级；8KB 会触发 stack canary。 */
+constexpr uint32_t kSpeakerTaskStack = 28 * 1024;
 /** 正常收尾：等待约 N 个 DMA frame 播完，再 zero_dma（不再写静音，避免写完立刻被清掉）。 */
 constexpr size_t kIdleDrainDmaBufs = 2;
-/** play 分块写，便于中途响应 s_cancel。 */
+/** play 分块写，便于中途响应 need_cancel。 */
 constexpr size_t kPlayBlockSamples = 1024;
 
 static std::atomic<bool> s_is_speaking{false};
 static std::atomic<float> s_volume{DESKBOT_AUDIO_PLAY_VOLUME};
 /** 流式会话：仅 speaker_task 写；pb 经 speaker_stream_pcm_active() 跨任务读 → 保持 atomic。 */
 static std::atomic<bool> s_stream_active{false};
-/** 跨任务请求取消当前 i2s 写出（abort 置位，task 清位）。 */
-static std::atomic<bool> s_cancel{false};
+/** 跨任务请求取消当前 i2s 写出（abort 置位，见到 cancel 后清位）。 */
+static std::atomic<bool> s_need_cancel{false};
 /** 仅 speaker_task 访问。 */
 static bool s_mic_speak_held = false;
 static uint32_t s_i2s_rate = SAMPLE_RATE;
@@ -56,17 +58,18 @@ static const i2s_pin_config_t s_i2s_pins = {
 
 enum class HeapFree : uint8_t { kMalloc = 0, kHeapCaps = 1 };
 
-enum class JobKind : uint8_t {
-  kWav = 0,
-  kBegin = 1,
-  kChunk = 2,
-  kEnd = 3,
-  kAbort = 4,
+/** 执行器任务元素 type；cancel 走 xQueue 队尾，作旧/新任务分界。 */
+enum class JobType : uint8_t {
+  kCancel = 0,
+  kWav = 1,
+  kBegin = 2,
+  kChunk = 3,
+  kEnd = 4,
   kPbAudio = 5,
 };
 
 struct Job {
-  JobKind kind = JobKind::kWav;
+  JobType type = JobType::kWav;
   HeapFree free_mode = HeapFree::kMalloc;
   uint8_t channels = 1;
   uint32_t rate = SAMPLE_RATE;
@@ -95,13 +98,13 @@ static void free_ptr(void* p, HeapFree mode) {
 }
 
 static void free_job(Job& j) {
-  if (j.kind == JobKind::kWav) {
+  if (j.type == JobType::kWav) {
     free_ptr(j.wav.ptr, j.free_mode);
     j.wav.ptr = nullptr;
-  } else if (j.kind == JobKind::kChunk) {
+  } else if (j.type == JobType::kChunk) {
     free_ptr(j.pcm.ptr, j.free_mode);
     j.pcm.ptr = nullptr;
-  } else if (j.kind == JobKind::kPbAudio) {
+  } else if (j.type == JobType::kPbAudio) {
     pb_audio_free(j.pb_audio_ptr);
     j.pb_audio_ptr = nullptr;
   }
@@ -111,28 +114,41 @@ static HeapFree caps_to_mode(uint32_t caps) {
   return (caps == 0) ? HeapFree::kMalloc : HeapFree::kHeapCaps;
 }
 
-static bool enqueue(Job& j, bool front = false) {
-  if (!s_q) {
-    return false;
-  }
-  if (front) {
-    return xQueueSendToFront(s_q, &j, portMAX_DELAY) == pdTRUE;
-  }
+static bool enqueue(Job& j) {
   /* 满则失败（不从队列偷包，避免与 speaker_task 双消费者竞态）。 */
-  if (j.kind == JobKind::kChunk || j.kind == JobKind::kPbAudio) {
-    if (xQueueSend(s_q, &j, 0) == pdTRUE) {
-      return true;
-    }
-    return false;
+  if (j.type == JobType::kChunk || j.type == JobType::kPbAudio) {
+    return xQueueSend(s_q, &j, 0) == pdTRUE;
   }
   return xQueueSend(s_q, &j, portMAX_DELAY) == pdTRUE;
 }
 
-static void drain_drop() {
+/** 停流并放麦；force 时即使未 begin 也清 I2S/麦（WAV 收尾/abort）。 */
+static void stop_output(bool graceful, uint8_t channels, bool force);
+
+static void finish_cancel() {
+  stop_output(/*graceful=*/false, 1, /*force=*/true);
+  log_info("[SPEAKER] cancel");
+}
+
+/**
+ * need_cancel==false → false。
+ * 否则非阻塞丢弃旧任务，见到 cancel 则清 flag、收尾并 return true（其后新任务保留）。
+ * 队列空且未见 cancel → return true，保持 need_cancel。
+ */
+static bool poll_cancel() {
+  if (!s_need_cancel.load(std::memory_order_acquire)) {
+    return false;
+  }
   Job j{};
   while (xQueueReceive(s_q, &j, 0) == pdTRUE) {
+    if (j.type == JobType::kCancel) {
+      s_need_cancel.store(false, std::memory_order_release);
+      finish_cancel();
+      return true;
+    }
     free_job(j);
   }
+  return true;
 }
 
 static size_t mean_abs(const int16_t* data, size_t length) {
@@ -166,13 +182,13 @@ static void release_mic(bool immediate) {
 
 /**
  * 写 I2S：按 s_volume 缩放（可就地改 PCM）；可听则挡麦（SpeakStart）。
- * 分块写出以便响应 s_cancel。返回 false 表示中途被 abort。
+ * 分块写出以便响应 need_cancel。返回 false 表示中途被取消。
  */
 static bool play(int16_t* data, size_t length) {
   if (!data || length == 0) {
     return true;
   }
-  if (s_cancel.load(std::memory_order_acquire)) {
+  if (poll_cancel()) {
     return false;
   }
   const float vol = s_volume.load(std::memory_order_relaxed);
@@ -193,7 +209,7 @@ static bool play(int16_t* data, size_t length) {
   }
 
   for (size_t off = 0; off < length;) {
-    if (s_cancel.load(std::memory_order_acquire)) {
+    if (poll_cancel()) {
       return false;
     }
     size_t n = length - off;
@@ -230,7 +246,6 @@ static void i2s_idle(bool drain, uint8_t /*channels*/) {
   i2s_zero_dma_buffer(I2S_NUM_1);
 }
 
-/** 停流并放麦；force 时即使未 begin 也清 I2S/麦（WAV 收尾/abort）。 */
 static void stop_output(bool graceful, uint8_t channels, bool force) {
   if (!s_stream_active.load(std::memory_order_relaxed) && !force) {
     return;
@@ -351,7 +366,6 @@ static bool play_pb_audio_owned(pb_audio* audio) {
       free_ptr(pcm_owned, free_mode);
       return false;
     }
-    s_cancel.store(false, std::memory_order_release);
     i2s_set_clk(I2S_NUM_1, audio->sr, I2S_BITS_PER_SAMPLE_16BIT,
                 audio->ch == 2 ? I2S_CHANNEL_STEREO : I2S_CHANNEL_MONO);
     s_i2s_rate = audio->sr;
@@ -363,64 +377,72 @@ static bool play_pb_audio_owned(pb_audio* audio) {
   return ok;
 }
 
+static void execute_job(Job& job) {
+  switch (job.type) {
+    case JobType::kWav:
+      if (s_stream_active.load(std::memory_order_relaxed)) {
+        log_warn("[SPEAKER] wav dropped (stream active)");
+      } else if (job.wav.ptr) {
+        (void)play_wav(job.wav.ptr, job.wav.len);
+      }
+      free_job(job);
+      break;
+    case JobType::kBegin:
+      if (s_stream_active.load(std::memory_order_relaxed)) {
+        log_warn("[SPEAKER] begin while active -> force end");
+        end_stream(/*graceful=*/false, 1);
+      }
+      if (job.channels != 1 && job.channels != 2) {
+        log_warn("[SPEAKER] bad channels=%u", (unsigned)job.channels);
+      } else if (job.rate == 0) {
+        log_warn("[SPEAKER] bad rate=0");
+      } else {
+        i2s_set_clk(I2S_NUM_1, job.rate, I2S_BITS_PER_SAMPLE_16BIT,
+                    job.channels == 2 ? I2S_CHANNEL_STEREO : I2S_CHANNEL_MONO);
+        s_i2s_rate = job.rate;
+        s_stream_active.store(true, std::memory_order_release);
+      }
+      break;
+    case JobType::kChunk:
+      if (!s_stream_active.load(std::memory_order_relaxed)) {
+        log_warn("[SPEAKER] chunk dropped (no begin)");
+      } else if (job.pcm.ptr && job.pcm.samples > 0) {
+        (void)play(job.pcm.ptr, job.pcm.samples);
+      }
+      free_job(job);
+      break;
+    case JobType::kPbAudio:
+      if (job.pb_audio_ptr) {
+        (void)play_pb_audio_owned(job.pb_audio_ptr);
+      }
+      free_job(job);
+      break;
+    case JobType::kEnd:
+      end_stream(/*graceful=*/true, job.channels);
+      break;
+    case JobType::kCancel:
+      break;
+  }
+}
+
 static void speaker_task(void*) {
   Job job{};
   for (;;) {
+    (void)poll_cancel();
     if (xQueueReceive(s_q, &job, portMAX_DELAY) != pdTRUE) {
       continue;
     }
-    switch (job.kind) {
-      case JobKind::kWav:
-        if (s_stream_active.load(std::memory_order_relaxed)) {
-          log_warn("[SPEAKER] wav dropped (stream active)");
-        } else if (job.wav.ptr) {
-          (void)play_wav(job.wav.ptr, job.wav.len);
-        }
-        free_job(job);
-        break;
-      case JobKind::kBegin:
-        if (s_stream_active.load(std::memory_order_relaxed)) {
-          log_warn("[SPEAKER] begin while active -> force end");
-          end_stream(/*graceful=*/false, 1);
-        }
-        if (job.channels != 1 && job.channels != 2) {
-          log_warn("[SPEAKER] bad channels=%u", (unsigned)job.channels);
-        } else if (job.rate == 0) {
-          log_warn("[SPEAKER] bad rate=0");
-        } else {
-          s_cancel.store(false, std::memory_order_release);
-          i2s_set_clk(I2S_NUM_1, job.rate, I2S_BITS_PER_SAMPLE_16BIT,
-                      job.channels == 2 ? I2S_CHANNEL_STEREO : I2S_CHANNEL_MONO);
-          s_i2s_rate = job.rate;
-          s_stream_active.store(true, std::memory_order_release);
-        }
-        break;
-      case JobKind::kChunk:
-        if (!s_stream_active.load(std::memory_order_relaxed)) {
-          log_warn("[SPEAKER] chunk dropped (no begin)");
-        } else if (job.pcm.ptr && job.pcm.samples > 0) {
-          /* 若被 abort，play 提前返回；收尾交给随后的 kAbort。 */
-          (void)play(job.pcm.ptr, job.pcm.samples);
-        }
-        free_job(job);
-        break;
-      case JobKind::kPbAudio:
-        if (job.pb_audio_ptr) {
-          (void)play_pb_audio_owned(job.pb_audio_ptr);
-        }
-        free_job(job);
-        break;
-      case JobKind::kEnd:
-        end_stream(/*graceful=*/true, job.channels);
-        break;
-      case JobKind::kAbort:
-        drain_drop();
-        /* force：流式与 WAV 都清 DMA/麦。 */
-        stop_output(/*graceful=*/false, 1, /*force=*/true);
-        s_cancel.store(false, std::memory_order_release);
-        log_info("[SPEAKER] abort");
-        break;
+    if (job.type == JobType::kCancel) {
+      /*
+       * 空闲时 task 阻塞在 Receive，Cancel 会直接出队，不会经过 poll_cancel。
+       * 若不在此清 flag，s_need_cancel 会永久为 true，后续 TTS 全被 play() 丢掉。
+       */
+      if (s_need_cancel.exchange(false, std::memory_order_acq_rel)) {
+        finish_cancel();
+      }
+      continue;
     }
+    execute_job(job);
   }
 }
 
@@ -452,12 +474,13 @@ void task_setup_speaker() {
     s_q = xQueueCreate(SPEAKER_QUEUE_DEPTH, sizeof(Job));
   }
   if (!s_task) {
-    const BaseType_t rc =
-        xTaskCreatePinnedToCore(speaker_task, "speaker", 8 * 1024, nullptr, 7, &s_task, APP_CPU_NUM);
+    const BaseType_t rc = xTaskCreatePinnedToCore(speaker_task, "speaker", kSpeakerTaskStack,
+                                                   nullptr, 7, &s_task, APP_CPU_NUM);
     if (rc != pdPASS) {
       log_error("[SPEAKER] task create rc=%d", (int)rc);
     } else {
-      log_info("[SPEAKER] task started depth=%d", (int)SPEAKER_QUEUE_DEPTH);
+      log_info("[SPEAKER] task started stack=%u depth=%d", (unsigned)kSpeakerTaskStack,
+               (int)SPEAKER_QUEUE_DEPTH);
     }
   }
 }
@@ -484,16 +507,7 @@ bool speaker_stream_pcm_active() {
 }
 
 unsigned speaker_input_queue_depth() {
-  return s_q ? (unsigned)uxQueueMessagesWaiting(s_q) : 0u;
-}
-
-bool speaker_drop_oldest_pending() {
-  if (!s_q) return false;
-  Job dropped{};
-  if (xQueueReceive(s_q, &dropped, 0) != pdTRUE) return false;
-  free_job(dropped);
-  log_warn("[SPEAKER] drop oldest pending job for PB scheduler");
-  return true;
+  return (unsigned)uxQueueMessagesWaiting(s_q);
 }
 
 bool speaker_stream_pcm16_begin(uint32_t sample_rate, uint8_t channels) {
@@ -501,7 +515,7 @@ bool speaker_stream_pcm16_begin(uint32_t sample_rate, uint8_t channels) {
     return false;
   }
   Job j{};
-  j.kind = JobKind::kBegin;
+  j.type = JobType::kBegin;
   j.rate = sample_rate;
   j.channels = channels;
   return enqueue(j);
@@ -513,7 +527,7 @@ bool speaker_stream_pcm16_chunk(int16_t* samples, size_t num_samples,
     return false;
   }
   Job j{};
-  j.kind = JobKind::kChunk;
+  j.type = JobType::kChunk;
   j.pcm.ptr = samples;
   j.pcm.samples = num_samples;
   j.free_mode = caps_to_mode(caps_for_heap_caps_free);
@@ -529,7 +543,7 @@ bool speaker_submit_pb_audio_owned(pb_audio* audio) {
     return false;
   }
   Job j{};
-  j.kind = JobKind::kPbAudio;
+  j.type = JobType::kPbAudio;
   j.pb_audio_ptr = audio;
   if (!enqueue(j)) {
     pb_audio_free(audio);
@@ -543,16 +557,16 @@ bool speaker_stream_pcm16_end(uint8_t channels) {
     return false;
   }
   Job j{};
-  j.kind = JobKind::kEnd;
+  j.type = JobType::kEnd;
   j.channels = channels;
   return enqueue(j);
 }
 
 void speaker_abort() {
-  s_cancel.store(true, std::memory_order_release);
   Job j{};
-  j.kind = JobKind::kAbort;
-  (void)enqueue(j, /*front=*/true);
+  j.type = JobType::kCancel;
+  s_need_cancel.store(true, std::memory_order_release);
+  (void)xQueueSend(s_q, &j, portMAX_DELAY);
 }
 
 bool speaker_play_url(const char* url) {
@@ -567,7 +581,7 @@ bool speaker_play_url(const char* url) {
     return false;
   }
   Job j{};
-  j.kind = JobKind::kWav;
+  j.type = JobType::kWav;
   j.wav.ptr = buf;
   j.wav.len = len;
   j.free_mode = HeapFree::kHeapCaps;

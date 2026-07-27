@@ -35,8 +35,8 @@ void PbRuntime::abortRound(bool abort_speaker) {
   if (abort_speaker) {
     speaker_abort();
   }
-  display_render_reset();
-  head_clear_motor_pending();
+  display_abort();
+  head_abort();
   endAudioStreamIfNeeded();
   pb_req_[0] = '\0';
   pb_sr_ = 0;
@@ -181,12 +181,12 @@ void PbRuntime::onChainHead(pb_model& model) {
 
   if (model.action == PB_MODEL_REPLACE) {
     if (replace_realtime_servo) {
-      head_clear_motor_pending();
-      log_info("[PB] realtime servo replace: cleared pending motor commands");
+      head_abort();
+      log_info("[PB] realtime servo replace: abort motor");
     } else if (!voice_servo_only) {
       speaker_abort();
-      display_render_reset();
-      head_clear_motor_pending();
+      display_abort();
+      head_abort();
       endAudioStreamIfNeeded();
       log_info("[PB] chain head replace drain req=%s type=%s", model.req,
                pb_model_type_name(model.type));
@@ -380,8 +380,9 @@ constexpr UBaseType_t kPbFrameQDepth = 16;
 constexpr uint32_t kPbRuntimeStack = 24 * 1024;
 constexpr UBaseType_t kPbRuntimePrio = 4;
 constexpr size_t kMaxPackedFrame = 1024 * 1024;
-constexpr size_t kPbModelRingCapacity = 96;
-constexpr uint32_t kPbDispatchLeadMs = 100;
+constexpr size_t kPbModelRingCapacity = DESKBOT_PB_MODEL_RING_CAPACITY;
+constexpr int32_t kPbPrefetchTargetMs = (int32_t)DESKBOT_PB_PREFETCH_TARGET_MS;
+constexpr uint32_t kPbCreditTickMs = DESKBOT_PB_CREDIT_TICK_MS;
 
 struct PbModelSlot {
   pb_model model{};
@@ -390,8 +391,9 @@ struct PbModelSlot {
 PbModelSlot s_model_ring[kPbModelRingCapacity]{};
 size_t s_model_head = 0;
 size_t s_model_count = 0;
-uint32_t s_last_dispatch_ms = 0;
-uint32_t s_last_dispatch_chunk_ms = 0;
+/** 已下发给执行器、尚未按墙钟消耗完的 chunk_ms 信用。 */
+int32_t s_dispatch_credit_ms = 0;
+uint32_t s_credit_wall_ms = 0;
 bool s_has_dispatched_model = false;
 /** 当前已 dispatch、仍在 chunk_ms 节拍中的优先级（不在 ring 内）。 */
 int s_playing_level = -1;
@@ -419,7 +421,38 @@ void model_ring_clear() {
   s_model_count = 0;
   s_has_dispatched_model = false;
   s_playing_level = -1;
-  s_last_dispatch_chunk_ms = 0;
+  s_dispatch_credit_ms = 0;
+  s_credit_wall_ms = millis();
+}
+
+void dispatch_credit_decay(uint32_t now) {
+  if (s_credit_wall_ms == 0) {
+    s_credit_wall_ms = now;
+    return;
+  }
+  const int32_t elapsed = (int32_t)(now - s_credit_wall_ms);
+  if (elapsed <= 0) {
+    return;
+  }
+  s_dispatch_credit_ms -= elapsed;
+  if (s_dispatch_credit_ms < 0) {
+    s_dispatch_credit_ms = 0;
+  }
+  s_credit_wall_ms = now;
+}
+
+bool executors_accepting() {
+  /* xQueue 通常被执行器抽空；用 ring+queue 合计深度做回压。 */
+  if (speaker_input_queue_depth() >= (unsigned)(SPEAKER_QUEUE_DEPTH - 1)) {
+    return false;
+  }
+  if (head_motor_input_queue_depth() >= (unsigned)(HEAD_MOTOR_QUEUE_DEPTH - 1)) {
+    return false;
+  }
+  if (display_render_input_queue_depth() >= (unsigned)(DESKBOT_PB_EXECUTOR_QUEUE_DEPTH - 1)) {
+    return false;
+  }
+  return true;
 }
 
 void model_ring_remove(size_t offset) {
@@ -483,11 +516,20 @@ bool model_ring_push(PbModelSlot& incoming) {
         log_info("[PB_SCHED] replace level=%d removed=%u same-level buffered models", model.level,
                  (unsigned)dropped);
       }
+      /* replace 链头：清信用以便立刻派发；执行器打断由随后 onChainHead 负责。 */
+      s_dispatch_credit_ms = 0;
+      s_credit_wall_ms = millis();
     }
     const size_t dropped_lower = model_ring_drop_below_level(model.level);
     if (dropped_lower) {
       log_info("[PB_SCHED] preempt level=%d removed=%u lower-priority buffered models", model.level,
                (unsigned)dropped_lower);
+      /* 环形队列因更高 level 清空低优先级缓冲：同步打断执行器已预取内容。 */
+      speaker_abort();
+      display_abort();
+      head_abort();
+      s_dispatch_credit_ms = 0;
+      s_credit_wall_ms = millis();
     }
     const int max_level = model_ring_max_level();
     if (max_level >= 0 && model.level < max_level) {
@@ -522,9 +564,11 @@ bool model_ring_push(PbModelSlot& incoming) {
   log_info("[PB_SCHED] buffered req=%s idx=%d level=%d depth=%u", s_model_ring[tail].model.req,
            s_model_ring[tail].model.idx, s_model_ring[tail].model.level, (unsigned)s_model_count);
   if (preempt_playing) {
-    log_info("[PB_SCHED] preempt now: incoming level=%d playing level=%d (skip chunk wait)",
+    log_info("[PB_SCHED] preempt now: incoming level=%d playing level=%d (flush credit)",
              incoming_level, s_playing_level);
-    s_last_dispatch_chunk_ms = 0;
+    /* 不在此 abortRound：口播中的 realtime servo replace 只清舵机，由 onChainHead 决定。 */
+    s_dispatch_credit_ms = 0;
+    s_credit_wall_ms = millis();
   }
   return true;
 }
@@ -544,40 +588,37 @@ bool model_slot_from_frame(const PbRxFrame& item, PbModelSlot& out) {
   return true;
 }
 
-bool model_ring_due(uint32_t now) {
-  if (s_model_count == 0 || !s_has_dispatched_model) return s_model_count > 0;
-  const uint32_t interval = s_last_dispatch_chunk_ms > kPbDispatchLeadMs
-                                ? s_last_dispatch_chunk_ms - kPbDispatchLeadMs
-                                : 0;
-  return interval == 0 || (uint32_t)(now - s_last_dispatch_ms) >= interval;
-}
-
 void model_ring_dispatch_due(uint32_t now) {
-  if (!model_ring_due(now)) return;
-  PbModelSlot& slot = s_model_ring[s_model_head];
-  const int chunk_ms = slot.model.chunk_ms;
-  if (speaker_input_queue_depth() >= SPEAKER_QUEUE_DEPTH) {
-    (void)speaker_drop_oldest_pending();
+  dispatch_credit_decay(now);
+  while (s_model_count > 0 && s_dispatch_credit_ms < kPbPrefetchTargetMs) {
+    if (!executors_accepting()) {
+      break;
+    }
+    PbModelSlot& slot = s_model_ring[s_model_head];
+    const int chunk_ms = slot.model.chunk_ms > 0 ? slot.model.chunk_ms : 1;
+    const int dispatch_level = slot.model.level;
+    s_runtime.dispatchModel(slot.model);
+    slot.model = pb_model{};
+    s_dispatch_credit_ms += chunk_ms;
+    s_has_dispatched_model = true;
+    s_playing_level = dispatch_level;
+    log_info("[PB_SCHED] dispatched remaining=%u chunk_ms=%d level=%d credit=%d",
+             (unsigned)(s_model_count - 1), chunk_ms, dispatch_level, (int)s_dispatch_credit_ms);
+    model_ring_remove(0);
   }
-  if (head_motor_input_queue_depth() >= HEAD_MOTOR_QUEUE_DEPTH) {
-    (void)head_drop_oldest_motor_pending();
-  }
-  const int dispatch_level = slot.model.level;
-  s_runtime.dispatchModel(slot.model);
-  slot.model = pb_model{};
-  s_last_dispatch_ms = now;
-  s_last_dispatch_chunk_ms = (uint32_t)max(0, chunk_ms);
-  s_has_dispatched_model = true;
-  s_playing_level = dispatch_level;
-  log_info("[PB_SCHED] dispatched remaining=%u chunk_ms=%d level=%d", (unsigned)(s_model_count - 1),
-           chunk_ms, dispatch_level);
-  model_ring_remove(0);
 }
 
 void pb_runtime_task(void* /*arg*/) {
   for (;;) {
+    /* 信用未满时短等收帧并尽量派发；已满则按墙钟 tick 等待再扣减。 */
+    dispatch_credit_decay(millis());
+    const bool credit_full =
+        s_dispatch_credit_ms >= kPbPrefetchTargetMs && s_model_count > 0;
+    const TickType_t wait_ticks =
+        pdMS_TO_TICKS(credit_full ? kPbCreditTickMs : 2);
+
     PbRxFrame item{};
-    if (xQueueReceive(s_frame_q, &item, pdMS_TO_TICKS(2)) == pdTRUE) {
+    if (xQueueReceive(s_frame_q, &item, wait_ticks) == pdTRUE) {
       if (item.kind == PbRxFrame::Kind::kLinkDown) {
         model_ring_clear();
         s_runtime.onLinkDown();

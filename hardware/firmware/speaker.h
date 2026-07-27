@@ -15,7 +15,7 @@
 #define SAMPLE_RATE 16000
 
 #ifndef SPEAKER_QUEUE_DEPTH
-#define SPEAKER_QUEUE_DEPTH 5
+#define SPEAKER_QUEUE_DEPTH DESKBOT_PB_EXECUTOR_QUEUE_DEPTH
 #endif
 
 void setup_speaker();
@@ -39,14 +39,13 @@ bool speaker_stream_pcm16_end(uint8_t channels);
 bool speaker_submit_pb_audio_owned(pb_audio* audio);
 
 /**
- * 打断：置 cancel 并插队 abort，排空未播队列、清 DMA（流式与 WAV 均可打断）。
- * 当前正在写的一小块 PCM 仍会写完，随后停止。
+ * 打断：置 need_cancel，再队尾入队 type=cancel。
+ * poll_cancel 丢弃 cancel 之前的旧任务并清 DMA；正在写的一小块 PCM 仍会写完。
  */
 void speaker_abort();
 
+/** xQueue 缓冲深度（供 pb 回压 / ack）。 */
 unsigned speaker_input_queue_depth();
-/** 丢弃最早尚未播放的输入任务；用于 PB 调度器为新分片腾出队列槽位。 */
-bool speaker_drop_oldest_pending();
 bool speaker_stream_pcm_active();
 
 #endif
