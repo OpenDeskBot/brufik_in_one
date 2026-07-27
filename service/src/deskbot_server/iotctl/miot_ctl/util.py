@@ -6,9 +6,10 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from miot.spec import MIoTSpecDeviceLite
+if TYPE_CHECKING:
+    from miot.spec import MIoTSpecDeviceLite
 
 MIOT_SPEC_CODES = {
     -704042011: "设备离线",

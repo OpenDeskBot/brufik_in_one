@@ -28,7 +28,7 @@ for _name in list(sys.modules):
 if _iotctl_root_s not in sys.path:
     sys.path.insert(0, _iotctl_root_s)
 
-from miot_ctl.session import MiotSession  # noqa: E402
+# util 不依赖 miloco-miot；MiotSession 在 _run 内惰性导入（SDK 可选）
 from miot_ctl.util import code_msg, load_json  # noqa: E402
 
 # 错误码 → 给用户的解决建议
@@ -187,7 +187,18 @@ def error_payload(exc: BaseException, *, need_bind: bool = False) -> dict[str, A
     return {"ok": False, "error": text, "hint": hint, "need_bind": need_bind, "solution": hint}
 
 
-def _run(fn: Callable[[MiotSession], Awaitable[T]], *, device_id: str) -> T:
+def _require_miot_session():
+    ok, err = miot_sdk_available()
+    if not ok:
+        raise RuntimeError(err)
+    from miot_ctl.session import MiotSession  # noqa: E402
+
+    return MiotSession
+
+
+def _run(fn: Callable[[Any], Awaitable[T]], *, device_id: str) -> T:
+    MiotSession = _require_miot_session()
+
     async def _wrapper() -> T:
         session = MiotSession(home=miot_data_home(device_id))
         try:
@@ -212,7 +223,7 @@ def get_bind_url(device_id: str) -> str:
 
 
 def authorize_and_sync(device_id: str, code: str, state: str) -> dict[str, Any]:
-    async def _do(s: MiotSession) -> dict[str, Any]:
+    async def _do(s: Any) -> dict[str, Any]:
         info = await s.authorize(code, state)
         homes = await s.sync_homes()
         status = enrich_status(await s.status())
@@ -231,7 +242,7 @@ def unbind(device_id: str) -> None:
 
 
 def get_status(device_id: str, *, refresh: bool = False) -> dict[str, Any]:
-    async def _do(s: MiotSession) -> dict[str, Any]:
+    async def _do(s: Any) -> dict[str, Any]:
         if refresh:
             try:
                 await s.ensure_fresh_token()

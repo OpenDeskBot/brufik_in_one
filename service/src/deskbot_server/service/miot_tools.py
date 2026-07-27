@@ -9,9 +9,6 @@ from deskbot_server.service import miot_service as ms
 
 logger = logging.getLogger("deskbot-server")
 
-# miot_service 已把 iotctl 加入 sys.path
-from miot_ctl.util import MIOT_OK_CODES, infer_value  # noqa: E402
-
 
 def execute_miot_tool(raw: dict[str, Any], *, device_id: str) -> dict[str, Any]:
     """执行 LLM miot 工具调用。"""
@@ -19,6 +16,9 @@ def execute_miot_tool(raw: dict[str, Any], *, device_id: str) -> dict[str, Any]:
     ok_sdk, sdk_err = ms.miot_sdk_available()
     if not ok_sdk:
         return {"tool": tool, **ms.error_payload(RuntimeError(sdk_err), need_bind=False)}
+
+    # miot_service 已把 iotctl 加入 sys.path；SDK 可用后再取 util
+    from miot_ctl.util import infer_value  # noqa: E402
 
     action = str(raw.get("action") or raw.get("op") or "list").strip().lower()
     try:
@@ -207,6 +207,8 @@ def execute_miot_tool(raw: dict[str, Any], *, device_id: str) -> dict[str, Any]:
 
 
 def _first_failure(results: list | dict | Any) -> dict | None:
+    from miot_ctl.util import MIOT_OK_CODES  # noqa: E402
+
     items = results if isinstance(results, list) else [results]
     for item in items:
         if not isinstance(item, dict):

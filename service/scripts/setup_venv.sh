@@ -137,6 +137,15 @@ else
     exit 1
   }
   "$VPY" -m pip install -e . --no-deps ${PIP_INDEX_URL:+--index-url "$PIP_INDEX_URL"}
+
+  # miloco-miot 为可选：仓库不托管 wheel；本地有 wheels 时自动装上
+  MIOT_WHEEL="$(ls -1 src/deskbot_server/iotctl/wheels/miloco_miot-*.whl 2>/dev/null | head -1 || true)"
+  if [[ -n "$MIOT_WHEEL" ]]; then
+    echo "安装可选 miloco-miot: $MIOT_WHEEL"
+    "$VPY" -m pip install --no-deps "$MIOT_WHEEL" || echo "miloco-miot 安装失败（可忽略；米家功能不可用）" >&2
+  else
+    echo "未找到 miloco-miot wheel（米家可选）；需要时: pip install --no-deps src/deskbot_server/iotctl/wheels/miloco_miot-*.whl"
+  fi
 fi
 
 if [[ "$SETUP_ONLY" == "1" ]]; then
