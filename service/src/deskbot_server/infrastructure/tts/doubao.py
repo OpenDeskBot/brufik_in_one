@@ -33,7 +33,7 @@ logger = logging.getLogger("deskbot-server")
 DEFAULT_WS_URL = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
 DEFAULT_RESOURCE_ID = "seed-tts-2.0"
 DEFAULT_MODEL = "seed-tts-2.0-expressive"
-DEFAULT_SPEAKER = "zh_female_vv_uranus_bigtts"
+DEFAULT_SPEAKER = "zh_male_dongmanhaimian_mars_bigtts"  # 亮嗓萌仔（海绵宝宝）
 DEFAULT_VOICE_CLONE_RESOURCE_ID = "seed-icl-2.0"
 DEFAULT_VOICE_CLONE_URL = "https://openspeech.bytedance.com/api/v3/tts/voice_clone"
 DEFAULT_VOICE_STATUS_URL = "https://openspeech.bytedance.com/api/v3/tts/get_voice"
@@ -122,7 +122,7 @@ def _resolve_tts_api_key() -> str:
 
 def load_doubao_tts_config() -> DoubaoTtsConfig:
     load_dotenv()
-    speaker = (os.environ.get("DOUBAO_TTS_SPEAKER") or "").strip()
+    speaker = (os.environ.get("DOUBAO_TTS_SPEAKER") or DEFAULT_SPEAKER).strip()
     resource_id = (os.environ.get("DOUBAO_TTS_RESOURCE_ID") or DEFAULT_RESOURCE_ID).strip()
     model = (os.environ.get("DOUBAO_TTS_MODEL") or DEFAULT_MODEL).strip()
     from deskbot_server.infrastructure.tts.speakers import find_doubao_tts_speaker_preset, suggest_resource_id
@@ -139,9 +139,9 @@ def load_doubao_tts_config() -> DoubaoTtsConfig:
         model = ""
     return DoubaoTtsConfig(
         api_key=_resolve_tts_api_key(),
-        speaker=(os.environ.get("DOUBAO_TTS_SPEAKER") or DEFAULT_SPEAKER).strip(),
-        resource_id=(os.environ.get("DOUBAO_TTS_RESOURCE_ID") or DEFAULT_RESOURCE_ID).strip(),
-        model=(os.environ.get("DOUBAO_TTS_MODEL") or DEFAULT_MODEL).strip(),
+        speaker=speaker,
+        resource_id=resource_id,
+        model=model,
         ws_url=(os.environ.get("DOUBAO_TTS_WS_URL") or DEFAULT_WS_URL).strip(),
         sample_rate=int(os.environ.get("DOUBAO_TTS_SAMPLE_RATE") or 24000),
         audio_format=(os.environ.get("DOUBAO_TTS_FORMAT") or "pcm").strip(),
