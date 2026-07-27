@@ -3,7 +3,7 @@ CONFIG_ESP_CONSOLE_NONE=y
 # 注意：纯 framework=arduino 时预编译 SDK 的 CONFIG_ARDUINO_LOOP_STACK_SIZE=8192 不会被本文件覆盖。
 CONFIG_ARDUINO_LOOP_STACK_SIZE=24576
 
-# 双 WS（asr_chat + camera_uplink）并行时需要更大发送窗，避免互抢导致 write 超时
+# /asr_chat 上语音 + JPEG 同连接，加大发送窗减轻大帧 write 超时
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
 CONFIG_LWIP_TCP_WND_DEFAULT=32768
 

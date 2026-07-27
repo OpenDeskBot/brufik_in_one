@@ -381,7 +381,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <p class="hint hidden" id="saved-wifi-empty">暂无已保存 Wi‑Fi。</p>
 
       <label style="margin-top:16px">云服务器</label>
-      <p class="hint">格式 ws://主机:端口 或 wss://主机:端口，可选路径前缀；设备会自动连接 /asr_chat 与 /camera_uplink。</p>
+      <p class="hint">格式 ws://主机:端口 或 wss://主机:端口，可选路径前缀；设备连接 /asr_chat（语音与相机帧同连接）。</p>
       <div id="ws-server-list" class="list"></div>
       <p class="hint hidden" id="ws-server-empty">暂无自定义云服务器。</p>
       <label for="ws-server-url-input">添加云服务器</label>

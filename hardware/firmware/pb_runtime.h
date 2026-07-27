@@ -32,6 +32,12 @@ public:
    */
   void dispatchModel(pb_model& model);
 
+  /**
+   * 纯舵机叠层：只改 head，不碰 speaker/display，不改 playing_level / tts_active。
+   * 用于注视/跟随等低优先级舵机，避免取消更高优先级口播。
+   */
+  void dispatchServoOverlay(pb_model& model);
+
 private:
   void applySideEffects(const pb_model& model);
   bool tryMicOnlySingle(pb_model& model);

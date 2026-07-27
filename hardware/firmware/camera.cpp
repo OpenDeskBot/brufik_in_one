@@ -200,7 +200,7 @@ bool camera_try_capture_and_enqueue(void) {
   if (ws_transport_tx_slots_free() == 0) {
     return false;
   }
-  /* camera_ws 未就绪时 enqueue 会失败；推进节拍避免空转狂抓，保留额度下轮再试。 */
+  /* 上行 WS 未就绪时 enqueue 会失败；推进节拍避免空转狂抓，保留额度下轮再试。 */
   if (!capture_and_enqueue_one()) {
     s_last_capture_ms = now;
     return false;

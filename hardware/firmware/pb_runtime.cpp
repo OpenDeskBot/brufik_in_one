@@ -152,7 +152,12 @@ static bool model_has_payload(const pb_model& model) {
 
 static bool model_is_servo_only_gesture(const pb_model& model) {
   return model.anim_count == 0 && (!model.audio || model.audio->next_bin_len == 0) &&
-         model.servo_count > 0;
+         model.servo_count > 0 && model.mic == PB_MIC_NONE;
+}
+
+static bool model_is_servo_only_replace_head(const pb_model& model) {
+  return pb_model_is_chain_head(model) && model.action == PB_MODEL_REPLACE &&
+         model_is_servo_only_gesture(model);
 }
 
 bool PbRuntime::tryMicOnlySingle(pb_model& model) {
@@ -173,9 +178,21 @@ bool PbRuntime::tryMicOnlySingle(pb_model& model) {
   return true;
 }
 
+void PbRuntime::dispatchServoOverlay(pb_model& model) {
+  log_info("[PB] servo overlay req=%s level=%d servo=%u (keep audio/anim)", model.req, model.level,
+           (unsigned)model.servo_count);
+  head_abort();
+  applySideEffects(model);
+  dispatchServo(model);
+  maybeAck(model);
+  pb_ack_bypass_throttle_ = true;
+  pb_model_free(model);
+}
+
 void PbRuntime::onChainHead(pb_model& model) {
   const bool servo_only = model_is_servo_only_gesture(model);
   const bool voice_servo_only = mic_capture_allowed() && servo_only;
+  /* level>=3 纯舵机通常走 dispatchServoOverlay；若仍入环则只清电机。 */
   const bool replace_realtime_servo =
       servo_only && model.action == PB_MODEL_REPLACE && model.level >= 3;
 
@@ -504,12 +521,37 @@ size_t model_ring_drop_below_level(int level) {
   return dropped;
 }
 
+static int current_priority_level() {
+  const int qmax = model_ring_max_level();
+  const int playing = s_has_dispatched_model ? s_playing_level : -1;
+  return qmax > playing ? qmax : playing;
+}
+
+/** 纯舵机 replace：叠到电机上，绝不因 level 清掉口播缓冲。 */
+static bool should_overlay_servo_only(const pb_model& model) {
+  if (!model_is_servo_only_replace_head(model)) {
+    return false;
+  }
+  /* level>=3：旧 realtime follow 约定；低 level 在更高优先级口播期间同样叠层。 */
+  if (model.level >= 3) {
+    return true;
+  }
+  const int cur = current_priority_level();
+  return cur >= 0 && model.level < cur;
+}
+
 bool model_ring_push(PbModelSlot& incoming) {
   const pb_model& model = incoming.model;
   const bool chain_head = pb_model_is_chain_head(model);
   bool preempt_playing = false;
 
   if (chain_head) {
+    /*
+     * 纯舵机 realtime/低优先级叠层不走 ring（见 should_overlay_servo_only）。
+     * 若误入：仍禁止 drop-below + speaker_abort，否则会掐死口播。
+     */
+    const bool servo_overlay = model_is_servo_only_replace_head(model) &&
+                               (model.level >= 3 || model.level < current_priority_level());
     if (model.action == PB_MODEL_REPLACE) {
       const size_t dropped = model_ring_drop_level(model.level);
       if (dropped) {
@@ -520,16 +562,18 @@ bool model_ring_push(PbModelSlot& incoming) {
       s_dispatch_credit_ms = 0;
       s_credit_wall_ms = millis();
     }
-    const size_t dropped_lower = model_ring_drop_below_level(model.level);
-    if (dropped_lower) {
-      log_info("[PB_SCHED] preempt level=%d removed=%u lower-priority buffered models", model.level,
-               (unsigned)dropped_lower);
-      /* 环形队列因更高 level 清空低优先级缓冲：同步打断执行器已预取内容。 */
-      speaker_abort();
-      display_abort();
-      head_abort();
-      s_dispatch_credit_ms = 0;
-      s_credit_wall_ms = millis();
+    if (!servo_overlay) {
+      const size_t dropped_lower = model_ring_drop_below_level(model.level);
+      if (dropped_lower) {
+        log_info("[PB_SCHED] preempt level=%d removed=%u lower-priority buffered models", model.level,
+                 (unsigned)dropped_lower);
+        /* 环形队列因更高 level 清空低优先级缓冲：同步打断执行器已预取内容。 */
+        speaker_abort();
+        display_abort();
+        head_abort();
+        s_dispatch_credit_ms = 0;
+        s_credit_wall_ms = millis();
+      }
     }
     const int max_level = model_ring_max_level();
     if (max_level >= 0 && model.level < max_level) {
@@ -639,6 +683,9 @@ void pb_runtime_task(void* /*arg*/) {
           model_ring_clear();
           s_runtime.handleCancel(incoming.model);
           model_slot_clear(incoming);
+        } else if (should_overlay_servo_only(incoming.model)) {
+          s_runtime.dispatchServoOverlay(incoming.model);
+          incoming.model = pb_model{};
         } else if (!model_ring_push(incoming)) {
           model_slot_clear(incoming);
         }

@@ -16,26 +16,11 @@
 #define DESKBOT_AP_OFFER_TIMEOUT_MS 20000
 #endif
 
-#define DESKBOT_WS_HOST "192.168.31.145"
-// "10.220.138.26"
+#define DESKBOT_WS_HOST "10.220.128.74"
 #define DESKBOT_WS_PORT 9000
 
 #define ASR_CHAT_HOST DESKBOT_WS_HOST
 #define ASR_CHAT_PORT DESKBOT_WS_PORT
-
-/** 相机 JPEG 独立 WebSocket 路径（与 /asr_chat 分离）。 */
-#ifndef DESKBOT_CAMERA_WS_PATH
-#define DESKBOT_CAMERA_WS_PATH "/camera_uplink"
-#endif
-
-/** 1 = 经独立 /camera_uplink 上传（camera_frame JSON + JPEG binary）；0 = 完全停用相机 WS。 */
-#ifndef DESKBOT_CAMERA_UPLINK_ENABLED
-#define DESKBOT_CAMERA_UPLINK_ENABLED 1
-#endif
-
-static inline bool deskbot_camera_uplink_enabled(void) {
-  return DESKBOT_CAMERA_UPLINK_ENABLED != 0;
-}
 
 static inline bool deskbot_ws_configured(void) {
   return DESKBOT_WS_HOST[0] != '\0';
@@ -139,11 +124,6 @@ static inline size_t deskbot_pdm_voice_hangover_thr(size_t ema) {
 /** TTS 结束后尾音抑制（ms）；无 AEC 时开麦前丢弃环内回声。 */
 #ifndef DESKBOT_TAIL_SUPPRESS_MS
 #define DESKBOT_TAIL_SUPPRESS_MS               300
-#endif
-
-/** 相机 JPEG 上行最小间隔（ms）；持续上传，不因听音/播音降频或暂停。 */
-#ifndef DESKBOT_CAMERA_UPLINK_INTERVAL_MS
-#define DESKBOT_CAMERA_UPLINK_INTERVAL_MS      500
 #endif
 
 /** 单轮连续 Opus 上行上限（秒）；正常由 pb_start 提前结束。 */

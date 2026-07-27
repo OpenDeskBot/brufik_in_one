@@ -1,7 +1,8 @@
 #include "asr_ws.h"
 
-#include "deskbot_config.h"
 #include "boot_guide.h"
+#include "camera.h"
+#include "deskbot_config.h"
 #include "logger.h"
 #include "mic.h"
 #include "utils/nvs_config_utils.h"
@@ -66,6 +67,7 @@ static void mark_disconnected_internal(const char* why) {
   s_connected_at_ms = 0;
   s_connect_attempt_started_ms = 0;
   set_ws_uplink_allowed(false);
+  camera_notify_capture(kCamStop);
   if (why && why[0]) {
     log_warn("[ASR_WS] state=-1 (%s)", why);
   }
@@ -128,7 +130,6 @@ static void register_handlers() {
         note_pre_ready_connect_failure(reason_text.c_str());
       }
       mark_disconnected_internal("disconnected");
-      /* 只清 asr TX：保留 camera JPEG，避免断线风暴里把视觉上行一起掐死。 */
       ws_transport_discard_asr_tx();
     } else if (type == WStype_ERROR) {
       const bool was_ready = g_asr_ws_state.load(std::memory_order_acquire) == 0;
@@ -286,7 +287,8 @@ void asr_ws_note_ready(void) {
   s_connect_fail_streak = 0;
   set_state(0);
   set_ws_uplink_allowed(true);
-  log_warn("[ASR_WS] ready state=0");
+  log_warn("[ASR_WS] ready state=0 → capture_go");
+  camera_notify_capture(kCamGo);
 }
 
 void asr_ws_note_send_fail(const char* what) {

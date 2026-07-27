@@ -2,7 +2,6 @@
 
 #include "asr_ws.h"
 #include "camera.h"
-#include "camera_ws.h"
 #include "logger.h"
 #include "mic.h"
 #include "pb_runtime.h"
@@ -35,7 +34,6 @@ struct WsTxItem {
 static uint32_t s_ws_session = 0;
 static bool s_session_has_connected = false;
 static WebSocketsClient* s_asr_ws = nullptr;
-static WebSocketsClient* s_cam_ws = nullptr;
 static bool s_setup_ok = false;
 static QueueHandle_t s_rx_q = nullptr;
 static QueueHandle_t s_tx_q = nullptr;
@@ -135,7 +133,7 @@ static bool enqueue_tx(WsTxItem* item) {
   /*
    * 队列满：
    * - state 可丢音频腾位（ack/boot 优先）
-   * - image 不得丢音频（双 WS 时相机会把 mic 饿死，进而拖垮 /asr_chat）
+   * - image 不得丢音频（同连接时大 JPEG 会饿死 mic）
    * - audio 满则丢本包
    */
   if (item->type == WsTxType::kState) {
@@ -229,10 +227,10 @@ static void ws_rx_enqueue_impl(WStype_t type, uint8_t* payload, size_t length) {
 static void drain_tx_finish(bool is_image, bool send_ok) {
   if (is_image) {
     if (send_ok) {
-      camera_ws_end_send_ok();
+      camera_notify_capture(kCamGo);
     } else {
-      camera_ws_mark_disconnected();
-      camera_ws_on_image_finished();
+      /* 发送失败交 asr 计数；停抓等 ready 再开。 */
+      camera_notify_capture(kCamStop);
     }
   }
   ws_tx_free_item(&s_tx_active_item);
@@ -248,9 +246,6 @@ static void write_pump_impl(void) {
   if (s_asr_ws) {
     s_asr_ws->loop();
   }
-  if (s_cam_ws) {
-    s_cam_ws->loop();
-  }
   s_in_write_pump = false;
   taskYIELD();
 }
@@ -260,7 +255,6 @@ static void ws_transport_task(void* /*arg*/) {
     owner_lock();
     /* auto_reconnect 内部已 loop；此处不再重复 pump。 */
     ws_asr_auto_reconnect();
-    ws_camera_auto_reconnect();
     const bool did_rx = ws_transport_drain_rx();
     const bool did_tx = ws_transport_drain_tx();
     /* 相机抓帧并入本任务：省掉 camera_cap 栈 + notify xQueue。 */
@@ -300,7 +294,8 @@ bool setup_ws_transport(void) {
   }
   asr_ws_bind_transport();
   s_setup_ok = true;
-  log_info("[WS_TRANSPORT] setup ok TX depth=%u rx=%u", (unsigned)kTxDepth, (unsigned)kRxDepth);
+  log_info("[WS_TRANSPORT] setup ok TX depth=%u rx=%u (audio+camera on /asr_chat)",
+           (unsigned)kTxDepth, (unsigned)kRxDepth);
   return true;
 }
 
@@ -327,11 +322,6 @@ bool task_setup_ws_transport(void) {
 void ws_transport_set_asr_client(WebSocketsClient* ws) {
   s_asr_ws = ws;
   log_info("[WS_TRANSPORT] asr client registered");
-}
-
-void ws_transport_set_camera_client(WebSocketsClient* cam_ws) {
-  s_cam_ws = cam_ws;
-  log_info("[WS_TRANSPORT] camera client registered");
 }
 
 void ws_transport_enqueue_rx(WStype_t type, uint8_t* payload, size_t length) {
@@ -375,7 +365,7 @@ bool ws_transport_enqueue_image_borrow(const char* json, uint8_t* bin, size_t bi
   if (!json || !bin || bin_len == 0 || !releaser || bin_len > kMaxTxImageBin) {
     return false;
   }
-  if (!s_cam_ws || !s_cam_ws->isConnected() || camera_ws_state() != 0) {
+  if (!s_asr_ws || !s_asr_ws->isConnected() || asr_ws_state() != 0) {
     return false;
   }
   WsTxItem item{};
@@ -399,50 +389,26 @@ bool ws_transport_drain_tx(void) {
   }
 
   const bool is_image = (s_tx_active_item.type == WsTxType::kImage);
-  WebSocketsClient* target = is_image ? s_cam_ws : s_asr_ws;
+  WebSocketsClient* target = s_asr_ws;
 
-  /*
-   * 未就绪：保留队头，不计 send fail。
-   * 必须在 camera_ws_try_begin_send 之前判断，否则 state 会卡在 1。
-   */
-  if (!is_image) {
-    if (!target || !target->isConnected() || asr_ws_state() != 0) {
-      static unsigned long s_hold_log_ms = 0;
-      const unsigned long now = millis();
-      if (s_hold_log_ms == 0 || (now - s_hold_log_ms) >= 2000UL) {
-        log_warn("[WS_TRANSPORT] drain_tx hold type=%u (asr not ready)",
-                 (unsigned)s_tx_active_item.type);
-        s_hold_log_ms = now;
-      }
-      return false;
+  /* 未就绪：保留队头，不计 send fail。 */
+  if (!target || !target->isConnected() || asr_ws_state() != 0) {
+    static unsigned long s_hold_log_ms = 0;
+    const unsigned long now = millis();
+    if (s_hold_log_ms == 0 || (now - s_hold_log_ms) >= 2000UL) {
+      log_warn("[WS_TRANSPORT] drain_tx hold type=%u (asr not ready)",
+               (unsigned)s_tx_active_item.type);
+      s_hold_log_ms = now;
     }
-  } else {
-    if (!target || !target->isConnected()) {
-      static unsigned long s_cam_hold_log_ms = 0;
-      const unsigned long now = millis();
-      if (s_cam_hold_log_ms == 0 || (now - s_cam_hold_log_ms) >= 2000UL) {
-        log_warn("[WS_TRANSPORT] drain_tx hold image (camera not connected)");
-        s_cam_hold_log_ms = now;
-      }
-      return false;
-    }
-    if (!camera_ws_try_begin_send()) {
-      log_warn("[WS_TRANSPORT] skip image (camera_ws.state!=0)");
-      ws_tx_free_item(&s_tx_active_item);
-      s_tx_active = false;
-      camera_ws_on_image_finished();
-      return true;
-    }
+    return false;
   }
 
   const bool ok = target->sendBIN(s_tx_active_item.packed, s_tx_active_item.packed_len);
   if (!ok) {
     log_warn("[WS_TRANSPORT] sendBIN fail type=%u packed_len=%u", (unsigned)s_tx_active_item.type,
              (unsigned)s_tx_active_item.packed_len);
-    if (!is_image) {
-      asr_ws_note_send_fail("sendBIN");
-    }
-  } else if (!is_image) {
+    asr_ws_note_send_fail("sendBIN");
+  } else {
     asr_ws_note_send_ok();
   }
   drain_tx_finish(is_image, ok);
@@ -459,6 +425,7 @@ void ws_transport_discard_asr_tx(void) {
   owner_lock();
   discard_tx_of_type(WsTxType::kAudio);
   discard_tx_of_type(WsTxType::kState);
+  discard_tx_of_type(WsTxType::kImage);
   owner_unlock();
 }
 
