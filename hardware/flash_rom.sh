@@ -86,6 +86,7 @@ WiFi / 后台地址（烧录前编辑固件头文件）:
 EOF
 }
 
+# pioarduino (Arduino-ESP32 3.x) 要求运行 PlatformIO 的 Python ≥ 3.10。
 resolve_pio() {
   if [[ -n "${PIO:-}" ]]; then
     return 0
@@ -99,7 +100,8 @@ resolve_pio() {
   elif command -v pio >/dev/null 2>&1; then
     PIO="$(command -v pio)"
   else
-    echo "未找到 pio（pip install platformio）" >&2
+    echo "未找到 pio。pioarduino 需要 Python ≥3.10，例如：" >&2
+    echo "  cd hardware && python3.11 -m venv .venv && .venv/bin/pip install platformio" >&2
     exit 1
   fi
 }

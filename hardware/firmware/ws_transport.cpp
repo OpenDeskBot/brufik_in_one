@@ -226,7 +226,7 @@ bool task_setup_ws_transport(void) {
   if (s_task) {
     return true;
   }
-  BaseType_t rc = xTaskCreatePinnedToCore(ws_transport_task, "ws_transport", kTaskStack, nullptr,
+  BaseType_t rc = utils_task_create_pinned(ws_transport_task, "ws_transport", kTaskStack, nullptr,
                                            kTaskPrio, &s_task, APP_CPU_NUM);
   if (rc != pdPASS) {
     log_error("[WS_TRANSPORT] task create failed rc=%d (internal free=%u)", (int)rc,

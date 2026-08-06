@@ -1,13 +1,14 @@
 #include "speaker.h"
 
+#include "display.h"
 #include "mic.h"
 #include "pb_model.h"
 #include "utils/opus_codec.h"
 #include "utils/utils.h"
 #include "logger.h"
 
+#include <ESP_I2S.h>
 #include <atomic>
-#include <driver/i2s.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -38,23 +39,35 @@ static uint32_t s_i2s_rate = SAMPLE_RATE;
 static QueueHandle_t s_q = nullptr;
 static TaskHandle_t s_task = nullptr;
 
-static i2s_config_t s_i2s_cfg = {
-    .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_TX),
-    .sample_rate = SAMPLE_RATE,
-    .bits_per_sample = i2s_bits_per_sample_t(16),
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = kDmaBufCount,
-    .dma_buf_len = kDmaBufLen,
-};
+/* 与 mic 同用新 I2S 驱动（不可与 legacy driver/i2s.h 混用）。 */
+I2SClass s_i2s(I2S_NUM_1);
 
-static const i2s_pin_config_t s_i2s_pins = {
-    .bck_io_num = MAX98357_BCLK,
-    .ws_io_num = MAX98357_LRC,
-    .data_out_num = MAX98357_DIN,
-    .data_in_num = -1,
-};
+static void speaker_set_clk(uint32_t rate, uint8_t channels) {
+  const uint32_t r = rate ? rate : SAMPLE_RATE;
+  const i2s_slot_mode_t ch = (channels == 2) ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO;
+  if (!s_i2s.configureTX(r, I2S_DATA_BIT_WIDTH_16BIT, ch)) {
+    log_warn("[SPEAKER] configureTX failed rate=%u ch=%u", (unsigned)r, (unsigned)channels);
+  }
+  s_i2s_rate = r;
+}
+
+/**
+ * 音频不得明显领先嘴形：当前 job 已出队，若 display 仍积压更多任务，说明扬声器跑快了。
+ * 最多等 ~250ms，避免卡死。
+ */
+static void speaker_wait_mouth_catchup(void) {
+  for (int i = 0; i < 50; ++i) {
+    if (s_need_cancel.load(std::memory_order_acquire)) {
+      return;
+    }
+    const unsigned disp = display_render_input_queue_depth();
+    const unsigned spk = speaker_input_queue_depth();
+    if (disp <= spk + 1u) {
+      return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+}
 
 enum class HeapFree : uint8_t { kMalloc = 0, kHeapCaps = 1 };
 
@@ -216,11 +229,11 @@ static bool play(int16_t* data, size_t length) {
     if (n > kPlayBlockSamples) {
       n = kPlayBlockSamples;
     }
-    size_t bw = 0;
-    const esp_err_t err =
-        i2s_write(I2S_NUM_1, data + off, n * sizeof(int16_t), &bw, portMAX_DELAY);
-    if (err != ESP_OK) {
-      log_warn("[SPEAKER] i2s_write err=%d", (int)err);
+    const size_t want = n * sizeof(int16_t);
+    const size_t bw =
+        s_i2s.write(reinterpret_cast<const uint8_t*>(data + off), want);
+    if (bw != want) {
+      log_warn("[SPEAKER] i2s_write short bw=%u want=%u", (unsigned)bw, (unsigned)want);
       return false;
     }
     off += n;
@@ -241,9 +254,7 @@ static void i2s_idle(bool drain, uint8_t /*channels*/) {
       vTaskDelay(pdMS_TO_TICKS(ms));
     }
   }
-  i2s_set_clk(I2S_NUM_1, SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
-  s_i2s_rate = SAMPLE_RATE;
-  i2s_zero_dma_buffer(I2S_NUM_1);
+  speaker_set_clk(SAMPLE_RATE, 1);
 }
 
 static void stop_output(bool graceful, uint8_t channels, bool force) {
@@ -299,9 +310,7 @@ static bool play_wav(uint8_t* data, size_t len) {
     return false;
   }
 
-  i2s_set_clk(I2S_NUM_1, rate, I2S_BITS_PER_SAMPLE_16BIT,
-              channels == 2 ? I2S_CHANNEL_STEREO : I2S_CHANNEL_MONO);
-  s_i2s_rate = rate ? rate : SAMPLE_RATE;
+  speaker_set_clk(rate, static_cast<uint8_t>(channels));
   const bool ok = play(reinterpret_cast<int16_t*>(data + data_off), data_size / 2);
   stop_output(/*graceful=*/ok, static_cast<uint8_t>(channels), /*force=*/true);
   return ok;
@@ -366,12 +375,11 @@ static bool play_pb_audio_owned(pb_audio* audio) {
       free_ptr(pcm_owned, free_mode);
       return false;
     }
-    i2s_set_clk(I2S_NUM_1, audio->sr, I2S_BITS_PER_SAMPLE_16BIT,
-                audio->ch == 2 ? I2S_CHANNEL_STEREO : I2S_CHANNEL_MONO);
-    s_i2s_rate = audio->sr;
+    speaker_set_clk(audio->sr, audio->ch);
     s_stream_active.store(true, std::memory_order_release);
   }
 
+  speaker_wait_mouth_catchup();
   const bool ok = play(pcm_owned, samples);
   free_ptr(pcm_owned, free_mode);
   return ok;
@@ -397,9 +405,7 @@ static void execute_job(Job& job) {
       } else if (job.rate == 0) {
         log_warn("[SPEAKER] bad rate=0");
       } else {
-        i2s_set_clk(I2S_NUM_1, job.rate, I2S_BITS_PER_SAMPLE_16BIT,
-                    job.channels == 2 ? I2S_CHANNEL_STEREO : I2S_CHANNEL_MONO);
-        s_i2s_rate = job.rate;
+        speaker_set_clk(job.rate, job.channels);
         s_stream_active.store(true, std::memory_order_release);
       }
       break;
@@ -456,13 +462,13 @@ void setup_speaker() {
     pinMode(MAX98357_SD, OUTPUT);
     digitalWrite(MAX98357_SD, HIGH);
   }
-  const esp_err_t err = i2s_driver_install(I2S_NUM_1, &s_i2s_cfg, 0, NULL);
-  if (err != ESP_OK) {
-    log_error("[SPEAKER] I2S1 install failed err=%d", (int)err);
+  s_i2s.setPins((int8_t)MAX98357_BCLK, (int8_t)MAX98357_LRC, (int8_t)MAX98357_DIN);
+  if (!s_i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO)) {
+    log_error("[SPEAKER] ESP_I2S STD begin failed");
     return;
   }
-  i2s_set_pin(I2S_NUM_1, &s_i2s_pins);
-  log_info("[SPEAKER] ready DIN=%d vol=%.2f", (int)MAX98357_DIN,
+  s_i2s_rate = SAMPLE_RATE;
+  log_info("[SPEAKER] ready ESP_I2S DIN=%d vol=%.2f", (int)MAX98357_DIN,
            (double)s_volume.load(std::memory_order_relaxed));
 }
 
@@ -474,7 +480,7 @@ void task_setup_speaker() {
     s_q = xQueueCreate(SPEAKER_QUEUE_DEPTH, sizeof(Job));
   }
   if (!s_task) {
-    const BaseType_t rc = xTaskCreatePinnedToCore(speaker_task, "speaker", kSpeakerTaskStack,
+    const BaseType_t rc = utils_task_create_pinned(speaker_task, "speaker", kSpeakerTaskStack,
                                                    nullptr, 7, &s_task, APP_CPU_NUM);
     if (rc != pdPASS) {
       log_error("[SPEAKER] task create rc=%d", (int)rc);

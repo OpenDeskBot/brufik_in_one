@@ -36,6 +36,8 @@ static constexpr bool kCameraCaptureEnabled = true;
 static constexpr size_t kMaxJpegBin = 32 * 1024;
 static constexpr uint32_t kFbNullLogIntervalMs = 30000u;
 static constexpr uint8_t kJpegQuality = 18;
+/** WiFi 后重 init 时丢掉前几帧，让 OV2640 AWB/AGC 收敛（否则常年偏绿）。 */
+static constexpr int kAwakenDiscardFrames = 12;
 
 static bool s_camera_ok = false;
 static bool s_hw_inited = false;
@@ -50,18 +52,7 @@ static TaskHandle_t s_task = nullptr;
 static constexpr uint32_t kCameraTaskStack = 16 * 1024;
 static constexpr UBaseType_t kCameraTaskPrio = 3;
 
-/**
- * 本机（ea30）实测：直接 PIXFORMAT_JPEG 会 fb_get 超时；RGB565 正常。
- * 因此用 RGB565 抓帧，再用 frame2jpg 编码后上行。
- */
-static bool camera_init_hw(void) {
-  if (s_hw_inited) {
-    esp_camera_deinit();
-    s_hw_inited = false;
-    delay(30);
-  }
-
-  camera_config_t config = {};
+static void camera_fill_pins(camera_config_t& config) {
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
   config.pin_d0 = Y2_GPIO_NUM;
@@ -82,58 +73,137 @@ static bool camera_init_hw(void) {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 10000000;
   config.frame_size = FRAMESIZE_QVGA;
-  config.pixel_format = PIXFORMAT_RGB565;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = kJpegQuality;
   config.fb_count = 2;
+}
 
-  esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) {
-    log_error("[CAMERA] esp_camera_init failed 0x%x", err);
-    return false;
-  }
-  s_hw_inited = true;
-
+static void camera_tune_sensor(void) {
   sensor_t* s = esp_camera_sensor_get();
   if (!s) {
-    log_error("[CAMERA] sensor_get returned null after init");
-    camera_deinit();
-    return false;
+    return;
   }
-  log_info("[CAMERA] sensor PID=0x%x%s mode=RGB565->JPEG", (unsigned)s->id.PID,
-           s->id.PID == OV2640_PID ? " OV2640" : (s->id.PID == OV3660_PID ? " OV3660" : ""));
+  /* 保持自动曝光/白平衡，但给 AWB 明确起点；偏绿多见于冷启动未收敛。 */
+  if (s->set_whitebal) {
+    s->set_whitebal(s, 1);
+  }
+  if (s->set_awb_gain) {
+    s->set_awb_gain(s, 1);
+  }
+  if (s->set_wb_mode) {
+    /* 0=Auto；室内偏绿时可试 3=Office */
+    s->set_wb_mode(s, 0);
+  }
   if (s->id.PID == OV3660_PID) {
     s->set_vflip(s, 1);
     s->set_brightness(s, 1);
     s->set_saturation(s, -2);
   }
+}
 
-  delay(200);
-  camera_fb_t* probe = esp_camera_fb_get();
-  if (!probe) {
-    log_error("[CAMERA] probe fb_get failed — disable camera uplink");
-    camera_deinit();
-    return false;
-  }
-  log_info("[CAMERA] probe ok rgb=%uB %ux%u", (unsigned)probe->len, (unsigned)probe->width,
-           (unsigned)probe->height);
-
-  uint8_t* jpg = nullptr;
-  size_t jpg_len = 0;
-  const bool jpg_ok = frame2jpg(probe, kJpegQuality, &jpg, &jpg_len);
-  esp_camera_fb_return(probe);
-  if (!jpg_ok || !jpg || jpg_len == 0) {
-    log_error("[CAMERA] probe frame2jpg failed");
-    if (jpg) {
-      free(jpg);
+static void camera_discard_warmup_frames(void) {
+  for (int i = 0; i < kAwakenDiscardFrames; ++i) {
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) {
+      delay(30);
+      continue;
     }
-    camera_deinit();
-    return false;
+    esp_camera_fb_return(fb);
   }
-  log_info("[CAMERA] probe jpeg=%uB", (unsigned)jpg_len);
-  free(jpg);
-  return true;
+  log_info("[CAMERA] discarded %d warmup frames for AWB", kAwakenDiscardFrames);
+}
+
+/**
+ * 优先 PIXFORMAT_JPEG；本机常不可用。
+ * 其次 YUV422 + frame2jpg（避开 RGB565 字节序踩坑）。
+ * 再回落 RGB565（默认 BE）。
+ */
+static bool camera_init_hw(void) {
+  if (s_hw_inited) {
+    esp_camera_deinit();
+    s_hw_inited = false;
+    delay(30);
+  }
+
+  auto probe_after_init = [](const char* mode_tag) -> bool {
+    sensor_t* s = esp_camera_sensor_get();
+    if (!s) {
+      log_error("[CAMERA] sensor_get returned null after init");
+      return false;
+    }
+    log_info("[CAMERA] sensor PID=0x%x%s mode=%s", (unsigned)s->id.PID,
+             s->id.PID == OV2640_PID ? " OV2640" : (s->id.PID == OV3660_PID ? " OV3660" : ""),
+             mode_tag);
+    camera_tune_sensor();
+    camera_discard_warmup_frames();
+
+    camera_fb_t* probe = esp_camera_fb_get();
+    if (!probe) {
+      log_error("[CAMERA] probe fb_get failed (%s)", mode_tag);
+      return false;
+    }
+    log_info("[CAMERA] probe ok fmt=%u len=%uB %ux%u", (unsigned)probe->format,
+             (unsigned)probe->len, (unsigned)probe->width, (unsigned)probe->height);
+
+    if (probe->format == PIXFORMAT_JPEG) {
+      if (probe->len == 0 || probe->len > kMaxJpegBin) {
+        log_error("[CAMERA] probe jpeg bad len=%u", (unsigned)probe->len);
+        esp_camera_fb_return(probe);
+        return false;
+      }
+      esp_camera_fb_return(probe);
+      return true;
+    }
+
+    uint8_t* jpg = nullptr;
+    size_t jpg_len = 0;
+    const bool jpg_ok = frame2jpg(probe, kJpegQuality, &jpg, &jpg_len);
+    esp_camera_fb_return(probe);
+    if (!jpg_ok || !jpg || jpg_len == 0) {
+      log_error("[CAMERA] probe frame2jpg failed");
+      if (jpg) {
+        free(jpg);
+      }
+      return false;
+    }
+    log_info("[CAMERA] probe jpeg=%uB", (unsigned)jpg_len);
+    free(jpg);
+    return true;
+  };
+
+  auto try_format = [&](pixformat_t fmt, const char* tag) -> bool {
+    camera_config_t config = {};
+    camera_fill_pins(config);
+    config.pixel_format = fmt;
+    const esp_err_t err = esp_camera_init(&config);
+    if (err != ESP_OK) {
+      log_warn("[CAMERA] esp_camera_init %s failed 0x%x", tag, err);
+      return false;
+    }
+    s_hw_inited = true;
+    if (probe_after_init(tag)) {
+      return true;
+    }
+    esp_camera_deinit();
+    s_hw_inited = false;
+    delay(30);
+    return false;
+  };
+
+  if (try_format(PIXFORMAT_JPEG, "JPEG")) {
+    return true;
+  }
+  log_warn("[CAMERA] JPEG path failed, try YUV422");
+  if (try_format(PIXFORMAT_YUV422, "YUV422->JPEG")) {
+    return true;
+  }
+  log_warn("[CAMERA] YUV422 path failed, fallback RGB565");
+  if (try_format(PIXFORMAT_RGB565, "RGB565->JPEG")) {
+    return true;
+  }
+  log_error("[CAMERA] all pixel formats failed");
+  return false;
 }
 
 static void camera_task(void* /*arg*/) {
@@ -190,7 +260,7 @@ void task_setup_camera() {
     return;
   }
   s_task_ready = true;
-  BaseType_t rc = xTaskCreatePinnedToCore(camera_task, "camera", kCameraTaskStack, nullptr,
+  BaseType_t rc = utils_task_create_pinned(camera_task, "camera", kCameraTaskStack, nullptr,
                                           kCameraTaskPrio, &s_task, APP_CPU_NUM);
   if (rc != pdPASS) {
     log_error("[CAMERA] task create failed rc=%d", (int)rc);

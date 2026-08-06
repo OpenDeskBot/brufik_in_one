@@ -7,6 +7,7 @@
 #include <soc/io_mux_reg.h>
 
 #include "logger.h"
+#include "utils/utils.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -359,7 +360,7 @@ void task_setup_head() {
     return;
   }
   const BaseType_t rc =
-      xTaskCreatePinnedToCore(motor_task, "motor", 8 * 1024, nullptr, 3, &s_motor_task, APP_CPU_NUM);
+      utils_task_create_pinned(motor_task, "motor", 8 * 1024, nullptr, 3, &s_motor_task, APP_CPU_NUM);
   if (rc != pdPASS) {
     log_error("[HEAD] motor task create rc=%d", (int)rc);
   } else {

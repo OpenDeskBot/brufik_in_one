@@ -82,9 +82,8 @@ bool parse_ws_proto(const char* str, WsProto& out);
 bool utils_http_get_binary(const char* url, uint8_t** out_buf, size_t* out_len);
 
 /**
- * 创建 pinned 任务（内部 RAM 栈）。
- * 注意：Arduino 预编译 SDK 不允许 PSRAM 任务栈（会 assert），勿改回 Static+PSRAM。
- * ``stack_bytes`` 与 Arduino ``xTaskCreatePinnedToCore`` 一致（字节）。
+ * 创建 pinned 任务。Arduino 3.x / IDF 5.5 下优先 Static+PSRAM 栈（TCB 仍在内部 SRAM）。
+ * ``stack_bytes`` 与 ESP-IDF ``xTaskCreate*`` 一致（字节）。
  */
 BaseType_t utils_task_create_pinned(TaskFunction_t fn, const char* name, uint32_t stack_bytes,
                                     void* arg, UBaseType_t prio, TaskHandle_t* out_handle,

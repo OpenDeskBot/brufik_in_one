@@ -783,7 +783,7 @@ bool task_setup_pb_runtime(void) {
   if (s_task) {
     return true;
   }
-  BaseType_t rc = xTaskCreatePinnedToCore(pb_runtime_task, "pb_runtime", kPbRuntimeStack, nullptr,
+  BaseType_t rc = utils_task_create_pinned(pb_runtime_task, "pb_runtime", kPbRuntimeStack, nullptr,
                                            kPbRuntimePrio, &s_task, APP_CPU_NUM);
   if (rc != pdPASS) {
     log_error("[PB_RUNTIME] task create failed rc=%d (internal free=%u)", (int)rc,

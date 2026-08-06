@@ -3,6 +3,7 @@
 #include "pb_model.h"
 
 #include "logger.h"
+#include "utils/utils.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -836,8 +837,14 @@ void task_setup_display() {
   }
   if (!s_task) {
     /* U8g2 drawUTF8(gb2312) 栈较深；10KB 会触发 canary。 */
-    xTaskCreatePinnedToCore(display_render_task, "display_render", 24 * 1024, nullptr, 2, &s_task,
-                            APP_CPU_NUM);
+    /* prio 贴近 speaker(7)：预取可达 1s，过低会被音频饿死导致嘴形滞后。 */
+    const BaseType_t rc =
+        utils_task_create_pinned(display_render_task, "display_render", 24 * 1024, nullptr, 6,
+                                 &s_task, APP_CPU_NUM);
+    if (rc != pdPASS) {
+      log_error("[DISPLAY] task create failed rc=%d", (int)rc);
+      s_task = nullptr;
+    }
   }
 }
 

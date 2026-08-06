@@ -6,8 +6,8 @@
 #include "utils/utils.h"
 #include "ws_transport.h"
 
+#include <ESP_I2S.h>
 #include <atomic>
-#include <driver/i2s.h>
 #include <esp_heap_caps.h>
 #include <math.h>
 #include <opus.h>
@@ -25,23 +25,8 @@ constexpr uint32_t kMicTaskStack = 28 * 1024; /* opus_encode alloca；complexity
 constexpr unsigned long kSegmentFlushMs =
     (unsigned long)DESKBOT_UPLINK_MAX_SEC * 1000UL; /* 默认 30s */
 
-i2s_config_t s_i2s_cfg = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM),
-    .sample_rate = SAMPLE_RATE,
-    .bits_per_sample = i2s_bits_per_sample_t(16),
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 8,
-    .dma_buf_len = static_cast<int>(kMicFrameSamples),
-};
-
-const i2s_pin_config_t s_i2s_pins = {
-    .bck_io_num = I2S_PIN_NO_CHANGE,
-    .ws_io_num = PDM_MIC_CLK,
-    .data_out_num = I2S_PIN_NO_CHANGE,
-    .data_in_num = PDM_MIC_DATA,
-};
+/* Arduino 3.x：legacy driver/i2s.h PDM 在 IDF5 上常读到 0 字节；改走 ESP_I2S。 */
+I2SClass s_i2s(I2S_NUM_0);
 
 TaskHandle_t s_task = nullptr;
 
@@ -75,28 +60,26 @@ void mic_task(void* arg);
 }  // namespace
 
 bool setup_mic() {
-  esp_err_t err = i2s_driver_install(I2S_NUM_0, &s_i2s_cfg, 0, NULL);
-  if (err != ESP_OK) {
-    log_error("[MIC] I2S0 PDM install failed err=%d", (int)err);
+  s_i2s.setPinsPdmRx((int8_t)PDM_MIC_CLK, (int8_t)PDM_MIC_DATA);
+  if (!s_i2s.begin(I2S_MODE_PDM_RX, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO)) {
+    log_error("[MIC] ESP_I2S PDM_RX begin failed CLK=%d DATA=%d", (int)PDM_MIC_CLK,
+              (int)PDM_MIC_DATA);
     return false;
   }
-  i2s_set_pin(I2S_NUM_0, &s_i2s_pins);
-#if SOC_I2S_SUPPORTS_PDM_RX
-  i2s_set_pdm_rx_down_sample(I2S_NUM_0, I2S_PDM_DSR_8S);
-#endif
-  i2s_set_clk(I2S_NUM_0, SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
+  s_i2s.setTimeout(100);
 
   int oerr = OPUS_OK;
   opus_encoder = opus_encoder_create(kOpusSr, kOpusChannels, OPUS_APPLICATION_VOIP, &oerr);
   if (oerr != OPUS_OK || opus_encoder == nullptr) {
     log_error("[MIC] Opus encoder create failed err=%d", oerr);
     opus_encoder = nullptr;
+    s_i2s.end();
     return false;
   }
   opus_encoder_ctl(opus_encoder, OPUS_SET_COMPLEXITY(0));
   opus_encoder_ctl(opus_encoder, OPUS_SET_BITRATE(24000));
 
-  log_info("[MIC] setup ok PDM CLK=%d DATA=%d %uHz opus_encoder ready", (int)PDM_MIC_CLK,
+  log_info("[MIC] setup ok ESP_I2S PDM CLK=%d DATA=%d %uHz opus_encoder ready", (int)PDM_MIC_CLK,
            (int)PDM_MIC_DATA, (unsigned)SAMPLE_RATE);
   return true;
 }
@@ -277,10 +260,18 @@ void mic_task(void* /*arg*/) {
   MicWsState prev_ws = state_ws.load(std::memory_order_relaxed);
 
   for (;;) {
-    size_t bytes_read = 0;
-    const esp_err_t err =
-        i2s_read(I2S_NUM_0, frame.pcm, kMicFrameSamples * sizeof(int16_t), &bytes_read,
-                 portMAX_DELAY);
+    size_t bytes_read =
+        s_i2s.readBytes(reinterpret_cast<char*>(frame.pcm), kMicFrameSamples * sizeof(int16_t));
+    if (bytes_read < kMicFrameSamples * sizeof(int16_t)) {
+      static uint32_t s_last_i2s_err_ms = 0;
+      const uint32_t now_err = millis();
+      if (s_last_i2s_err_ms == 0 || (uint32_t)(now_err - s_last_i2s_err_ms) >= 2000u) {
+        s_last_i2s_err_ms = now_err;
+        log_warn("[MIC] i2s_read short bytes=%u need=%u", (unsigned)bytes_read,
+                 (unsigned)(kMicFrameSamples * sizeof(int16_t)));
+      }
+      continue;
+    }
 
     const MicSpeakerState spk = state_speaker.load(std::memory_order_acquire);
     const MicWsState ws = state_ws.load(std::memory_order_acquire);
@@ -337,10 +328,6 @@ void mic_task(void* /*arg*/) {
       continue;
     }
     prev_spk = spk;
-
-    if (err != ESP_OK || bytes_read < kMicFrameSamples * sizeof(int16_t)) {
-      continue;
-    }
 
     /* speak_end && ws_ok：正常采上行。 */
     if (!was_open) {

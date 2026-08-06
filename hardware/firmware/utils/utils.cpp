@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "esp_heap_caps.h"
+#include "esp_mac.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -93,9 +94,9 @@ const char* get_device_id() {
   static char id[32];
   static bool initialized = false;
   if (!initialized) {
-    WiFi.mode(WIFI_STA);
-    uint8_t mac[6];
-    WiFi.macAddress(mac);
+    uint8_t mac[6] = {0};
+    /* Arduino 3.x：WiFi.macAddress() 在 STA 未 start 时返回全 0；efuse STA MAC 不依赖联网。 */
+    (void)esp_read_mac(mac, ESP_MAC_WIFI_STA);
     snprintf(id, sizeof(id), "deskbot_%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3],
              mac[4], mac[5]);
     initialized = true;
@@ -359,9 +360,30 @@ BaseType_t utils_task_create_pinned(TaskFunction_t fn, const char* name, uint32_
     return pdFAIL;
   }
   /*
-   * Arduino-ESP32 预编译 FreeRTOS 的 xPortcheckValidStackMem 拒绝 PSRAM 栈
-   * （即便 sdkconfig.defaults 写了 SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY，链接的仍是旧配置），
-   * Static+PSRAM 会直接 assert 重启，不能当 fallback 用。只走内部 RAM。
+   * Arduino 3.x / IDF 5.5：CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y，大栈放 PSRAM，
+   * 避免 mic/speaker/ws/display 吃光内部 SRAM 后 pb_runtime/camera 创建失败。
+   * TCB 仍须在内部 RAM。
    */
+  StackType_t* stack = static_cast<StackType_t*>(
+      heap_caps_malloc(stack_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  StaticTask_t* tcb = static_cast<StaticTask_t*>(
+      heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  if (stack && tcb) {
+    TaskHandle_t handle =
+        xTaskCreateStaticPinnedToCore(fn, name, stack_bytes, arg, prio, stack, tcb, core_id);
+    if (handle) {
+      if (out_handle) {
+        *out_handle = handle;
+      }
+      return pdPASS;
+    }
+  }
+  if (stack) {
+    heap_caps_free(stack);
+  }
+  if (tcb) {
+    heap_caps_free(tcb);
+  }
+  /* 回落动态创建（可能仍走内部堆）。 */
   return xTaskCreatePinnedToCore(fn, name, stack_bytes, arg, prio, out_handle, core_id);
 }
