@@ -1,7 +1,9 @@
 # Web 控制台 2C 化改造 · 设计文档
 
+> **状态：历史设计稿（2026-06-26）。** 文中「Flask + Jinja」与路径 `service/deskbot-server/` 已过时；实现栈为 **FastAPI**，代码在 `service/src/deskbot_server/`。请以 [service/README.md](../../../service/README.md) 与 [ARCHITECTURE.md](../../../service/docs/ARCHITECTURE.md) 为准。
+
 - 日期：2026-06-26
-- 范围：`service/deskbot-server` 的 Web 控制台（Flask + Jinja + 内联 Vue）
+- 范围：当时计划改造 Web 控制台（原稿写 Flask；现已 FastAPI）
 - 性质：交互层（前端 + 薄接口）重构，**不改动核心管线、协议、固件、调度、识别能力**
 
 ## 1. 背景与目标

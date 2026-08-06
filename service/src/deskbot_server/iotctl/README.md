@@ -47,8 +47,8 @@ iotctl/
 **运行时数据（含 token）不入库**，默认写入：
 
 ```
-service/data/miot-cli/          # 独立 CLI（auth bind 等）
-service/data/device/{id}/miot/  # deskbot 网站 / LLM 按设备绑定
+service/data/miot-cli/               # 独立 CLI（auth bind 等）
+service/data/{device_id}_{pin}/miot/ # deskbot 网站 / LLM 按设备绑定
 ```
 
 上述目录已在 `service/.gitignore` 中忽略，**禁止**提交 `auth.json` 等敏感文件。

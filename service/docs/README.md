@@ -1,6 +1,6 @@
 # 文档目录
 
-本仓库文档与当前实现对齐，入口为根目录 [README.md](../README.md)。
+本仓库文档与当前实现对齐，入口为根目录 [README.md](../README.md)。固件工具链见 [../../hardware/README.md](../../hardware/README.md)（Arduino-ESP32 3.3.9 / IDF 5.5.4 / pioarduino）。
 
 ## 协议与设备
 

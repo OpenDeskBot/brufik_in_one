@@ -1,5 +1,7 @@
 # Web 控制台 2C 化改造 Implementation Plan
 
+> **状态：历史实施计划（2026-06-26）。** 文中 Flask / `service/deskbot-server/` 路径已过时；当前为 FastAPI + `service/src/deskbot_server/`。保留仅供对照设计意图。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不改动核心管线/协议/固件的前提下，为 deskbot-server 增加一套消费级（2C）Web 外壳，把「表情」「声音」做成两个核心可玩页面，并把记忆/提醒/人/设备重新包装、把开发者功能收进「高级」。

@@ -38,6 +38,8 @@ static constexpr uint32_t kFbNullLogIntervalMs = 30000u;
 static constexpr uint8_t kJpegQuality = 18;
 /** WiFi 后重 init 时丢掉前几帧，让 OV2640 AWB/AGC 收敛（否则常年偏绿）。 */
 static constexpr int kAwakenDiscardFrames = 12;
+/** warmup 连续 fb_get 失败次数：JPEG 模式会阻塞数秒/帧，不可空转满 12 次。 */
+static constexpr int kAwakenMaxNulls = 2;
 
 static bool s_camera_ok = false;
 static bool s_hw_inited = false;
@@ -102,22 +104,80 @@ static void camera_tune_sensor(void) {
   }
 }
 
-static void camera_discard_warmup_frames(void) {
+/** @return 实际丢掉的帧数；连续 null 过多则提前退出（避免 JPEG 路径卡死数十秒）。 */
+static int camera_discard_warmup_frames(void) {
+  int got = 0;
+  int nulls = 0;
   for (int i = 0; i < kAwakenDiscardFrames; ++i) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
+      nulls += 1;
+      if (nulls >= kAwakenMaxNulls) {
+        log_warn("[CAMERA] warmup abort after %d null fb_get (got=%d)", nulls, got);
+        return got;
+      }
       delay(30);
       continue;
     }
+    nulls = 0;
+    got += 1;
     esp_camera_fb_return(fb);
   }
-  log_info("[CAMERA] discarded %d warmup frames for AWB", kAwakenDiscardFrames);
+  log_info("[CAMERA] discarded %d warmup frames for AWB", got);
+  return got;
 }
 
 /**
- * 优先 PIXFORMAT_JPEG；本机常不可用。
- * 其次 YUV422 + frame2jpg（避开 RGB565 字节序踩坑）。
- * 再回落 RGB565（默认 BE）。
+ * RGB565 采样代价：越小越好。
+ * 惩罚过绿，以及 R≪B（错 endian 常见青/青色偏）。
+ */
+static float camera_rgb565_badness(const uint8_t* buf, size_t len, bool be) {
+  if (!buf || len < 4) {
+    return 1e9f;
+  }
+  uint64_t sum_r = 0;
+  uint64_t sum_g = 0;
+  uint64_t sum_b = 0;
+  uint32_t green_dom = 0;
+  uint32_t samples = 0;
+  for (size_t i = 0; i + 1 < len; i += 32) {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    if (be) {
+      r = buf[i] & 0xF8;
+      g = (uint8_t)(((buf[i] & 0x07) << 5) | ((buf[i + 1] & 0xE0) >> 3));
+      b = (uint8_t)((buf[i + 1] & 0x1F) << 3);
+    } else {
+      r = buf[i + 1] & 0xF8;
+      g = (uint8_t)(((buf[i + 1] & 0x07) << 5) | ((buf[i] & 0xE0) >> 3));
+      b = (uint8_t)((buf[i] & 0x1F) << 3);
+    }
+    sum_r += r;
+    sum_g += g;
+    sum_b += b;
+    if ((int)g > (int)r + 20 && (int)g > (int)b + 20) {
+      green_dom += 1;
+    }
+    samples += 1;
+  }
+  if (samples == 0) {
+    return 1e9f;
+  }
+  const float inv = 1.0f / (float)samples;
+  const float mr = (float)sum_r * inv;
+  const float mg = (float)sum_g * inv;
+  const float mb = (float)sum_b * inv;
+  const float green_ratio = (float)green_dom * inv;
+  /* R/B 失衡（错字节序常把肤色打成青色）。 */
+  const float rb_skew = (mb > mr + 8.0f) ? (mb - mr) / 255.0f : 0.0f;
+  return green_ratio * 2.0f + rb_skew + (mg > mr + 25.0f && mg > mb + 25.0f ? 0.5f : 0.0f);
+}
+
+/**
+ * 本机（XIAO S3 Sense / OV2640）硬件 JPEG 的 fb_get 会长时间超时，
+ * 不可再优先试 JPEG（warmup 会卡 ~分钟级，看起来像初始化失败）。
+ * 直接 RGB565 + frame2jpg；勿用 YUV422（YUYV 假设不对 → 绿色马赛克）。
  */
 static bool camera_init_hw(void) {
   if (s_hw_inited) {
@@ -136,7 +196,10 @@ static bool camera_init_hw(void) {
              s->id.PID == OV2640_PID ? " OV2640" : (s->id.PID == OV3660_PID ? " OV3660" : ""),
              mode_tag);
     camera_tune_sensor();
-    camera_discard_warmup_frames();
+    if (camera_discard_warmup_frames() <= 0) {
+      log_error("[CAMERA] warmup got no frames (%s)", mode_tag);
+      return false;
+    }
 
     camera_fb_t* probe = esp_camera_fb_get();
     if (!probe) {
@@ -146,14 +209,13 @@ static bool camera_init_hw(void) {
     log_info("[CAMERA] probe ok fmt=%u len=%uB %ux%u", (unsigned)probe->format,
              (unsigned)probe->len, (unsigned)probe->width, (unsigned)probe->height);
 
-    if (probe->format == PIXFORMAT_JPEG) {
-      if (probe->len == 0 || probe->len > kMaxJpegBin) {
-        log_error("[CAMERA] probe jpeg bad len=%u", (unsigned)probe->len);
-        esp_camera_fb_return(probe);
-        return false;
-      }
-      esp_camera_fb_return(probe);
-      return true;
+    if (probe->format == PIXFORMAT_RGB565) {
+      const float score_be = camera_rgb565_badness(probe->buf, probe->len, true);
+      const float score_le = camera_rgb565_badness(probe->buf, probe->len, false);
+      const bool use_be = score_be <= score_le;
+      jpgSetRgb565BE(use_be);
+      log_info("[CAMERA] rgb565 endian=%s score be=%.3f le=%.3f", use_be ? "BE" : "LE",
+               (double)score_be, (double)score_le);
     }
 
     uint8_t* jpg = nullptr;
@@ -172,38 +234,21 @@ static bool camera_init_hw(void) {
     return true;
   };
 
-  auto try_format = [&](pixformat_t fmt, const char* tag) -> bool {
-    camera_config_t config = {};
-    camera_fill_pins(config);
-    config.pixel_format = fmt;
-    const esp_err_t err = esp_camera_init(&config);
-    if (err != ESP_OK) {
-      log_warn("[CAMERA] esp_camera_init %s failed 0x%x", tag, err);
-      return false;
-    }
-    s_hw_inited = true;
-    if (probe_after_init(tag)) {
-      return true;
-    }
+  camera_config_t config = {};
+  camera_fill_pins(config);
+  config.pixel_format = PIXFORMAT_RGB565;
+  const esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    log_error("[CAMERA] esp_camera_init RGB565 failed 0x%x", err);
+    return false;
+  }
+  s_hw_inited = true;
+  if (!probe_after_init("RGB565->JPEG")) {
     esp_camera_deinit();
     s_hw_inited = false;
-    delay(30);
     return false;
-  };
-
-  if (try_format(PIXFORMAT_JPEG, "JPEG")) {
-    return true;
   }
-  log_warn("[CAMERA] JPEG path failed, try YUV422");
-  if (try_format(PIXFORMAT_YUV422, "YUV422->JPEG")) {
-    return true;
-  }
-  log_warn("[CAMERA] YUV422 path failed, fallback RGB565");
-  if (try_format(PIXFORMAT_RGB565, "RGB565->JPEG")) {
-    return true;
-  }
-  log_error("[CAMERA] all pixel formats failed");
-  return false;
+  return true;
 }
 
 static void camera_task(void* /*arg*/) {

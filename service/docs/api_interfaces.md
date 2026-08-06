@@ -1,8 +1,8 @@
 # 接口清单
 
-更新时间：2026-07-01
+更新时间：2026-08-06
 
-本文按当前代码实现整理所有对外接口，覆盖 Web 控制台、deskbot 设备服务、paddlespeech TTS 侧车。重点列 HTTP / WebSocket 路由、鉴权、主要参数与返回用途；ESP32 pb 字段细节见 [esp32_pb_protocol.md](./esp32_pb_protocol.md)。
+本文按当前代码实现整理所有对外接口，覆盖 Web 控制台、deskbot 设备服务、paddlespeech TTS 侧车。重点列 HTTP / WebSocket 路由、鉴权、主要参数与返回用途；ESP32 pb 字段细节见 [esp32_pb_protocol.md](./esp32_pb_protocol.md)。固件工具链见 [../../hardware/README.md](../../hardware/README.md)。
 
 ## 服务与端口
 

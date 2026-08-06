@@ -32,28 +32,27 @@ ScheduledTaskScheduler（60s 轮询）
 
 | 目录 / 模块 | 职责 |
 |-------------|------|
-| `ws/` | WebSocket 路由、`AsrChatHub`、pb 下行队列、设备 pin / Web API Key 门禁 |
-| `web/` | FastAPI 控制台（`app_bp` 设备/任务/记忆/人脸，`debug_bp` 调试） |
-| `auth/` | 会话用户包装、API Key 网关适配（业务见 `UserService`） |
-| `db/` | SQLAlchemy 模型（User、ApiKey、Device、ScheduledTask、UsageDaily） |
-| `service/user_service.py` | 注册/登录、设备绑定解绑、用户与设备列表 |
-| `service/live_service.py` | 在线设备 live 状态（wander/sleep/gaze），对话时暂停 |
-| `service/application/chat_flow.py` | 单轮对话编排（LLM + TTS + pb） |
-| `service/application/llm_tool_loop.py` | LLM 多轮 tool-call |
-| `service/application/llm_tool_runner.py` | 执行 `tools` 指令 |
-| `service/application/scheduled_task_scheduler.py` | 到期任务调度 |
-| `scheduled_task_service.py` | cron CRUD、claim / finish |
-| `session_store.py` | `data/device/{id}/session/*.json` |
-| `utils/device_data.py` | 按设备路径解析配置模板 |
-| `memory_store.py` | 长期记忆（全局或设备级 JSON） |
-| `pb/` | 表情、口型、舵机、wire 组包 |
-| `vision/` | 人脸检测、embedding、跟随 |
+| `src/deskbot_server/ws/` | WebSocket 路由、`AsrChatHub`、pb 下行队列、设备 pin / Web API Key 门禁 |
+| `src/deskbot_server/web/` | FastAPI 控制台（`app_bp` 设备/任务/记忆/人脸，`debug_bp` 调试） |
+| `src/deskbot_server/controller/` | HTTP/WS 路由与鉴权装饰器 |
+| `src/deskbot_server/db/` | SQLAlchemy 模型（User、ApiKey、Device、ScheduledTask、UsageDaily） |
+| `src/deskbot_server/service/user_service.py` | 注册/登录、设备绑定解绑、用户与设备列表 |
+| `src/deskbot_server/service/live_service.py` | 在线设备 live 状态（wander/sleep/gaze），对话时暂停 |
+| `src/deskbot_server/service/application/chat_flow.py` | 单轮对话编排（LLM + TTS + pb） |
+| `src/deskbot_server/service/application/llm_tool_loop.py` | LLM 多轮 tool-call |
+| `src/deskbot_server/service/application/llm_tool_runner.py` | 执行 `tools` 指令 |
+| `src/deskbot_server/service/application/scheduled_task_scheduler.py` | 到期任务调度 |
+| `src/deskbot_server/dao/session_store.py` | `data/{device_id}_{pin}/session/*.json` |
+| `src/deskbot_server/utils/device_data.py` | 按设备+PIN 解析数据目录与配置模板 |
+| `src/deskbot_server/pb/` | 表情、口型、舵机、wire 组包 |
+| `src/deskbot_server/vision/` | 人脸检测、embedding、跟随 |
+| `src/deskbot_server/infrastructure/` | ASR / LLM / TTS 适配实现 |
 
 ## WebSocket
 
 | 路径 | 生产必需 |
 |------|----------|
-| `/asr_chat?device_id=&pin_code=` | 是（设备 pin） |
+| `/asr_chat?device_id=&pin_code=` | 是（`device_id` 必须；合法 pin 强烈建议） |
 | `/camera_view`、`/device_pipeline` | 否（调试；Web 侧 API Key / debug token） |
 
 单进程 asyncio；`ChatService`（含 FunASR）全进程共享。重 CPU 走 `asyncio.to_thread`；`config.yaml` 的 `max_concurrent_asr` / `max_concurrent_face_infer` 限流。

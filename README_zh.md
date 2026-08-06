@@ -1,6 +1,6 @@
 # Brufik 一体化仓库
 
-本仓库合并了 **Brufik 硬件/固件** 与 **opendesk-service 语音后台**。
+本仓库合并了 **Brufik 硬件/固件** 与 **deskbot-server 语音后台**。
 
 | 目录 | 说明 |
 |------|------|
@@ -19,15 +19,17 @@ chmod +x start.sh
 ./start.sh
 ```
 
-控制台：`http://<本机IP>:5050/` · 设备 WebSocket：`ws://<本机IP>:9000/asr_chat`
+控制台：`http://<本机IP>:5050/` · 设备 WebSocket：`ws://<本机IP>:9000/asr_chat?device_id=<id>&pin_code=<4位PIN>`
 
 详见 [`service/README.md`](service/README.md)。
 
 ### 2. 烧录固件（hardware）
 
+PlatformIO 需 **Python ≥3.10**（pioarduino / Arduino-ESP32 **3.3.9** + ESP-IDF **5.5.4**）。
+
 ```bash
 cd hardware
-# 编辑 firmware/deskbot_config.h — WiFi、WS 地址、API Key
+# 编辑 firmware/deskbot_config.h — WiFi、WS 地址（设备侧用 pin_code，不用 API Key）
 ./flash_rom.sh all
 ```
 

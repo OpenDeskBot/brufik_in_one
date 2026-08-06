@@ -14,7 +14,7 @@
 
 | 通道 | 路径 | 鉴权 |
 |------|------|------|
-| 生产主链路 | `/asr_chat` | **`device_id` + `pin_code`（必须）**；含语音与 `camera_frame` |
+| 生产主链路 | `/asr_chat` | **`device_id` 必须**；合法 **`pin_code` 强烈建议**（缺 PIN **不拒连**，合法 PIN 才写入 online pin）；含语音与 `camera_frame` |
 | 摄像头预览 | `/camera_view` | Web：API Key 或 debug token |
 | 流水线订阅 | `/device_pipeline` | 订阅侧 Web 鉴权；设备侧 pin |
 | HTTP API | `/api/*`（非本机） | API Key |

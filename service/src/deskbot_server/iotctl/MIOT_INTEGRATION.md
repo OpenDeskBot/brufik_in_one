@@ -38,7 +38,7 @@
 设备级数据目录：
 
 ```
-data/device/{device_id}/miot/
+data/{device_id}_{pin}/miot/
 ├── auth.json      # access_token / refresh_token / expires_ts
 ├── meta.json      # 上次续期、有效期、下次续期、昵称、同步时间
 ├── config.json    # uuid、cloud_server、redirect_uri
@@ -84,9 +84,9 @@ sequenceDiagram
   actor User as 用户
   participant Browser as 浏览器
   participant Page as /my/miot 页面
-  participant API as Flask /app/api/miot/*
+  participant API as FastAPI /app/api/miot/*
   participant Svc as miot_service<br/>MiotSession
-  participant Disk as data/device/{id}/miot/
+  participant Disk as data/{id}_{pin}/miot/
   participant Acc as account.xiaomi.com
   participant Cloud as mico.api.mijia.tech
 

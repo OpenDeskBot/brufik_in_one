@@ -4,30 +4,44 @@
 
 **本仓库中的硬件设计部分遵循 [CERN-OHL-S-2.0](mechanical/LICENSE)，软件部分遵循 [GPL-3.0](firmware/LICENSE)。**
 
-**Brufik** 是一款开源桌面机器人：Seeed XIAO ESP32S3 Sense + 屏 + 舵机 + 麦 + 喇叭。语音与画面走自建后台 [open-deskbot-service](https://github.com/OpenDeskBot/open-deskbot-service)。
+**Brufik** 是一款开源桌面机器人：Seeed XIAO ESP32S3 Sense + 屏 + 舵机 + 麦 + 喇叭。语音与画面走本 monorepo 后台 [`../service/`](../service/)。
 
 ![Brufik 桌面机器人 — 组装完成实物](mechanical/poster.jpg)
 
 ---
 
+## 工具链
+
+| 项 | 说明 |
+|------|------|
+| 板型 | Seeed XIAO ESP32S3 Sense |
+| Platform | [pioarduino](https://github.com/pioarduino/platform-espressif32) **55.03.39**（**不要**用官方 PlatformIO `espressif32` 的 Arduino 2.0.17 / IDF 4.4.7） |
+| 框架 | Arduino-ESP32 **3.3.9** + ESP-IDF **5.5.4** |
+| 宿主机 Python | **≥3.10**（推荐 `cd hardware && python3.11 -m venv .venv && .venv/bin/pip install platformio`） |
+| 烧录 | [`./flash_rom.sh`](flash_rom.sh)（优先 `.venv/bin/pio`；串口含 `/dev/tty.usbmodem*`） |
+
+音频走 Arduino **`ESP_I2S`**（PDM 收音 + STD 功放）。相机优先硬件 JPEG，否则 RGB565 + `frame2jpg`（init 后丢弃若干帧做 AWB）。`device_id` 由 `esp_read_mac` 生成（`deskbot_<mac>`）。
+
+---
+
 ## 一、开箱即用
 
-1. 路由器或手机热点设为 **`deskbot_wifi` / `hello2026`**（与固件默认一致，见 [`firmware/deskbot_config.h`](firmware/deskbot_config.h)）。
-2. 给机器人上电，自动连上该 WiFi 并访问语音后台后即可使用（对话、表情、头部动作）。
-3. 若需改用家里 WiFi：给小歪上电后按屏幕提示连接热点 **`Deskbot_Rom`**，浏览器打开屏幕上的地址（通常是 **`http://192.168.4.1/`**），按 onboarding 页面选择家里的 WiFi 并保存；也可烧录前改 `deskbot_config.h` 里的 `WIFI_DEFAULT_*` 和 `DESKBOT_WS_*`。
+1. 编辑 [`firmware/deskbot_config.h`](firmware/deskbot_config.h)：把 `WIFI_DEFAULT_*` 改成你家路由，或把热点改成与宏一致；并设置 `DESKBOT_WS_HOST` / `DESKBOT_WS_PORT`。
+2. 上电后连 WiFi，并连接 `ws://…/asr_chat?device_id=…&pin_code=…`（开机屏会显示 PIN；**设备链路不用 API Key**）。
+3. 改家里 WiFi：上电后连接开放热点，SSID 为 **`device_id`**（如 `deskbot_e83dc1faea30`），浏览器打开屏幕地址（通常 **`http://192.168.4.1/`**）按 onboarding 保存。
 
 ---
 
 ## 二、本地开发者
 
-**需要：** USB、[PlatformIO](https://platformio.org/)，串口 `dialout` 权限。
-
-烧录前编辑 [`firmware/deskbot_config.h`](firmware/deskbot_config.h)：`WIFI_DEFAULT_*`、`DESKBOT_WS_HOST`、`DESKBOT_WS_PORT`。
+**需要：** USB、PlatformIO（Python ≥3.10）、串口权限（Linux `dialout`）。
 
 ```bash
-git clone https://github.com/OpenDeskBot/open-deskbot-hardware.git
-cd open-deskbot-hardware
-./flash_rom.sh all
+# 在 monorepo 的 hardware/ 目录
+./flash_rom.sh all          # 编译 + 烧录 + 监视
+./flash_rom.sh build
+./flash_rom.sh upload [端口]
+./flash_rom.sh log [端口]
 ```
 
 | 命令 | 说明 |
@@ -37,9 +51,9 @@ cd open-deskbot-hardware
 | `./flash_rom.sh log [端口]` | 串口监视 |
 | `./flash_rom.sh all [端口]` | 烧录 + 监视 |
 
-后台部署见 [open-deskbot-service](https://github.com/OpenDeskBot/open-deskbot-service)。固件 WebSocket：**`/asr_chat`**。
+后台见 [`../service/`](../service/)。固件 WebSocket：**`/asr_chat`**。摄像头 JPEG 经同一 WS 上行（`camera_frame`）；STA 正常运行后**没有**常驻本机摄像头网页（仅配网 AP 门户）。服务端调试预览：`/camera_view`。
 
-调试：连上 WiFi 后浏览器可开 `http://<设备IP>/` 看摄像头（可选）。
+Arduino 3.x 的 WiFi write timeout 补丁优先改 `NetworkClient.cpp`（见 `scripts/`）。
 
 ---
 
@@ -73,13 +87,13 @@ cd open-deskbot-hardware
 | 外设 | 信号 | 接 XIAO 焊盘 | 备注 |
 |------|------|--------------|------|
 | **LCD** | MOSI / SCK / CS / DC | **D10 / D8 / D1 / D2** | SPI |
-| **舵机 左右 (X)** | PWM | **D7** | 小 2g 舵机 |
-| **舵机 上下 (Y)** | PWM | **D6** | 大舵机 |
+| **舵机 左右 (X)** | PWM | **D9**（GPIO8） | 小 2g；避开 D6/D7（UART0） |
+| **舵机 上下 (Y)** | PWM | **D3**（GPIO4） | 大舵机 |
 | **MAX98357** | DIN / BCLK / LRC | **D0 / D5 / D4** | I2S → 2011 喇叭 |
 | **麦克风** | PDM | **板载**（ESP32S3 Sense 主板上） | 无需外接 INMP441 |
 | **舵机电源** | 5V / GND | 独立 5V≥1A | 与逻辑共地 |
 
-引脚宏定义见 [`firmware/deskbot_config.h`](firmware/deskbot_config.h) 硬件段。组装完成后按第二节烧录、配网。
+引脚宏见 [`firmware/deskbot_config.h`](firmware/deskbot_config.h)。旧版 Board1 转接板网表可能把舵机接到 D6/D7；**当前固件为 D9/D3**，详见 [`mechanical/pcb/Board1/README_zh.md`](mechanical/pcb/Board1/README_zh.md)。
 
 ---
 

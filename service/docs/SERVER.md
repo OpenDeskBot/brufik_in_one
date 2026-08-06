@@ -47,7 +47,7 @@ cp .env.example .env   # 必填 LLM_API_KEY
 
 | 路径 | 说明 |
 |------|------|
-| `/asr_chat?device_id=&pin_code=` | **生产设备**：语音 + 可选 `camera_frame`；pb 下行（**须 pin**） |
+| `/asr_chat?device_id=&pin_code=` | **生产设备**：语音 + 可选 `camera_frame`；pb 下行（`device_id` 必须；**强烈建议**带合法 pin，缺 pin 不拒连） |
 | `/camera_view?device_id=&api_key=` | 调试：JPEG 预览（Web API Key / debug token） |
 | `/device_pipeline?role=subscriber&device=&api_key=` | 调试：流水线事件 |
 
@@ -81,17 +81,17 @@ cp .env.example .env   # 必填 LLM_API_KEY
 | `memory_add` / `memory_delete` | 长期记忆 |
 | `session` | 查询对话 session |
 | `webfetch` / `websearch` | 联网抓取 / 搜索 |
-| `read` / `write` | 读写 `data/device/{device_id}/tmp/` |
+| `read` / `write` | 读写 `data/{device_id}_{pin}/tmp/` |
 
 定时任务由后台调度器每分钟轮询，到期后复用创建时的 `session_id` 作为 LLM 上下文并播报提醒。
 
-人设与工具说明：`data/llm_system.txt`（全局模板）及 `data/device/{device_id}/llm_system.txt`（设备级，优先）。
+人设与工具说明：`data/llm_system.txt`（全局模板）及 `data/{device_id}_{pin}/llm_system.txt`（设备级，优先）。
 
 ---
 
-## 设备数据（按 `device_id` 隔离）
+## 设备数据（按 `device_id` + PIN 隔离）
 
-运行时数据在 `data/device/{device_id}/`（**不入 Git**），首次使用设备时从 `data/` 复制模板：
+运行时数据在 `data/{device_id}_{pin}/`（**不入 Git**），首次使用设备时从 `data/` 复制模板：
 
 | 文件 / 目录 | 说明 |
 |-------------|------|

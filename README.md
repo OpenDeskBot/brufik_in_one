@@ -1,6 +1,6 @@
 # Brufik in One
 
-Monorepo combining **Brufik hardware/firmware** and **opendesk-service backend**.
+Monorepo combining **Brufik hardware/firmware** and **deskbot-server backend**.
 
 | Directory | Description |
 |-----------|-------------|
@@ -19,15 +19,17 @@ chmod +x start.sh
 ./start.sh
 ```
 
-Web console: `http://<host>:5050/` · Device WS: `ws://<host>:9000/asr_chat`
+Web console: `http://<host>:5050/` · Device WS: `ws://<host>:9000/asr_chat?device_id=<id>&pin_code=<4-digit>`
 
 See [`service/README.md`](service/README.md).
 
 ### 2. Firmware (hardware)
 
+Requires **Python ≥3.10** for PlatformIO (pioarduino / Arduino-ESP32 **3.3.9** + ESP-IDF **5.5.4**).
+
 ```bash
 cd hardware
-# Edit firmware/deskbot_config.h — WiFi + WS host + API key
+# Edit firmware/deskbot_config.h — WiFi + WS host/port (device uses pin_code, not API key)
 ./flash_rom.sh all
 ```
 
