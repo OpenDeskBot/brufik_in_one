@@ -1,60 +1,77 @@
 #ifndef WS_TRANSPORT_H
 #define WS_TRANSPORT_H
 
+#include <Arduino.h>
 #include <WebSocketsClient.h>
 #include <stddef.h>
 #include <stdint.h>
 
-/** TX 类型：统一 FIFO；全部经 /asr_chat 发送。 */
+#include "utils/utils.h"
+
+/* 单帧 WS 入站上限：platformio.ini WEBSOCKETS_MAX_DATA_SIZE（默认 1MiB）；须大于 PB PCM chunk。 */
+#if !defined(WEBSOCKETS_MAX_DATA_SIZE) || WEBSOCKETS_MAX_DATA_SIZE < (200 * 1024)
+#error WEBSOCKETS_MAX_DATA_SIZE must be >= 200KiB; set -DWEBSOCKETS_MAX_DATA_SIZE in platformio.ini
+#endif
+
+/** TX 类型：state / audio / camera 经 FIFO 发送。 */
 enum class WsTxType : uint8_t {
-  kState = 0,  // pb_ack / boot_connect / audio_cancel
-  kAudio = 1,  // Opus batch / flush
-  kImage = 2,  // camera_frame + JPEG
+  kState = 0,   // pb_ack / boot_connect / audio_cancel
+  kAudio = 1,   // Opus batch / flush
+  kCamera = 2,  // JPEG frame (已打包 u32be+json+bin)
+};
+
+/** setup 时从 NVS 解析的服务器地址。 */
+extern WsProto server_ws_proto;
+/** setup 时拼好的 begin 路径：``[path_prefix]/asr_chat?device_id=&pin_code=``。 */
+extern String server_ws_path;
+
+/** WS 链路状态：0=disconnected，1=connecting，2=connected。 */
+enum class WsState : int {
+  kDisconnected = 0,
+  kConnecting = 1,
+  kConnected = 2,
 };
 
 /**
- * 初始化：创建 RX/TX 队列与 owner mutex。
- * asr socket 由 asr_ws 自行登记。
- * CONNECTED/DISCONNECTED/ready 在 drain_rx 处理；业务打包 BIN 移交 pb_runtime 帧队列。
+ * 初始化：解析 server_ws_proto / server_ws_path，创建 TX 队列、绑定 WS 回调。
  * 须在 setup_pb_runtime 之后调用。
  */
 bool setup_ws_transport(void);
 
-/**
- * 创建 FreeRTOS 任务：每轮 asr 重连 → 1×RX → 1×TX → 条件抓帧入队。
- * WS loop/send / 相机抓帧仅此任务；其它模块只 enqueue。
- */
+/** 创建 FreeRTOS 任务：每轮 ensure_connected → loop → drain_tx。 */
 bool task_setup_ws_transport(void);
 
-void ws_transport_set_asr_client(WebSocketsClient* asr_ws);
+/** 当前链路状态。 */
+WsState ws_transport_state(void);
 
-/** asr_ws onEvent → RX 队列（拷贝 payload）。 */
-void ws_transport_enqueue_rx(WStype_t type, uint8_t* payload, size_t length);
+/** 是否已 WS connected。 */
+bool ws_transport_ok(void);
 
-/** 递增 session：旧 RX 在 drain_rx 时丢弃。 */
+/** 是否已收到服务端 ready（可业务上行）。 */
+bool ws_transport_ready(void);
+
+/** 未连时 disconnect→begin；已连则直接返回。 */
+void ws_transport_ensure_connected(void);
+
+/** 非 connected 返回 false；否则 sendBIN，失败则置 disconnected。 */
+bool ws_transport_send(const uint8_t* data, size_t len);
+
+/** WiFi 断开 / 恢复：打断或允许重连。 */
+void ws_transport_on_link_down(const char* why = nullptr);
+void ws_transport_on_link_up(void);
+
+/** 递增 session，并通知 PB 链路断开。 */
 void ws_transport_new_session(void);
 
-/** 处理 1 条 RX / 1 条 TX；仅 ws_transport_task 调用。 */
-bool ws_transport_drain_rx(void);
+/** 尽量发完 TX 队列；仅 ws_transport_task 调用。 */
 bool ws_transport_drain_tx(void);
 
 bool ws_transport_enqueue_state(const char* json);
-bool ws_transport_enqueue_text(const char* json);  // 兼容旧名 → enqueue_state
 bool ws_transport_enqueue_audio(const char* json, const uint8_t* bin, size_t bin_len);
-
 /**
- * image：json 拷贝；bin 借用。发完/丢弃时调 releaser。
- * 入队成功后调用方不得再使用 bin。
+ * 入队已打包的 camera 帧（u32be+json+bin）。
+ * 接管 packed 所有权：成功由 TX 队列释放；失败立即 free。
  */
-bool ws_transport_enqueue_image_borrow(const char* json, uint8_t* bin, size_t bin_len,
-                                       void (*releaser)(void* ctx), void* release_ctx);
-
-void ws_transport_discard_tx_queue(void);
-void ws_transport_discard_audio_tx(void);
-/** 清 /asr_chat TX（audio + state + image）。 */
-void ws_transport_discard_asr_tx(void);
-
-/** TX 队列空位数（mic 背压）。 */
-uint32_t ws_transport_tx_slots_free(void);
+bool ws_transport_enqueue_camera(uint8_t* packed, size_t packed_len);
 
 #endif

@@ -623,6 +623,8 @@ static bool pb_play_layers_interpolated(const StoredLayer* pbg, const StoredLaye
   }
 
   const uint32_t t0 = millis();
+  uint32_t pushes = 0;
+  uint32_t first_push_ms = 0;
   while (true) {
     if (poll_cancel()) {
       return false;
@@ -635,10 +637,16 @@ static bool pb_play_layers_interpolated(const StoredLayer* pbg, const StoredLaye
     if (t > 1.f) {
       t = 1.f;
     }
+    const uint32_t t_push0 = millis();
     (*s_draw_gfx).fillScreen(bg_rgb565);
     draw_stored_interpolated(pbg, pn, pm, pl, pr, px, cbg, cn, cm, cel, cer, cex, t);
     display_draw_mic_indicator();
     pb_canvas_push();
+    const uint32_t push_ms = millis() - t_push0;
+    pushes++;
+    if (pushes == 1) {
+      first_push_ms = push_ms;
+    }
 
     const uint32_t after_draw = millis();
     uint32_t remain = (t0 + budget) - after_draw;
@@ -664,6 +672,9 @@ static bool pb_play_layers_interpolated(const StoredLayer* pbg, const StoredLaye
     }
     vTaskDelay(pdMS_TO_TICKS(1));
   }
+  const uint32_t wall = millis() - t0;
+  log_warn("[PB_LAT] display_seg budget=%u wall=%u pushes=%u first_push_ms=%u", (unsigned)budget,
+           (unsigned)wall, (unsigned)pushes, (unsigned)first_push_ms);
   return true;
 }
 
@@ -671,6 +682,13 @@ static void pb_render_anim_frames_timed(const pb_anim_frame* frames, size_t fram
   if (!s_layer_pool || !frames || frame_count == 0) {
     return;
   }
+  uint32_t budget_sum = 0;
+  for (size_t i = 0; i < frame_count; ++i) {
+    budget_sum += frames[i].ms > 0 ? (uint32_t)frames[i].ms : 1u;
+  }
+  const uint32_t job_t0 = millis();
+  log_warn("[PB_LAT] display_job_begin frames=%u budget_sum=%u", (unsigned)frame_count,
+           (unsigned)budget_sum);
   size_t seg_idx = 0;
   for (size_t i = 0; i < frame_count; ++i) {
     if (poll_cancel()) {
@@ -707,6 +725,8 @@ static void pb_render_anim_frames_timed(const pb_anim_frame* frames, size_t fram
     pb_commit_prev(cbg, cn, cm, cel, cer, cex);
     seg_idx++;
   }
+  log_warn("[PB_LAT] display_job_end frames=%u budget_sum=%u wall=%u", (unsigned)frame_count,
+           (unsigned)budget_sum, (unsigned)(millis() - job_t0));
 }
 
 struct DisplayRequest {
@@ -822,6 +842,11 @@ void task_setup_display() {
 }
 
 static void display_enqueue_request(DisplayRequest& req, bool wait_done) {
+  if (!s_queue) {
+    log_warn("[DISPLAY] queue not ready; free submit");
+    free_display_request(req);
+    return;
+  }
   if (wait_done) {
     xSemaphoreTake(s_caller_lock, portMAX_DELAY);
     xSemaphoreTake(s_done_sem, 0);
@@ -861,6 +886,9 @@ void display_render_submit_pb_anim_frames_owned(pb_anim_frame* frames, size_t fr
 }
 
 void display_abort() {
+  if (!s_queue) {
+    return;
+  }
   DisplayRequest req{};
   req.type = DISPLAY_JOB_CANCEL;
   s_need_cancel.store(true, std::memory_order_release);
@@ -870,5 +898,8 @@ void display_abort() {
 void display_render_reset() { display_abort(); }
 
 unsigned display_render_input_queue_depth(void) {
+  if (!s_queue) {
+    return 0;
+  }
   return (unsigned)uxQueueMessagesWaiting(s_queue);
 }

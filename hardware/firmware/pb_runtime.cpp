@@ -7,6 +7,7 @@
 #include "mic.h"
 #include "head.h"
 #include "logger.h"
+#include "speaker.h"
 #include "utils/utils.h"
 #include "ws_transport.h"
 
@@ -90,7 +91,8 @@ void PbRuntime::enqueueAck(const char* req, uint32_t idx, int32_t audio_buf_ms, 
     log_warn("[PB] pb_ack serialize failed");
     return;
   }
-  (void)ws_transport_enqueue_state(msg.c_str());
+  const bool ok = ws_transport_enqueue_state(msg.c_str());
+  log_warn("[PB_LAT] ack_enqueue req=%s idx=%u ok=%d", req ? req : "?", (unsigned)idx, (int)ok);
 }
 
 void PbRuntime::flushPendingPbAck() {
@@ -458,15 +460,27 @@ void dispatch_credit_decay(uint32_t now) {
   s_credit_wall_ms = now;
 }
 
-bool executors_accepting() {
+bool executors_accepting(const char** blocked_by = nullptr) {
   /* xQueue 通常被执行器抽空；用 ring+queue 合计深度做回压。 */
-  if (speaker_input_queue_depth() >= (unsigned)(SPEAKER_QUEUE_DEPTH - 1)) {
+  const unsigned spk = speaker_input_queue_depth();
+  const unsigned head = head_motor_input_queue_depth();
+  const unsigned disp = display_render_input_queue_depth();
+  if (spk >= (unsigned)(SPEAKER_QUEUE_DEPTH - 1)) {
+    if (blocked_by) {
+      *blocked_by = "speaker";
+    }
     return false;
   }
-  if (head_motor_input_queue_depth() >= (unsigned)(HEAD_MOTOR_QUEUE_DEPTH - 1)) {
+  if (head >= (unsigned)(HEAD_MOTOR_QUEUE_DEPTH - 1)) {
+    if (blocked_by) {
+      *blocked_by = "head";
+    }
     return false;
   }
-  if (display_render_input_queue_depth() >= (unsigned)(DESKBOT_PB_EXECUTOR_QUEUE_DEPTH - 1)) {
+  if (disp >= (unsigned)(DESKBOT_PB_EXECUTOR_QUEUE_DEPTH - 1)) {
+    if (blocked_by) {
+      *blocked_by = "display";
+    }
     return false;
   }
   return true;
@@ -617,38 +631,74 @@ bool model_ring_push(PbModelSlot& incoming) {
   return true;
 }
 
-bool model_slot_from_frame(const PbRxFrame& item, PbModelSlot& out) {
+bool model_slot_from_frame(const PbRxFrame& item, PbModelSlot& out, uint32_t* parse_ms) {
+  const uint32_t t0 = millis();
   PackedFrame frame;
   if (!parse_packed_frame(item.data, item.len, frame)) {
     log_warn("[PB_SCHED] packed frame parse failed");
+    if (parse_ms) {
+      *parse_ms = millis() - t0;
+    }
     return false;
   }
   const char* err = nullptr;
   const size_t media_len = frame.bin_len > 0 ? static_cast<size_t>(frame.bin_len) : 0;
   if (!pb_model_from_json(frame.doc, frame.bin, media_len, out.model, err)) {
     log_warn("[PB_SCHED] model parse rejected: %s", err ? err : "unknown");
+    if (parse_ms) {
+      *parse_ms = millis() - t0;
+    }
     return false;
+  }
+  if (parse_ms) {
+    *parse_ms = millis() - t0;
   }
   return true;
 }
 
 void model_ring_dispatch_due(uint32_t now) {
   dispatch_credit_decay(now);
+  static uint32_t s_last_block_log_ms = 0;
   while (s_model_count > 0 && s_dispatch_credit_ms < kPbPrefetchTargetMs) {
-    if (!executors_accepting()) {
+    const char* blocked_by = nullptr;
+    if (!executors_accepting(&blocked_by)) {
+      if (s_last_block_log_ms == 0 || (now - s_last_block_log_ms) >= 500u) {
+        log_warn("[PB_LAT] dispatch_blocked by=%s spk=%u head=%u disp=%u ring=%u credit=%d",
+                 blocked_by ? blocked_by : "?", (unsigned)speaker_input_queue_depth(),
+                 (unsigned)head_motor_input_queue_depth(),
+                 (unsigned)display_render_input_queue_depth(), (unsigned)s_model_count,
+                 (int)s_dispatch_credit_ms);
+        s_last_block_log_ms = now;
+      }
       break;
     }
     PbModelSlot& slot = s_model_ring[s_model_head];
     const int chunk_ms = slot.model.chunk_ms > 0 ? slot.model.chunk_ms : 1;
     const int dispatch_level = slot.model.level;
+    const int idx = slot.model.idx;
+    char req_snap[37];
+    strncpy(req_snap, slot.model.req, sizeof(req_snap));
+    req_snap[sizeof(req_snap) - 1] = '\0';
+    const uint32_t t_disp = millis();
     s_runtime.dispatchModel(slot.model);
+    const uint32_t disp_ms = millis() - t_disp;
     slot.model = pb_model{};
     s_dispatch_credit_ms += chunk_ms;
     s_has_dispatched_model = true;
     s_playing_level = dispatch_level;
-    log_info("[PB_SCHED] dispatched remaining=%u chunk_ms=%d level=%d credit=%d",
-             (unsigned)(s_model_count - 1), chunk_ms, dispatch_level, (int)s_dispatch_credit_ms);
+    log_warn("[PB_LAT] dispatched req=%s idx=%d chunk_ms=%d level=%d credit=%d ring=%u "
+             "dispatch_call_ms=%u",
+             req_snap, idx, chunk_ms, dispatch_level, (int)s_dispatch_credit_ms,
+             (unsigned)(s_model_count - 1), (unsigned)disp_ms);
     model_ring_remove(0);
+  }
+  if (s_model_count > 0 && s_dispatch_credit_ms >= kPbPrefetchTargetMs) {
+    static uint32_t s_last_credit_log_ms = 0;
+    if (s_last_credit_log_ms == 0 || (now - s_last_credit_log_ms) >= 1000u) {
+      log_warn("[PB_LAT] credit_wait credit=%d target=%d ring=%u", (int)s_dispatch_credit_ms,
+               (int)kPbPrefetchTargetMs, (unsigned)s_model_count);
+      s_last_credit_log_ms = now;
+    }
   }
 }
 
@@ -675,8 +725,18 @@ void pb_runtime_task(void* /*arg*/) {
         }
       } guard{item.data};
 
+      const uint32_t t_rx = millis();
+      uint32_t parse_ms = 0;
       PbModelSlot incoming{};
-      if (model_slot_from_frame(item, incoming)) {
+      if (model_slot_from_frame(item, incoming, &parse_ms)) {
+        log_warn("[PB_LAT] frame_parsed type=%s req=%s idx=%d chunk_ms=%d anim=%u servo=%u "
+                 "audio=%d len=%u parse_ms=%u ring=%u credit=%d q=%u",
+                 pb_model_type_name(incoming.model.type), incoming.model.req, incoming.model.idx,
+                 incoming.model.chunk_ms, (unsigned)incoming.model.anim_count,
+                 (unsigned)incoming.model.servo_count,
+                 incoming.model.audio ? incoming.model.audio->next_bin_len : 0, (unsigned)item.len,
+                 (unsigned)parse_ms, (unsigned)s_model_count, (int)s_dispatch_credit_ms,
+                 (unsigned)uxQueueMessagesWaiting(s_frame_q));
         if (incoming.model.type == PB_MODEL_CANCEL) {
           log_info("[PB_SCHED] cancel req=%s; clear %u buffered models", incoming.model.req,
                    (unsigned)s_model_count);
@@ -688,6 +748,9 @@ void pb_runtime_task(void* /*arg*/) {
           incoming.model = pb_model{};
         } else if (!model_ring_push(incoming)) {
           model_slot_clear(incoming);
+        } else {
+          log_warn("[PB_LAT] buffered(+%ums since dequeue) ring=%u", (unsigned)(millis() - t_rx),
+                   (unsigned)s_model_count);
         }
       }
     }
@@ -752,6 +815,8 @@ bool pb_runtime_enqueue_frame(uint8_t* data, size_t length) {
     log_warn("[PB_RUNTIME] frame queue full len=%u", (unsigned)length);
     return false;
   }
+  log_warn("[PB_LAT] pb_q_in len=%u q=%u", (unsigned)length,
+           (unsigned)uxQueueMessagesWaiting(s_frame_q));
   return true;
 }
 

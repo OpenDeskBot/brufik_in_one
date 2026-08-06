@@ -1,12 +1,13 @@
 #include "boot_guide.h"
 
-#include "asr_ws.h"
 #include "deskbot_config.h"
 #include "display.h"
 #include "display_text.h"
+#include "logger.h"
 #include "utils/deskbot_qrcode.h"
 #include "utils/nvs_config_utils.h"
 #include "utils/utils.h"
+#include "ws_transport.h"
 
 #include <Arduino.h>
 #include <string.h>
@@ -285,7 +286,7 @@ bool boot_guide_wait_ws_ready(unsigned timeout_ms) {
 
   const unsigned long deadline_ms = millis() + timeout_ms;
   while (millis() < deadline_ms) {
-    if (asr_ws_state() == 0) {
+    if (ws_transport_ready()) {
       boot_guide_server_result(true, ws_url);
       delay(800);
       return true;
@@ -332,7 +333,18 @@ void deskbot_ws_get_active(DeskbotWsTarget* out) {
   if (!nvs_ws_get_custom_url(active, url, sizeof(url))) {
     return;
   }
-  utils_parse_ws_url(url, out);
+  WsProto proto;
+  if (!parse_ws_proto(url, proto)) {
+    return;
+  }
+  out->use_ssl = proto.is_wss;
+  strncpy(out->host, proto.host, sizeof(out->host) - 1);
+  out->port = proto.port;
+  if (proto.path[0] != '\0') {
+    strncpy(out->path_prefix, proto.path, sizeof(out->path_prefix) - 1);
+    out->path_prefix[sizeof(out->path_prefix) - 1] = '\0';
+  }
+  out->valid = true;
 }
 
 bool deskbot_ws_is_active_configured() {

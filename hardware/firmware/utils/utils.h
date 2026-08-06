@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <Arduino.h>
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -40,6 +41,15 @@ void setup_FFat();
 /** 设备唯一 ID，格式 deskbot_<mac>（基于 WiFi STA MAC） */
 const char* get_device_id();
 
+/** JSON 字符串转义（``"`` ``\`` 控制字符等）。 */
+String json_escape(const String& raw);
+
+/**
+ * 当前云服务器完整 WS URL（NVS active / builtin + ``/asr_chat?device_id=&pin_code=``）。
+ * 未配置时返回空串。返回值指向静态缓冲，下次调用会覆盖。
+ */
+const char* get_server_ws_url();
+
 /** PIN / AP 等待 / WiFi / 云服务器 NVS：见 ``nvs_config_utils.h``。 */
 
 /** 解析后的 WebSocket 目标（不含 query）。 */
@@ -52,8 +62,17 @@ struct DeskbotWsTarget {
   char path_prefix[48] = {};
 };
 
-/** 解析 ws:// 或 wss:// URL。 */
-bool utils_parse_ws_url(const char* url, DeskbotWsTarget* out);
+/** ``ws://`` / ``wss://`` URL 解析结果。 */
+struct WsProto {
+  bool is_wss = false;
+  char host[64] = {};
+  uint16_t port = 0;
+  /** 可选路径前缀，如 "/api"；无路径则为空串。 */
+  char path[64] = {};
+};
+
+/** 解析 ``ws://host[:port][/path]`` 或 ``wss://...`` 到 ``out``。 */
+bool parse_ws_proto(const char* str, WsProto& out);
 
 /**
  * HTTP(S) GET 整包下载到 PSRAM（失败回落内部已释放）。

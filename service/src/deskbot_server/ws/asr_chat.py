@@ -45,6 +45,12 @@ from deskbot_server.utils.ws_utils import WsUtils
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
 from deskbot_server.ws.device_pipeline import DevicePipelineBroker
 from deskbot_server.ws.registry import DeviceRegistry
+from deskbot_server.ws.uplink_rate_stats import (
+    ensure_uplink_rate_stats_started,
+    note_uplink_ack,
+    note_uplink_audio,
+    note_uplink_camera,
+)
 
 logger = logging.getLogger("deskbot-server")
 
@@ -67,6 +73,7 @@ async def _feed_rom_uplink(
     turn_task_holder: Optional[list] = None,
     device_pb_only: bool = False,
 ) -> None:
+    note_uplink_audio(device_id)
     utterance, uplink_started, _ = await session.feed_audio(
         payload, codec, sample_rate=sample_rate, channels=channels, opus_frames=opus_frames
     )
@@ -152,6 +159,7 @@ async def _ingest_asr_chat_camera_frame(
     enc: str = "binary",
 ) -> None:
     """读循环外异步处理：交给 CameraFaceService，不阻塞 WS 继续收帧。"""
+    note_uplink_camera(device_id)
     nbytes = len(payload or b"")
     if not device_id or not camera_face_enabled:
         logger.info(
@@ -532,6 +540,7 @@ async def handle_asr_chat(
     device_pb_only = getattr(pipeline, "asr_chat_device_pb_only", False)
     camera_face_enabled = bool(device_id and CameraFaceService().is_configured())
 
+    ensure_uplink_rate_stats_started()
     if device_id:
         await registry.connect(device_id, "asr_chat", websocket, pin_code=pin_code)
         await asr_chat_hub.attach(device_id, websocket)
@@ -666,6 +675,7 @@ async def handle_asr_chat(
                 if msg_type == "pb_ack":
                     norm = _normalize_incoming_pb_ack(data)
                     if norm is not None and device_id:
+                        note_uplink_ack(device_id)
                         await registry.record_pb_ack(device_id, norm)
                         logger.info(
                             "[pb_ack] device_id=%s req=%r idx=%s audio_buf_ms=%s servo=%s",

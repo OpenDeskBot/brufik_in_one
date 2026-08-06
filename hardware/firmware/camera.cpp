@@ -4,11 +4,15 @@
 #include "head.h"
 #include "logger.h"
 #include "speaker.h"
+#include "utils/utils.h"
 #include "ws_transport.h"
 
 #include <Arduino.h>
 #include "esp_camera.h"
+#include "img_converters.h"
 #include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 /* Seeed XIAO ESP32S3 Sense 摄像头引脚（esp32-camera 示例同源） */
 #define PWDN_GPIO_NUM  -1
@@ -29,16 +33,35 @@
 #define PCLK_GPIO_NUM  13
 
 static constexpr bool kCameraCaptureEnabled = true;
+static constexpr size_t kMaxJpegBin = 32 * 1024;
+static constexpr uint32_t kFbNullLogIntervalMs = 30000u;
+static constexpr uint8_t kJpegQuality = 18;
 
 static bool s_camera_ok = false;
+static bool s_hw_inited = false;
 static bool s_task_ready = false;
 static std::atomic<uint32_t> s_interval_ms{1000u};
-static std::atomic<bool> s_capture_enabled{false};
 static uint32_t s_last_capture_ms = 0;
+static uint32_t s_last_fb_null_log_ms = 0;
 static uint32_t s_seq = 0;
+static uint32_t s_fb_null_count = 0;
+static TaskHandle_t s_task = nullptr;
 
-bool setup_camera() {
-  camera_config_t config;
+static constexpr uint32_t kCameraTaskStack = 16 * 1024;
+static constexpr UBaseType_t kCameraTaskPrio = 3;
+
+/**
+ * 本机（ea30）实测：直接 PIXFORMAT_JPEG 会 fb_get 超时；RGB565 正常。
+ * 因此用 RGB565 抓帧，再用 frame2jpg 编码后上行。
+ */
+static bool camera_init_hw(void) {
+  if (s_hw_inited) {
+    esp_camera_deinit();
+    s_hw_inited = false;
+    delay(30);
+  }
+
+  camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
   config.pin_d0 = Y2_GPIO_NUM;
@@ -57,43 +80,95 @@ bool setup_camera() {
   config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
+  config.xclk_freq_hz = 10000000;
   config.frame_size = FRAMESIZE_QVGA;
-  config.pixel_format = PIXFORMAT_JPEG;
+  config.pixel_format = PIXFORMAT_RGB565;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 18;
+  config.jpeg_quality = kJpegQuality;
   config.fb_count = 1;
-
-  if (psramFound()) {
-    config.fb_count = 2;
-    config.grab_mode = CAMERA_GRAB_LATEST;
-  } else {
-    config.fb_location = CAMERA_FB_IN_DRAM;
-  }
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    log_error("[CAMERA] setup_camera failed 0x%x", err);
-    s_camera_ok = false;
+    log_error("[CAMERA] esp_camera_init failed 0x%x", err);
     return false;
   }
+  s_hw_inited = true;
 
   sensor_t* s = esp_camera_sensor_get();
   if (!s) {
-    log_error("[CAMERA] setup_camera sensor_get returned null after init");
-    s_camera_ok = false;
+    log_error("[CAMERA] sensor_get returned null after init");
+    camera_deinit();
     return false;
   }
+  log_info("[CAMERA] sensor PID=0x%x%s mode=RGB565->JPEG", (unsigned)s->id.PID,
+           s->id.PID == OV2640_PID ? " OV2640" : (s->id.PID == OV3660_PID ? " OV3660" : ""));
   if (s->id.PID == OV3660_PID) {
     s->set_vflip(s, 1);
     s->set_brightness(s, 1);
     s->set_saturation(s, -2);
   }
 
+  delay(200);
+  camera_fb_t* probe = esp_camera_fb_get();
+  if (!probe) {
+    log_error("[CAMERA] probe fb_get failed — disable camera uplink");
+    camera_deinit();
+    return false;
+  }
+  log_info("[CAMERA] probe ok rgb=%uB %ux%u", (unsigned)probe->len, (unsigned)probe->width,
+           (unsigned)probe->height);
+
+  uint8_t* jpg = nullptr;
+  size_t jpg_len = 0;
+  const bool jpg_ok = frame2jpg(probe, kJpegQuality, &jpg, &jpg_len);
+  esp_camera_fb_return(probe);
+  if (!jpg_ok || !jpg || jpg_len == 0) {
+    log_error("[CAMERA] probe frame2jpg failed");
+    if (jpg) {
+      free(jpg);
+    }
+    camera_deinit();
+    return false;
+  }
+  log_info("[CAMERA] probe jpeg=%uB", (unsigned)jpg_len);
+  free(jpg);
+  return true;
+}
+
+static void camera_task(void* /*arg*/) {
+  for (;;) {
+    const uint32_t interval = s_interval_ms.load(std::memory_order_relaxed);
+    uint8_t* packed = nullptr;
+    size_t packed_len = 0;
+    if (camera_try_capture_packed(&packed, &packed_len)) {
+      if (!ws_transport_enqueue_camera(packed, packed_len)) {
+        log_warn("[CAMERA] enqueue failed len=%u", (unsigned)packed_len);
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(interval > 0 ? interval : 1000u));
+  }
+}
+
+bool setup_camera() {
+  if (!camera_init_hw()) {
+    s_camera_ok = false;
+    return false;
+  }
+
   s_camera_ok = true;
+  s_fb_null_count = 0;
   log_info("[CAMERA] setup_camera ok framesize=QVGA");
   return true;
+}
+
+void camera_deinit() {
+  if (s_hw_inited) {
+    esp_camera_deinit();
+    s_hw_inited = false;
+  }
+  s_camera_ok = false;
+  s_task_ready = false;
 }
 
 void task_setup_camera() {
@@ -101,9 +176,20 @@ void task_setup_camera() {
     log_warn("[CAMERA] task_setup_camera skipped (setup_camera not ok)");
     return;
   }
+  if (s_task) {
+    return;
+  }
   s_task_ready = true;
-  log_warn("[CAMERA] capture folded into ws_transport (no camera_cap task) interval=%ums",
-           (unsigned)s_interval_ms.load(std::memory_order_relaxed));
+  BaseType_t rc = xTaskCreatePinnedToCore(camera_task, "camera", kCameraTaskStack, nullptr,
+                                          kCameraTaskPrio, &s_task, APP_CPU_NUM);
+  if (rc != pdPASS) {
+    log_error("[CAMERA] task create failed rc=%d", (int)rc);
+    s_task = nullptr;
+    s_task_ready = false;
+    return;
+  }
+  log_warn("[CAMERA] task OK stack=%u prio=%u interval=%ums", (unsigned)kCameraTaskStack,
+           (unsigned)kCameraTaskPrio, (unsigned)s_interval_ms.load(std::memory_order_relaxed));
 }
 
 void camera_set_fps(uint32_t fps) {
@@ -115,45 +201,76 @@ void camera_set_fps(uint32_t fps) {
   log_warn("[CAMERA] set fps=%u interval=%ums", (unsigned)fps, (unsigned)interval);
 }
 
-void camera_notify_capture(CamNotify n) {
-  if (!kCameraCaptureEnabled && n == kCamGo) {
-    return;
-  }
-  if (n == kCamStop) {
-    s_capture_enabled.store(false, std::memory_order_release);
-    return;
-  }
-  /* GO：发一张的额度；先等满 interval 再拍（对齐旧 delay-after-GO）。 */
-  s_last_capture_ms = millis();
-  s_capture_enabled.store(true, std::memory_order_release);
-}
-
-static void release_camera_fb(void* ctx) {
-  if (ctx) {
-    esp_camera_fb_return(static_cast<camera_fb_t*>(ctx));
-  }
-}
-
-static bool capture_and_enqueue_one() {
-  camera_fb_t* fb = esp_camera_fb_get();
-  if (!fb) {
+bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
+  if (!packed || !packed_len) {
     return false;
   }
-  if (fb->format != PIXFORMAT_JPEG || fb->len == 0 || fb->len > 32 * 1024) {
-    esp_camera_fb_return(fb);
+  *packed = nullptr;
+  *packed_len = 0;
+  if (!s_camera_ok || !s_task_ready || !kCameraCaptureEnabled || !s_hw_inited) {
+    return false;
+  }
+
+  const uint32_t now = millis();
+  const uint32_t interval = s_interval_ms.load(std::memory_order_relaxed);
+  if ((uint32_t)(now - s_last_capture_ms) < interval) {
+    return false;
+  }
+
+  const uint32_t fb_t0 = millis();
+  camera_fb_t* fb = esp_camera_fb_get();
+  const uint32_t fb_get_ms = millis() - fb_t0;
+  if (!fb) {
+    s_last_capture_ms = now;
+    s_fb_null_count += 1;
+    if (s_last_fb_null_log_ms == 0 ||
+        (uint32_t)(now - s_last_fb_null_log_ms) >= kFbNullLogIntervalMs) {
+      s_last_fb_null_log_ms = now;
+      log_warn("[CAMERA] fb_get null fb_get_ms=%u count=%u", (unsigned)fb_get_ms,
+               (unsigned)s_fb_null_count);
+    }
+    return false;
+  }
+
+  uint8_t* jpg = nullptr;
+  size_t jpg_len = 0;
+  bool jpg_ok = false;
+  if (fb->format == PIXFORMAT_JPEG) {
+    if (fb->len > 0 && fb->len <= kMaxJpegBin) {
+      jpg = (uint8_t*)malloc(fb->len);
+      if (jpg) {
+        memcpy(jpg, fb->buf, fb->len);
+        jpg_len = fb->len;
+        jpg_ok = true;
+      }
+    }
+  } else {
+    jpg_ok = frame2jpg(fb, kJpegQuality, &jpg, &jpg_len);
+    if (jpg_ok && jpg_len > kMaxJpegBin) {
+      log_warn("[CAMERA] jpeg too large %u", (unsigned)jpg_len);
+      free(jpg);
+      jpg = nullptr;
+      jpg_len = 0;
+      jpg_ok = false;
+    }
+  }
+  esp_camera_fb_return(fb);
+
+  if (!jpg_ok || !jpg || jpg_len == 0) {
+    s_last_capture_ms = now;
+    if (jpg) {
+      free(jpg);
+    }
+    log_warn("[CAMERA] encode failed fb_get_ms=%u", (unsigned)fb_get_ms);
     return false;
   }
 
   s_seq += 1;
   const uint32_t seq = s_seq;
-  const size_t len = fb->len;
+  const size_t len = jpg_len;
   const int servo_x = head_read_x();
   const int servo_y = head_read_y_logic();
   const int volume = speaker_get_volume();
-  if (seq <= 1u || seq % 30u == 0u) {
-    log_warn("[CAMERA] enqueue frame seq=%u jpeg=%uB servo=(%d,%d) volume=%d", (unsigned)seq,
-             (unsigned)len, servo_x, servo_y, volume);
-  }
 
   char header[256];
   const int n = snprintf(
@@ -171,42 +288,26 @@ static bool capture_and_enqueue_one() {
       Y_MIN_LIMIT,
       Y_MAX_LIMIT);
   if (n <= 0 || (size_t)n >= sizeof(header)) {
-    esp_camera_fb_return(fb);
-    log_warn("[CAMERA] header snprintf truncated");
-    return false;
-  }
-
-  /* 入队成功后所有权交给 ws_transport：打包后立刻 return fb。 */
-  if (!ws_transport_enqueue_image_borrow(header, fb->buf, fb->len, release_camera_fb, fb)) {
-    esp_camera_fb_return(fb);
-    return false;
-  }
-  return true;
-}
-
-bool camera_try_capture_and_enqueue(void) {
-  if (!s_camera_ok || !s_task_ready || !kCameraCaptureEnabled) {
-    return false;
-  }
-  if (!s_capture_enabled.load(std::memory_order_acquire)) {
-    return false;
-  }
-  const uint32_t now = millis();
-  const uint32_t interval = s_interval_ms.load(std::memory_order_relaxed);
-  if ((uint32_t)(now - s_last_capture_ms) < interval) {
-    return false;
-  }
-  /* TX 满则下轮再试，不推进节拍（避免长时间无图）。 */
-  if (ws_transport_tx_slots_free() == 0) {
-    return false;
-  }
-  /* 上行 WS 未就绪时 enqueue 会失败；推进节拍避免空转狂抓，保留额度下轮再试。 */
-  if (!capture_and_enqueue_one()) {
+    free(jpg);
     s_last_capture_ms = now;
     return false;
   }
+
+  size_t out_len = 0;
+  uint8_t* out = new_packed_bin(header, jpg, jpg_len, &out_len);
+  free(jpg);
+  if (!out) {
+    s_last_capture_ms = now;
+    return false;
+  }
+
   s_last_capture_ms = now;
-  /* 一张在途：等 drain_tx 完成后再 kCamGo（与旧 notify 握手一致）。 */
-  s_capture_enabled.store(false, std::memory_order_release);
+  s_fb_null_count = 0;
+  *packed = out;
+  *packed_len = out_len;
+  if (seq <= 1u || (seq % 30u) == 0u) {
+    log_warn("[CAMERA] frame seq=%u jpeg=%uB fb_get_ms=%u", (unsigned)seq, (unsigned)len,
+             (unsigned)fb_get_ms);
+  }
   return true;
 }

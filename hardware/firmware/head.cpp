@@ -318,6 +318,11 @@ static void motor_task(void* /*arg*/) {
 
 /** 非阻塞入队。队列满时保留既有动作，丢弃新命令而不破坏正在排队的手势序列。 */
 static bool enqueue_motor_job(MotorJob job) {
+  if (!s_motor_queue) {
+    free_motor_job(job);
+    log_warn("[HEAD] motor queue not ready; drop command");
+    return false;
+  }
   if (xQueueSend(s_motor_queue, &job, 0) != pdTRUE) {
     free_motor_job(job);
     log_warn("[HEAD] motor queue full; drop new command");
@@ -405,7 +410,7 @@ static int head_deg_to_pulse_us(int deg) {
  *
  * 帧周期拉长到 period_ms（默认 60）只能降低指令刷新率，不能限制舵机转速：
  * 内部闭环在收到中位脉宽后仍会全速追位。两轴串行，降低同时堵转力矩。
- * 永久 PWM 仍由后续 head_servo_boot_attach 负责。
+ * setup_head 只做预归中；永久 PWM 由后续 head_servo_boot_attach 负责（须在 camera 之后）。
  */
 static void head_gpio_soft_center_axis(int pin, int pulse_us, uint16_t period_ms, int pulses,
                                        const char* label) {
@@ -529,6 +534,9 @@ void head_roll_right() {
 /* ---- 任务管理 ---- */
 
 void head_abort() {
+  if (!s_motor_queue) {
+    return;
+  }
   MotorJob job{};
   job.type = MotorJobType::kCancel;
   s_need_cancel.store(true, std::memory_order_release);
@@ -538,5 +546,8 @@ void head_abort() {
 void head_clear_motor_pending() { head_abort(); }
 
 unsigned head_motor_input_queue_depth() {
+  if (!s_motor_queue) {
+    return 0;
+  }
   return (unsigned)uxQueueMessagesWaiting(s_motor_queue);
 }

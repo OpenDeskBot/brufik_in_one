@@ -39,11 +39,11 @@ constexpr uint8_t HEAD_SERVO_HOLD = 2;
 
 // Functions
 /**
- * 相机 init 之前调用：GPIO 位bang 中位脉宽预归中（不 attach）。
- * 须在 setup_camera 之前；永久 attach 仍由 head_servo_boot_attach 完成。
+ * 上电 GPIO 位bang 预归中（不 attach）。
+ * 永久 MCPWM 须在 setup_camera 之后由 head_servo_boot_attach() 接管。
  */
 void setup_head();
-/** 摄像头 init 之后调用：双轴永久 attach → 回中 (90/90)。 */
+/** camera init 之后调用；MCPWM attach 并保持中位（幂等）。 */
 void head_servo_boot_attach();
 /** 启动舵机 motor 队列与 motor_task（幂等）；enqueue 路径亦可兜底。 */
 void task_setup_head();

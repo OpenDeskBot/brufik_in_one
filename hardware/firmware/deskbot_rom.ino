@@ -8,7 +8,7 @@
 #include "speaker.h"
 #include "mic.h"
 #include "pb_runtime.h"
-#include "asr_ws.h"
+#include "ws_transport.h"
 #include "head.h"
 #include "cmd.h"
 #include "led.h"
@@ -17,7 +17,6 @@
 #include "utils/utils.h"
 #include "utils/nvs_config_utils.h"
 #include "boot_guide.h"
-#include "ws_transport.h"
 
 /* loopTask 只做 cmd / wifi maintain / yield；Opus encode 在 mic、decode 在 pb_runtime。
  * 覆盖弱符号 getArduinoLoopTaskStackSize（platformio.ini 另有 -DARDUINO_LOOP_STACK_SIZE）。 */
@@ -26,11 +25,11 @@ size_t getArduinoLoopTaskStackSize() {
 }
 
 static void on_wifi_link_down() {
-  asr_ws_on_link_down("wifi lost");
+  ws_transport_on_link_down("wifi lost");
 }
 
 static void on_wifi_link_up() {
-  asr_ws_on_link_up();
+  ws_transport_on_link_up();
 }
 
 void setup() {
@@ -44,13 +43,23 @@ void setup() {
   log_info("Initializing Deskbot...");
   log_info("[BOOT] device_id=%s", get_device_id());
 
-  /* ---- 阶段 A：显示 + 基础硬件 ---- */
+  /* ---- 阶段 A：先验证相机（RGB565），再释放 GDMA，避免 I2S/WiFi 期间卡死 ----
+   * 本机 JPEG 硬件编码不可用；setup_camera 内用 RGB565 + frame2jpg。
+   * ESP32-S3：相机 GDMA 在 WiFi STA 连接时若仍在跑，会整机挂死。 */
+  static bool s_camera_ok = false;
+  const bool camera_probed = setup_camera();
+  setup_head();  /* 仅 GPIO 预归中，不 attach */
+  if (camera_probed) {
+    camera_deinit();
+    log_warn("[CAMERA] suspended for i2s/wifi (will reinit after STA)");
+  } else {
+    log_warn("[BOOT] Camera absent or failed — continuing without camera");
+  }
+
   setup_display();
   display_backlight_on();
   setup_FFat();
   setup_led();
-
-  setup_head();
   setup_mic();
   setup_speaker();
 
@@ -67,9 +76,14 @@ void setup() {
   }
   wifi_provision_set_link_handlers(on_wifi_link_down, on_wifi_link_up);
 
-  /* ---- 阶段 B：云服务器连接（屏幕引导）---- */
+  /* ---- 阶段 B：云服务器连接（屏幕引导）----
+   * 先建 pb 帧队列，避免 WS ready 后下行帧因 pb 未 setup 被丢。
+   * pb 任务必须在 display/head 队列就绪后再启动，否则 attention SLEEP 会对空 queue 断言。 */
   task_setup_speaker();
   task_setup_mic();
+  if (!setup_pb_runtime()) {
+    log_error("[BOOT] pb_runtime setup failed");
+  }
   if (!setup_ws_transport()) {
     log_error("[BOOT] ws_transport setup failed");
     boot_guide_server_result(false, "初始化失败");
@@ -82,25 +96,24 @@ void setup() {
     (void)boot_guide_wait_ws_ready(DESKBOT_WS_CONNECT_TIMEOUT_MS);
   }
 
-  static bool s_camera_ok = false;
-  s_camera_ok = setup_camera();
-  head_servo_boot_attach();
-  if (!s_camera_ok) {
-    log_warn("[BOOT] Camera absent or failed — continuing without camera");
+  /* WiFi 后再 init；舵机 MCPWM attach 须在相机之后。 */
+  if (camera_probed) {
+    s_camera_ok = setup_camera();
+    if (!s_camera_ok) {
+      log_warn("[BOOT] Camera reinit after WiFi failed");
+    }
   }
+  head_servo_boot_attach();
 
-  /* ---- 阶段 C：pb / 显示任务 ---- */
-  if (!setup_pb_runtime()) {
-    log_error("[BOOT] pb_runtime setup failed");
-  } else if (!task_setup_pb_runtime()) {
+  /* ---- 阶段 C：执行器就绪后再启动 pb 泵 / camera 上行 ---- */
+  task_setup_display();
+  task_setup_head();
+  if (!task_setup_pb_runtime()) {
     log_error("[BOOT] pb_runtime task_setup failed");
   }
 
-  task_setup_display();
-  task_setup_head();
-
   if (s_camera_ok) {
-    task_setup_camera(); /* 无独立任务；抓帧并入 ws_transport */
+    task_setup_camera();
   } else {
     log_warn("[BOOT] Skipping camera uplink (no camera)");
   }

@@ -1,28 +1,30 @@
 #include "ws_transport.h"
 
-#include "asr_ws.h"
-#include "camera.h"
+#include "deskbot_config.h"
 #include "logger.h"
 #include "mic.h"
 #include "pb_runtime.h"
+#include "utils/nvs_config_utils.h"
 #include "utils/opus_codec.h"
 #include "utils/utils.h"
 
+#include <Arduino.h>
+#include <WiFi.h>
+#include <atomic>
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
-#include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <string.h>
 
+WsProto server_ws_proto = {};
+String server_ws_path;
+
 namespace {
 
-struct WsRxItem {
-  WStype_t type = WStype_ERROR;
-  uint8_t* data = nullptr;
-  size_t len = 0;
-  uint32_t session = 0;
-};
+WebSocketsClient ws_client;
+std::atomic<int> ws_state{static_cast<int>(WsState::kDisconnected)};
+std::atomic<bool> s_app_ready{false};
 
 /** 入队时已打包：u32be(json_len)+json+media，发送只 sendBIN。 */
 struct WsTxItem {
@@ -32,42 +34,20 @@ struct WsTxItem {
 };
 
 static uint32_t s_ws_session = 0;
-static bool s_session_has_connected = false;
-static WebSocketsClient* s_asr_ws = nullptr;
 static bool s_setup_ok = false;
-static QueueHandle_t s_rx_q = nullptr;
 static QueueHandle_t s_tx_q = nullptr;
 static TaskHandle_t s_task = nullptr;
-static SemaphoreHandle_t s_owner_mu = nullptr;
-static bool s_tx_active = false;
-static WsTxItem s_tx_active_item{};
-static volatile bool s_in_write_pump = false;
-static uint32_t s_tx_drop_audio = 0;
-static unsigned long s_tx_drop_audio_log_ms = 0;
 static bool s_boot_connect_sent = false;
+static unsigned long s_connect_attempt_ms = 0;
 
-static constexpr UBaseType_t kRxDepth = 128;
-static constexpr UBaseType_t kTxDepth = 40;
-/* WebSockets 收发、ArduinoJson 解析与 write-pump 都在这个任务调用。
- * 16KB 会在握手/ready 阶段留下过窄余量；loopTask 缩栈后恢复为 32KB。 */
+static constexpr UBaseType_t kTxDepth = 64;
+/* WebSockets 收发、ArduinoJson 解析都在 ws_transport 任务。 */
 static constexpr uint32_t kTaskStack = 32 * 1024;
-static constexpr UBaseType_t kTaskPrio = 5;
+/* 与 mic(6) 同级：持续上行时 drain 不能被 mic encode 饿死。 */
+static constexpr UBaseType_t kTaskPrio = 6;
 static constexpr size_t kMaxRxCopy = 256 * 1024;
 static constexpr size_t kMaxTxJson = 16 * 1024;
 static constexpr size_t kMaxTxAudioBin = 4 * 1024;
-static constexpr size_t kMaxTxImageBin = 32 * 1024;
-
-static void owner_lock(void) {
-  if (s_owner_mu) {
-    xSemaphoreTakeRecursive(s_owner_mu, portMAX_DELAY);
-  }
-}
-
-static void owner_unlock(void) {
-  if (s_owner_mu) {
-    xSemaphoreGiveRecursive(s_owner_mu);
-  }
-}
 
 static void* rx_alloc(size_t n) {
   return heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
@@ -84,41 +64,10 @@ static void ws_tx_free_item(WsTxItem* item) {
   item->packed_len = 0;
 }
 
-static uint32_t queue_waiting(QueueHandle_t q) {
-  return (uint32_t)uxQueueMessagesWaiting(q);
-}
-
-static bool tx_busy(void) {
-  return s_tx_active || queue_waiting(s_tx_q) > 0;
-}
-
-static void discard_queue(QueueHandle_t q) {
+static void clear_tx_queue(void) {
   WsTxItem item{};
-  while (xQueueReceive(q, &item, 0) == pdTRUE) {
+  while (xQueueReceive(s_tx_q, &item, 0) == pdTRUE) {
     ws_tx_free_item(&item);
-  }
-}
-
-/** 丢掉指定 type；其余按原相对顺序转到队尾（O(1) 栈，不倒整表）。 */
-static void discard_tx_of_type(WsTxType type) {
-  if (!s_tx_q) {
-    return;
-  }
-  const UBaseType_t n = uxQueueMessagesWaiting(s_tx_q);
-  for (UBaseType_t i = 0; i < n; ++i) {
-    WsTxItem item{};
-    if (xQueueReceive(s_tx_q, &item, 0) != pdTRUE) {
-      break;
-    }
-    if (item.type == type) {
-      ws_tx_free_item(&item);
-    } else if (xQueueSend(s_tx_q, &item, 0) != pdTRUE) {
-      ws_tx_free_item(&item);
-    }
-  }
-  if (s_tx_active && s_tx_active_item.type == type) {
-    ws_tx_free_item(&s_tx_active_item);
-    s_tx_active = false;
   }
 }
 
@@ -130,43 +79,9 @@ static bool enqueue_tx(WsTxItem* item) {
   if (xQueueSend(s_tx_q, item, 0) == pdTRUE) {
     return true;
   }
-  /*
-   * 队列满：
-   * - state 可丢音频腾位（ack/boot 优先）
-   * - image 不得丢音频（同连接时大 JPEG 会饿死 mic）
-   * - audio 满则丢本包
-   */
-  if (item->type == WsTxType::kState) {
-    discard_tx_of_type(WsTxType::kAudio);
-    if (xQueueSend(s_tx_q, item, 0) == pdTRUE) {
-      log_warn("[WS_TRANSPORT] TX full: dropped audio to enqueue state");
-      return true;
-    }
-  }
-  if (item->type == WsTxType::kAudio) {
-    ++s_tx_drop_audio;
-    const unsigned long now = millis();
-    if (s_tx_drop_audio_log_ms == 0 || (now - s_tx_drop_audio_log_ms) >= 1000UL) {
-      log_warn("[WS_TRANSPORT] TX drop audio x%u packed_len=%u q=%u/%u",
-               (unsigned)s_tx_drop_audio, (unsigned)item->packed_len,
-               (unsigned)queue_waiting(s_tx_q), (unsigned)kTxDepth);
-      s_tx_drop_audio = 0;
-      s_tx_drop_audio_log_ms = now;
-    }
-  } else {
-    log_warn("[WS_TRANSPORT] TX drop type=%u packed_len=%u", (unsigned)item->type,
-             (unsigned)item->packed_len);
-  }
+  log_warn("[WS_TRANSPORT] TX queue full type=%u len=%u", (unsigned)item->type, (unsigned)item->packed_len);
   ws_tx_free_item(item);
   return false;
-}
-
-/** 取队头：纯 FIFO。 */
-static bool take_next_tx_item(WsTxItem* out) {
-  if (!out || !s_tx_q) {
-    return false;
-  }
-  return xQueueReceive(s_tx_q, out, 0) == pdTRUE;
 }
 
 static bool build_tx_item(WsTxType type, const char* json, const uint8_t* bin, size_t bin_len,
@@ -191,77 +106,13 @@ static bool build_tx_item(WsTxType type, const char* json, const uint8_t* bin, s
   return out->packed != nullptr;
 }
 
-static void ws_rx_enqueue_impl(WStype_t type, uint8_t* payload, size_t length) {
-  WsRxItem item{};
-  item.type = type;
-  item.session = s_ws_session;
-  if (payload != nullptr && length > 0) {
-    if (length > kMaxRxCopy) {
-      log_warn("[WS_TRANSPORT] RX drop oversized type=%u len=%u", (unsigned)type, (unsigned)length);
-      return;
-    }
-    item.data = (uint8_t*)rx_alloc(length + 1);
-    if (!item.data) {
-      log_warn("[WS_TRANSPORT] RX alloc fail len=%u", (unsigned)length);
-      return;
-    }
-    memcpy(item.data, payload, length);
-    item.data[length] = '\0';
-    item.len = length;
-  }
-  if (xQueueSend(s_rx_q, &item, 0) == pdTRUE) {
-    return;
-  }
-  WsRxItem drop{};
-  if (xQueueReceive(s_rx_q, &drop, 0) == pdTRUE) {
-    free(drop.data);
-    if (xQueueSend(s_rx_q, &item, 0) == pdTRUE) {
-      log_warn("[WS_TRANSPORT] RX full, dropped oldest type=%u", (unsigned)drop.type);
-      return;
-    }
-  }
-  log_warn("[WS_TRANSPORT] RX queue full type=%u", (unsigned)type);
-  free(item.data);
-}
-
-static void drain_tx_finish(bool is_image, bool send_ok) {
-  if (is_image) {
-    if (send_ok) {
-      camera_notify_capture(kCamGo);
-    } else {
-      /* 发送失败交 asr 计数；停抓等 ready 再开。 */
-      camera_notify_capture(kCamStop);
-    }
-  }
-  ws_tx_free_item(&s_tx_active_item);
-  s_tx_active = false;
-}
-
-static void write_pump_impl(void) {
-  if (s_in_write_pump) {
-    taskYIELD();
-    return;
-  }
-  s_in_write_pump = true;
-  if (s_asr_ws) {
-    s_asr_ws->loop();
-  }
-  s_in_write_pump = false;
-  taskYIELD();
-}
-
 static void ws_transport_task(void* /*arg*/) {
   for (;;) {
-    owner_lock();
-    /* auto_reconnect 内部已 loop；此处不再重复 pump。 */
-    ws_asr_auto_reconnect();
-    const bool did_rx = ws_transport_drain_rx();
-    const bool did_tx = ws_transport_drain_tx();
-    /* 相机抓帧并入本任务：省掉 camera_cap 栈 + notify xQueue。 */
-    const bool did_cam = camera_try_capture_and_enqueue();
-    owner_unlock();
-
-    if (did_rx || did_tx || did_cam || tx_busy() || queue_waiting(s_rx_q) > 0) {
+    ws_transport_ensure_connected();
+    ws_client.loop();
+    const bool sent = ws_transport_drain_tx();
+    /* 空闲让出 CPU，避免同核饿死 WiFi/其它任务；有 TX 或建连中则只 yield。 */
+    if (sent || ws_transport_state() == WsState::kConnecting) {
       taskYIELD();
     } else {
       vTaskDelay(pdMS_TO_TICKS(2));
@@ -272,30 +123,98 @@ static void ws_transport_task(void* /*arg*/) {
 }  // namespace
 
 bool setup_ws_transport(void) {
-  if (!s_owner_mu) {
-    /* recursive：drain_tx → asr_ws_force_reconnect → discard_tx / new_session 可重入。 */
-    s_owner_mu = xSemaphoreCreateRecursiveMutex();
-    if (!s_owner_mu) {
-      s_setup_ok = false;
-      log_error("[WS_TRANSPORT] setup mutex create failed");
-      return false;
+  if (s_setup_ok) {
+    log_info("[WS_TRANSPORT] setup already ok");
+    return true;
+  }
+
+  server_ws_proto = {};
+  server_ws_path = "";
+  char base_url[128];
+  base_url[0] = '\0';
+  const char* active = nvs_ws_get_active_id();
+  if (strcmp(active, "builtin") == 0) {
+    if (DESKBOT_WS_HOST[0] != '\0') {
+      snprintf(base_url, sizeof(base_url), "ws://%s:%u", DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT);
     }
+  } else {
+    (void)nvs_ws_get_custom_url(active, base_url, sizeof(base_url));
   }
-  if (!s_rx_q) {
-    s_rx_q = xQueueCreate(kRxDepth, sizeof(WsRxItem));
+  if (base_url[0] != '\0' && parse_ws_proto(base_url, server_ws_proto)) {
+    if (server_ws_proto.path[0] == '\0') {
+      server_ws_path = String("/asr_chat?device_id=") + get_device_id() + "&pin_code=" +
+                       nvs_get_pin_code();
+    } else {
+      server_ws_path = String(server_ws_proto.path) + "/asr_chat?device_id=" + get_device_id() +
+                       "&pin_code=" + nvs_get_pin_code();
+    }
+    log_info("[WS_TRANSPORT] server %s://%s:%u path=%s", server_ws_proto.is_wss ? "wss" : "ws",
+             server_ws_proto.host, (unsigned)server_ws_proto.port, server_ws_path.c_str());
+  } else {
+    server_ws_proto = {};
+    server_ws_path = "";
+    log_warn("[WS_TRANSPORT] no configured server url");
   }
-  if (!s_tx_q) {
-    s_tx_q = xQueueCreate(kTxDepth, sizeof(WsTxItem));
-  }
-  if (!s_rx_q || !s_tx_q) {
-    s_setup_ok = false;
-    log_error("[WS_TRANSPORT] setup queue create failed");
-    return false;
-  }
-  asr_ws_bind_transport();
+
+  s_tx_q = xQueueCreate(kTxDepth, sizeof(WsTxItem));
+  ws_client.onEvent([](WStype_t type, uint8_t* payload, size_t length) {
+    if (type == WStype_CONNECTED) {
+      ws_state.store(static_cast<int>(WsState::kConnected), std::memory_order_release);
+      s_app_ready.store(true, std::memory_order_release);
+      s_connect_attempt_ms = 0;
+      mic_set_ws_state(kMicWsOk);
+      (void)opus_codec_decode_init();
+      if (!s_boot_connect_sent) {
+        if (ws_transport_enqueue_state("{\"type\":\"boot_connect\"}")) {
+          s_boot_connect_sent = true;
+          log_info("[WS_TRANSPORT] connected → boot_connect enqueued (first power-on)");
+        } else {
+          log_warn("[WS_TRANSPORT] connected → boot_connect enqueue failed");
+        }
+      }
+      log_info("[WS_TRANSPORT] connected");
+      return;
+    }
+    if (type == WStype_DISCONNECTED) {
+      ws_state.store(static_cast<int>(WsState::kDisconnected), std::memory_order_release);
+      s_app_ready.store(false, std::memory_order_release);
+      s_connect_attempt_ms = 0;
+      mic_set_ws_state(kMicWsError);
+      pb_runtime_notify_link_down();
+      log_warn("[WS_TRANSPORT] disconnected");
+      return;
+    }
+    if (type == WStype_BIN) {
+      if (payload == nullptr || length == 0) {
+        return;
+      }
+      if (length > kMaxRxCopy) {
+        log_warn("[WS_TRANSPORT] RX drop oversized len=%u", (unsigned)length);
+        return;
+      }
+      uint8_t* data = (uint8_t*)rx_alloc(length + 1);
+      if (!data) {
+        log_warn("[WS_TRANSPORT] RX alloc fail len=%u", (unsigned)length);
+        return;
+      }
+      memcpy(data, payload, length);
+      data[length] = '\0';
+      static uint32_t s_last_rx_hand_ms = 0;
+      const uint32_t now = millis();
+      const uint32_t gap = (s_last_rx_hand_ms == 0) ? 0 : (now - s_last_rx_hand_ms);
+      s_last_rx_hand_ms = now;
+      log_warn("[PB_LAT] rx_to_pb len=%u gap_ms=%u", (unsigned)length, (unsigned)gap);
+      if (!pb_runtime_enqueue_frame(data, length)) {
+        free(data);
+        log_warn("[PB_LAT] rx_to_pb DROP (pb not ready or frame_q full) len=%u",
+                 (unsigned)length);
+      }
+      return;
+    }
+    log_warn("[WS_TRANSPORT] ignore non-BIN type=%d len=%u", (int)type, (unsigned)length);
+  });
   s_setup_ok = true;
-  log_info("[WS_TRANSPORT] setup ok TX depth=%u rx=%u (audio+camera on /asr_chat)",
-           (unsigned)kTxDepth, (unsigned)kRxDepth);
+  log_info("[WS_TRANSPORT] setup ok TX depth=%u", (unsigned)kTxDepth);
   return true;
 }
 
@@ -319,25 +238,101 @@ bool task_setup_ws_transport(void) {
   return true;
 }
 
-void ws_transport_set_asr_client(WebSocketsClient* ws) {
-  s_asr_ws = ws;
-  log_info("[WS_TRANSPORT] asr client registered");
+WsState ws_transport_state(void) {
+  return static_cast<WsState>(ws_state.load(std::memory_order_acquire));
 }
 
-void ws_transport_enqueue_rx(WStype_t type, uint8_t* payload, size_t length) {
-  ws_rx_enqueue_impl(type, payload, length);
+bool ws_transport_ok(void) {
+  return ws_transport_state() == WsState::kConnected;
+}
+
+bool ws_transport_ready(void) {
+  return s_app_ready.load(std::memory_order_acquire);
+}
+
+void ws_transport_ensure_connected(void) {
+  if (WiFi.status() != WL_CONNECTED) {
+    ws_state.store(static_cast<int>(WsState::kDisconnected), std::memory_order_release);
+    s_connect_attempt_ms = 0;
+    return;
+  }
+  const WsState st = ws_transport_state();
+  if (st == WsState::kConnected) {
+    return;
+  }
+  if (server_ws_proto.host[0] == '\0' || server_ws_path.length() == 0) {
+    s_connect_attempt_ms = 0;
+    return;
+  }
+  /* connecting：只泵 loop，避免每轮 disconnect+begin 打断连接。 */
+  if (st == WsState::kConnecting) {
+    if (s_connect_attempt_ms != 0 &&
+        (millis() - s_connect_attempt_ms) < (unsigned long)DESKBOT_WS_CONNECT_TIMEOUT_MS) {
+      return;
+    }
+    /* 超时：回到 disconnected，下一轮重新 begin。 */
+    ws_state.store(static_cast<int>(WsState::kDisconnected), std::memory_order_release);
+    s_connect_attempt_ms = 0;
+  }
+
+  ws_client.disconnect();
+  ws_transport_new_session();
+  log_warn("[WS_TRANSPORT] connect %s://%s:%u%s", server_ws_proto.is_wss ? "wss" : "ws",
+           server_ws_proto.host, (unsigned)server_ws_proto.port, server_ws_path.c_str());
+  /*
+   * 必须在 begin 前设好 interval。库 loop() 里用
+   * (millis() - _lastConnectionFail) < _reconnectInterval 抑制重连；
+   * begin() 会把 _lastConnectionFail 置 0，若 interval 设成「几天」则
+   * (millis()-0) 一直小于 interval，TCP 永远不会发起。
+   * 上层已用 Connecting 超时做重连节奏，这里用 500ms 与原先 deskbot_ws_client_begin 一致。
+   */
+  ws_client.setReconnectInterval(500);
+  if (server_ws_proto.is_wss) {
+    ws_client.beginSSL(server_ws_proto.host, server_ws_proto.port, server_ws_path.c_str());
+  } else {
+    ws_client.begin(server_ws_proto.host, server_ws_proto.port, server_ws_path.c_str());
+  }
+  ws_state.store(static_cast<int>(WsState::kConnecting), std::memory_order_release);
+  s_connect_attempt_ms = millis();
+}
+
+bool ws_transport_send(const uint8_t* data, size_t len) {
+  if (ws_transport_state() != WsState::kConnected) {
+    return false;
+  }
+  if (!data || len == 0) {
+    return false;
+  }
+  if (ws_client.sendBIN(data, len)) {
+    return true;
+  }
+  ws_state.store(static_cast<int>(WsState::kDisconnected), std::memory_order_release);
+  log_warn("[WS_TRANSPORT] sendBIN fail → disconnected len=%u", (unsigned)len);
+  return false;
+}
+
+void ws_transport_on_link_down(const char* why) {
+  log_warn("[WS_TRANSPORT] wifi down (%s)", why ? why : "?");
+  ws_client.disconnect();
+  ws_state.store(static_cast<int>(WsState::kDisconnected), std::memory_order_release);
+  s_app_ready.store(false, std::memory_order_release);
+  s_connect_attempt_ms = 0;
+  mic_set_ws_state(kMicWsError);
+  pb_runtime_notify_link_down();
+}
+
+void ws_transport_on_link_up(void) {
+  log_info("[WS_TRANSPORT] wifi up");
+  ws_state.store(static_cast<int>(WsState::kDisconnected), std::memory_order_release);
+  s_connect_attempt_ms = 0;
 }
 
 void ws_transport_new_session(void) {
-  owner_lock();
   s_ws_session++;
-  s_session_has_connected = false;
-  owner_unlock();
-  /* force reconnect 会让旧 DISCONNECTED 事件因 session 过期被丢弃；
-   * 仍须由 PB 任务中止旧播放与状态，不能只清 RX 队列。 */
+  s_app_ready.store(false, std::memory_order_release);
+  mic_set_ws_state(kMicWsError);
   pb_runtime_notify_link_down();
-  log_info("[WS_TRANSPORT] new session=%u (old RX events and PB state will be dropped)",
-           (unsigned)s_ws_session);
+  log_info("[WS_TRANSPORT] new session=%u (PB state will be dropped)", (unsigned)s_ws_session);
 }
 
 bool ws_transport_enqueue_state(const char* json) {
@@ -348,11 +343,10 @@ bool ws_transport_enqueue_state(const char* json) {
   return enqueue_tx(&item);
 }
 
-bool ws_transport_enqueue_text(const char* json) {
-  return ws_transport_enqueue_state(json);
-}
-
 bool ws_transport_enqueue_audio(const char* json, const uint8_t* bin, size_t bin_len) {
+  if (!ws_transport_ok() || !ws_transport_ready()) {
+    return false;
+  }
   WsTxItem item{};
   if (!build_tx_item(WsTxType::kAudio, json, bin, bin_len, kMaxTxAudioBin, &item)) {
     return false;
@@ -360,163 +354,47 @@ bool ws_transport_enqueue_audio(const char* json, const uint8_t* bin, size_t bin
   return enqueue_tx(&item);
 }
 
-bool ws_transport_enqueue_image_borrow(const char* json, uint8_t* bin, size_t bin_len,
-                                       void (*releaser)(void* ctx), void* release_ctx) {
-  if (!json || !bin || bin_len == 0 || !releaser || bin_len > kMaxTxImageBin) {
+bool ws_transport_enqueue_camera(uint8_t* packed, size_t packed_len) {
+  if (!packed || packed_len == 0) {
+    free(packed);
     return false;
   }
-  if (!s_asr_ws || !s_asr_ws->isConnected() || asr_ws_state() != 0) {
+  if (!ws_transport_ok() || !ws_transport_ready()) {
+    free(packed);
     return false;
   }
   WsTxItem item{};
-  if (!build_tx_item(WsTxType::kImage, json, bin, bin_len, kMaxTxImageBin, &item)) {
-    return false;
-  }
-  /* 已拷入 packed，立刻归还借用缓冲。 */
-  releaser(release_ctx);
-  if (!enqueue_tx(&item)) {
-    return false;
-  }
-  return true;
+  item.type = WsTxType::kCamera;
+  item.packed = packed;
+  item.packed_len = packed_len;
+  return enqueue_tx(&item);
 }
 
 bool ws_transport_drain_tx(void) {
-  if (!s_tx_active) {
-    if (!take_next_tx_item(&s_tx_active_item)) {
-      return false;
-    }
-    s_tx_active = true;
-  }
-
-  const bool is_image = (s_tx_active_item.type == WsTxType::kImage);
-  WebSocketsClient* target = s_asr_ws;
-
-  /* 未就绪：保留队头，不计 send fail。 */
-  if (!target || !target->isConnected() || asr_ws_state() != 0) {
-    static unsigned long s_hold_log_ms = 0;
-    const unsigned long now = millis();
-    if (s_hold_log_ms == 0 || (now - s_hold_log_ms) >= 2000UL) {
-      log_warn("[WS_TRANSPORT] drain_tx hold type=%u (asr not ready)",
-               (unsigned)s_tx_active_item.type);
-      s_hold_log_ms = now;
-    }
+  if (!ws_transport_ok()) {
+    clear_tx_queue();
     return false;
   }
 
-  const bool ok = target->sendBIN(s_tx_active_item.packed, s_tx_active_item.packed_len);
-  if (!ok) {
-    log_warn("[WS_TRANSPORT] sendBIN fail type=%u packed_len=%u", (unsigned)s_tx_active_item.type,
-             (unsigned)s_tx_active_item.packed_len);
-    asr_ws_note_send_fail("sendBIN");
-  } else {
-    asr_ws_note_send_ok();
-  }
-  drain_tx_finish(is_image, ok);
-  return true;
-}
-
-void ws_transport_discard_audio_tx(void) {
-  owner_lock();
-  discard_tx_of_type(WsTxType::kAudio);
-  owner_unlock();
-}
-
-void ws_transport_discard_asr_tx(void) {
-  owner_lock();
-  discard_tx_of_type(WsTxType::kAudio);
-  discard_tx_of_type(WsTxType::kState);
-  discard_tx_of_type(WsTxType::kImage);
-  owner_unlock();
-}
-
-void ws_transport_discard_tx_queue(void) {
-  owner_lock();
-  discard_queue(s_tx_q);
-  if (s_tx_active) {
-    ws_tx_free_item(&s_tx_active_item);
-    s_tx_active = false;
-  }
-  owner_unlock();
-}
-
-uint32_t ws_transport_tx_slots_free(void) {
-  return (uint32_t)uxQueueSpacesAvailable(s_tx_q);
-}
-
-bool ws_transport_drain_rx(void) {
-  WsRxItem item{};
-  if (xQueueReceive(s_rx_q, &item, 0) != pdTRUE) {
-    return false;
-  }
-  if (item.session != s_ws_session) {
-    log_info("[WS_TRANSPORT] drop stale RX type=%u session=%u (cur=%u)", (unsigned)item.type,
-             (unsigned)item.session, (unsigned)s_ws_session);
-    free(item.data);
-    return true;
-  }
-  if (item.type == WStype_CONNECTED) {
-    s_session_has_connected = true;
-    log_info("[WS_TRANSPORT] connected (await ready)");
-    free(item.data);
-    return true;
-  }
-  if (item.type == WStype_DISCONNECTED) {
-    if (!s_session_has_connected) {
-      log_info("[WS_TRANSPORT] drop pre-connect DISCONNECTED session=%u", (unsigned)s_ws_session);
-      free(item.data);
-      return true;
-    }
-    mic_set_ws_state(kMicWsError);
-    pb_runtime_notify_link_down();
-    free(item.data);
-    return true;
-  }
-  if (item.type == WStype_BIN) {
-    /* 仅在未 ready 时窥探 ready；已 ready 后直接交 pb，避免每帧二次 deserialize。 */
-    if (asr_ws_state() != 0 && item.data && item.len >= 5) {
-      PackedFrame peek;
-      if (parse_packed_frame(item.data, item.len, peek)) {
-        const String t = peek.doc["type"].is<String>() ? peek.doc["type"].as<String>() : String("");
-        if (t == "ready") {
-          asr_ws_note_ready();
-          (void)opus_codec_decode_init();
-          if (!s_boot_connect_sent) {
-            if (ws_transport_enqueue_state("{\"type\":\"boot_connect\"}")) {
-              s_boot_connect_sent = true;
-              log_info("[WS_TRANSPORT] ready → boot_connect enqueued (first power-on)");
-            } else {
-              log_warn("[WS_TRANSPORT] ready → boot_connect enqueue failed");
-            }
-          } else {
-            log_info("[WS_TRANSPORT] ready (reconnect, skip boot_connect)");
-          }
-          free(item.data);
-          return true;
-        }
+  bool sent_any = false;
+  WsTxItem item{};
+  while (xQueueReceive(s_tx_q, &item, 0) == pdTRUE) {
+    const uint32_t t0 = millis();
+    const size_t plen = item.packed_len;
+    const bool ok = ws_transport_send(item.packed, plen);
+    const uint32_t send_ms = millis() - t0;
+    if (!ok) {
+      log_warn("[WS_TRANSPORT] sendBIN fail type=%u len=%u send_ms=%u", (unsigned)item.type,
+               (unsigned)plen, (unsigned)send_ms);
+      if (xQueueSendToFront(s_tx_q, &item, 0) != pdTRUE) {
+        ws_tx_free_item(&item);
       }
+      return sent_any;
     }
-    if (!pb_runtime_enqueue_frame(item.data, item.len)) {
-      free(item.data);
-    }
-    return true;
+    log_warn("[PB_LAT] tx_send type=%u len=%u send_ms=%u", (unsigned)item.type, (unsigned)plen,
+             (unsigned)send_ms);
+    ws_tx_free_item(&item);
+    sent_any = true;
   }
-  if (item.type == WStype_TEXT) {
-    log_warn("[WS_TRANSPORT] ignore legacy TEXT len=%u (expect packed BIN)", (unsigned)item.len);
-    free(item.data);
-    return true;
-  }
-  if (item.type == WStype_FRAGMENT_BIN_START || item.type == WStype_FRAGMENT ||
-      item.type == WStype_FRAGMENT_FIN) {
-    log_warn("[WS_TRANSPORT] FRAGMENT type=%d chunk_len=%u — firmware only handles single "
-             "WStype_BIN",
-             (int)item.type, (unsigned)item.len);
-    free(item.data);
-    return true;
-  }
-  free(item.data);
-  return true;
-}
-
-extern "C" void deskbot_ws_transport_write_pump(void) {
-  write_pump_impl();
+  return sent_any;
 }

@@ -1,6 +1,8 @@
 #include "utils.h"
 
+#include "deskbot_config.h"
 #include "logger.h"
+#include "nvs_config_utils.h"
 
 #include <FFat.h>
 #include <HTTPClient.h>
@@ -101,6 +103,73 @@ const char* get_device_id() {
   return id;
 }
 
+String json_escape(const String& raw) {
+  String out;
+  out.reserve(raw.length() + 8);
+  for (size_t i = 0; i < raw.length(); ++i) {
+    const char c = raw.charAt(i);
+    switch (c) {
+      case '\\':
+        out += "\\\\";
+        break;
+      case '"':
+        out += "\\\"";
+        break;
+      case '\b':
+        out += "\\b";
+        break;
+      case '\f':
+        out += "\\f";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        if ((uint8_t)c < 0x20) {
+          char buf[7];
+          snprintf(buf, sizeof(buf), "\\u%04x", (unsigned)c);
+          out += buf;
+        } else {
+          out += c;
+        }
+        break;
+    }
+  }
+  return out;
+}
+
+const char* get_server_ws_url() {
+  static char url[192];
+  url[0] = '\0';
+
+  char base[128];
+  base[0] = '\0';
+  const char* active = nvs_ws_get_active_id();
+  if (strcmp(active, "builtin") == 0) {
+    if (DESKBOT_WS_HOST[0] == '\0') {
+      return url;
+    }
+    snprintf(base, sizeof(base), "ws://%s:%u", DESKBOT_WS_HOST, (unsigned)DESKBOT_WS_PORT);
+  } else if (!nvs_ws_get_custom_url(active, base, sizeof(base)) || base[0] == '\0') {
+    return url;
+  }
+
+  /* 去掉 base 末尾多余 '/'，再拼服务路径与鉴权 query。 */
+  size_t base_len = strlen(base);
+  while (base_len > 0 && base[base_len - 1] == '/') {
+    base[--base_len] = '\0';
+  }
+  snprintf(url, sizeof(url), "%s/asr_chat?device_id=%s&pin_code=%s", base, get_device_id(),
+           nvs_get_pin_code());
+  return url;
+}
+
 namespace {
 
 bool ws_host_char_valid(char c) {
@@ -110,21 +179,21 @@ bool ws_host_char_valid(char c) {
 
 }  // namespace
 
-bool utils_parse_ws_url(const char* url, DeskbotWsTarget* out) {
-  if (url == nullptr || out == nullptr) {
+bool parse_ws_proto(const char* str, WsProto& out) {
+  out = {};
+  if (str == nullptr) {
     return false;
   }
-  memset(out, 0, sizeof(*out));
 
-  const char* p = url;
+  const char* p = str;
   while (*p == ' ') {
     ++p;
   }
   if (strncmp(p, "wss://", 6) == 0) {
-    out->use_ssl = true;
+    out.is_wss = true;
     p += 6;
   } else if (strncmp(p, "ws://", 5) == 0) {
-    out->use_ssl = false;
+    out.is_wss = false;
     p += 5;
   } else {
     return false;
@@ -134,33 +203,35 @@ bool utils_parse_ws_url(const char* url, DeskbotWsTarget* out) {
   const char* colon = strchr(p, ':');
   const char* slash = strchr(p, '/');
   const char* host_end = nullptr;
+  const uint16_t default_port = out.is_wss ? 443 : 80;
 
   if (colon != nullptr && (slash == nullptr || colon < slash)) {
     host_end = colon;
     const char* port_start = colon + 1;
-    if (*port_start < '0' || *port_start > '9') {
-      return false;
+    char* port_end = nullptr;
+    long port = 0;
+    if (*port_start >= '0' && *port_start <= '9') {
+      port = strtol(port_start, &port_end, 10);
+      p = port_end ? port_end : port_start;
+    } else {
+      p = port_start;
     }
-    const long port = strtol(port_start, const_cast<char**>(&p), 10);
-    if (port <= 0 || port > 65535) {
-      return false;
-    }
-    out->port = (uint16_t)port;
-    if (slash != nullptr && p > slash) {
+    out.port = (port > 0 && port <= 65535) ? (uint16_t)port : default_port;
+    if (slash != nullptr) {
       p = slash;
     }
   } else {
     host_end = slash != nullptr ? slash : (p + strlen(p));
-    out->port = out->use_ssl ? 443 : 80;
-    if (slash != nullptr) {
-      p = slash;
-    } else {
-      p = host_end;
-    }
+    out.port = default_port;
+    p = slash != nullptr ? slash : host_end;
+  }
+
+  if (out.port == 0) {
+    out.port = default_port;
   }
 
   const size_t host_len = (size_t)(host_end - host_start);
-  if (host_len == 0 || host_len >= sizeof(out->host)) {
+  if (host_len == 0 || host_len >= sizeof(out.host)) {
     return false;
   }
   for (size_t i = 0; i < host_len; ++i) {
@@ -168,8 +239,8 @@ bool utils_parse_ws_url(const char* url, DeskbotWsTarget* out) {
       return false;
     }
   }
-  memcpy(out->host, host_start, host_len);
-  out->host[host_len] = '\0';
+  memcpy(out.host, host_start, host_len);
+  out.host[host_len] = '\0';
 
   if (*p == '/') {
     const char* path_start = p;
@@ -177,18 +248,17 @@ bool utils_parse_ws_url(const char* url, DeskbotWsTarget* out) {
     while (path_end > path_start && path_end[-1] == '/') {
       --path_end;
     }
-    const size_t prefix_len = (size_t)(path_end - path_start);
-    if (prefix_len >= sizeof(out->path_prefix)) {
+    const size_t path_len = (size_t)(path_end - path_start);
+    if (path_len >= sizeof(out.path)) {
       return false;
     }
-    if (prefix_len > 0) {
-      memcpy(out->path_prefix, path_start, prefix_len);
-      out->path_prefix[prefix_len] = '\0';
+    if (path_len > 0) {
+      memcpy(out.path, path_start, path_len);
+      out.path[path_len] = '\0';
     }
   }
 
-  out->valid = out->host[0] != '\0' && out->port != 0;
-  return out->valid;
+  return out.host[0] != '\0';
 }
 
 bool utils_http_get_binary(const char* url, uint8_t** out_buf, size_t* out_len) {
