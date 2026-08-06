@@ -86,7 +86,7 @@ static bool camera_init_hw(void) {
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = kJpegQuality;
-  config.fb_count = 1;
+  config.fb_count = 2;
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
@@ -137,13 +137,23 @@ static bool camera_init_hw(void) {
 }
 
 static void camera_task(void* /*arg*/) {
+  uint32_t last_enq_fail_log_ms = 0;
   for (;;) {
     const uint32_t interval = s_interval_ms.load(std::memory_order_relaxed);
+    /* WS 未就绪时不抓不压：避免断线期间 frame2jpg 继续吃内部 heap，拖垮重连。 */
+    if (!ws_transport_ok() || !ws_transport_ready()) {
+      vTaskDelay(pdMS_TO_TICKS(interval > 0 ? interval : 1000u));
+      continue;
+    }
     uint8_t* packed = nullptr;
     size_t packed_len = 0;
     if (camera_try_capture_packed(&packed, &packed_len)) {
       if (!ws_transport_enqueue_camera(packed, packed_len)) {
-        log_warn("[CAMERA] enqueue failed len=%u", (unsigned)packed_len);
+        const uint32_t now = millis();
+        if (last_enq_fail_log_ms == 0 || (uint32_t)(now - last_enq_fail_log_ms) >= 5000u) {
+          last_enq_fail_log_ms = now;
+          log_warn("[CAMERA] enqueue failed len=%u", (unsigned)packed_len);
+        }
       }
     }
     vTaskDelay(pdMS_TO_TICKS(interval > 0 ? interval : 1000u));
@@ -217,6 +227,8 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
     return false;
   }
 
+  const uint32_t total_t0 = millis();
+
   const uint32_t fb_t0 = millis();
   camera_fb_t* fb = esp_camera_fb_get();
   const uint32_t fb_get_ms = millis() - fb_t0;
@@ -226,8 +238,8 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
     if (s_last_fb_null_log_ms == 0 ||
         (uint32_t)(now - s_last_fb_null_log_ms) >= kFbNullLogIntervalMs) {
       s_last_fb_null_log_ms = now;
-      log_warn("[CAMERA] fb_get null fb_get_ms=%u count=%u", (unsigned)fb_get_ms,
-               (unsigned)s_fb_null_count);
+      log_warn("[CAMERA] fb_get null fb_get_ms=%u total_ms=%u count=%u", (unsigned)fb_get_ms,
+               (unsigned)(millis() - total_t0), (unsigned)s_fb_null_count);
     }
     return false;
   }
@@ -235,6 +247,7 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
   uint8_t* jpg = nullptr;
   size_t jpg_len = 0;
   bool jpg_ok = false;
+  const uint32_t jpg_t0 = millis();
   if (fb->format == PIXFORMAT_JPEG) {
     if (fb->len > 0 && fb->len <= kMaxJpegBin) {
       jpg = (uint8_t*)malloc(fb->len);
@@ -254,6 +267,7 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
       jpg_ok = false;
     }
   }
+  const uint32_t jpg_ms = millis() - jpg_t0;
   esp_camera_fb_return(fb);
 
   if (!jpg_ok || !jpg || jpg_len == 0) {
@@ -261,7 +275,8 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
     if (jpg) {
       free(jpg);
     }
-    log_warn("[CAMERA] encode failed fb_get_ms=%u", (unsigned)fb_get_ms);
+    log_warn("[CAMERA] encode failed fb_get_ms=%u jpg_ms=%u total_ms=%u", (unsigned)fb_get_ms,
+             (unsigned)jpg_ms, (unsigned)(millis() - total_t0));
     return false;
   }
 
@@ -305,9 +320,10 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
   s_fb_null_count = 0;
   *packed = out;
   *packed_len = out_len;
+  const uint32_t total_ms = millis() - total_t0;
   if (seq <= 1u || (seq % 30u) == 0u) {
-    log_warn("[CAMERA] frame seq=%u jpeg=%uB fb_get_ms=%u", (unsigned)seq, (unsigned)len,
-             (unsigned)fb_get_ms);
+    log_warn("[CAMERA] frame seq=%u jpeg=%uB fb_get_ms=%u jpg_ms=%u total_ms=%u", (unsigned)seq,
+             (unsigned)len, (unsigned)fb_get_ms, (unsigned)jpg_ms, (unsigned)total_ms);
   }
   return true;
 }

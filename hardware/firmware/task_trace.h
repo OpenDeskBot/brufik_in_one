@@ -31,12 +31,6 @@ void log_stack_heap_tick();
  */
 void task_setup_cpu_runtime_stats();
 
-/**
- * 启动 CPU 统计：双核 tick hook 采样 + 每 5s 打印各任务 CPU 占比。
- * （Arduino-ESP32 2.x 预编译库无 vTaskGetRunTimeStats，用等价采样实现。）
- */
-void task_setup_cpu_runtime_stats();
-
 class LogTaskScope {
  public:
   LogTaskScope(const char* task, const char* detail = nullptr);
