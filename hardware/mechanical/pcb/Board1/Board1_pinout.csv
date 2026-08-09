@@ -1,40 +1,51 @@
-Connector,Pin,Net,Connects_To,Notes
-USB1,VBUS,+5V,H4-1 / J3-2 / J4-2,USB-C 供电
-USB1,GND,GND,公共地
-USB1,CC1,CC1,R1-1,5.1k 下拉
-USB1,CC2,CC2,R2-1,5.1k 下拉
-H3,1,D0/I2S_DIN,J2-3,MAX98357 DIN (GPIO1)
-H3,2,D1/LCD_CS,J1-5,屏幕 CS (GPIO2)
-H3,3,D2/LCD_DC,J1-6,屏幕 DC (GPIO3)
-H3,4,D3,NC,未使用
-H3,5,D4/I2S_LRC,J2-5,MAX98357 LRC (GPIO5)
-H3,6,D5/I2S_BCLK,J2-4,MAX98357 BCLK (GPIO6)
-H3,7,GND,GND,公共地
-H4,1,+5V,USB1-VBUS,5V 输入
-H4,2,+3V3,J2-1 / J1-1,逻辑/屏幕 3.3V
-H4,3,D6/SERVO_Y,J4-3,上下舵机 PWM (GPIO43)
-H4,4,D7/SERVO_X,J3-3,左右舵机 PWM (GPIO44)
-H4,5,D8/LCD_SCK,J1-4,屏幕 SCK (GPIO7)
-H4,6,D9,NC,未使用
-H4,7,D10/LCD_MOSI,J1-3,屏幕 MOSI (GPIO9)
-J2,1,+3V3,H4-2,功放板 3.3V
-J2,2,GND,GND,功放板 GND
-J2,3,D0/I2S_DIN,H3-1,功放板 DIN
-J2,4,D5/I2S_BCLK,H3-6,功放板 BCLK
-J2,5,D4/I2S_LRC,H3-5,功放板 LRC
-J2,6,SPK+,J1-7,功放板 SPK+
-J2,7,SPK-,J1-8,功放板 SPK-
-J1,1,+3V3,H4-2,头部 3.3V
-J1,2,GND,GND,头部 GND
-J1,3,D10/LCD_MOSI,H4-7,头部 MOSI
-J1,4,D8/LCD_SCK,H4-5,头部 SCK
-J1,5,D1/LCD_CS,H3-2,头部 CS
-J1,6,D2/LCD_DC,H3-3,头部 DC
-J1,7,SPK+,J2-6,头部喇叭 +
-J1,8,SPK-,J2-7,头部喇叭 -
-J3,1,GND,GND,舵机 GND (X)
-J3,2,+5V,USB1-VBUS,舵机 5V (X)
-J3,3,D7/SERVO_X,H4-4,左右(X) PWM
-J4,1,GND,GND,舵机 GND (Y)
-J4,2,+5V,USB1-VBUS,舵机 5V (Y)
-J4,3,D6/SERVO_Y,H4-3,上下(Y) PWM
+﻿Connector,Pin,Net,Connects_To,Notes
+[来源],原版嘉立创工程（ProDoc_Board1_2026-08-07.epro2）PCB 丝印+铜箔核对；排针命名与板面丝印一致：H3=右排(靠 USB-C/X舵机)、H4=左排(靠 Y舵机),,,
+USB1,A9,+5V,H3-1 / X舵机-2 / Y舵机-2 / vin-1(VIN),USB-C VBUS 5V 母线
+USB1,B9,+5V,H3-1 / X舵机-2 / Y舵机-2 / vin-1(VIN),与 A9 并联，同为 5V
+USB1,A12,GND,公共地,USB-C GND
+USB1,B12,GND,公共地,与 A12 并联，同为 GND
+USB1,A5,CC1,5.1k-1,CC1 经 5.1kΩ 下拉到地
+USB1,B5,CC2,1K1-1,CC2 经 1K1（同为 5.1kΩ）下拉到地
+H3,1,+5V(USB),USB1-A9/B9,XIAO USB 焊盘（板载 LDO 出 3.3V）
+H3,2,GND,USB1-A12/B12,XIAO GND
+H3,3,+3V3,vcc-1,XIAO 板载 3.3V 输出
+H3,4,MOSI(D10),vcc-3,屏幕 SPI 数据 MOSI (GPIO9)
+H3,5,SX(D9),X舵机-3,X 舵机信号 (GPIO8)
+H3,6,SCK(D8),vcc-4,屏幕 SPI 时钟 SCK (GPIO7)
+H3,7,NC(D7),—,悬空
+H4,1,DIN(D0),vin-5,MAX98357 DIN (GPIO1)
+H4,2,CS(D1),vcc-5,屏幕 CS (GPIO2)
+H4,3,DC(D2),vcc-6,屏幕 DC (GPIO3)
+H4,4,SY(D3),Y舵机-3,Y 舵机信号 (GPIO4)
+H4,5,LRC(D4),vin-7,MAX98357 LRC (GPIO5)
+H4,6,BCLK(D5),vin-6,MAX98357 BCLK (GPIO6)
+H4,7,NC(D6),—,悬空
+vcc,1,+3V3,H3-3,头部屏幕逻辑电源
+vcc,2,GND,H3-2 / vin-2,公共地
+vcc,3,LCD_DIN,H3-4 (D10),屏幕 MOSI
+vcc,4,LCD_CLK,H3-6 (D8),屏幕 SCK
+vcc,5,LCD_CS,H4-2 (D1),屏幕 CS
+vcc,6,LCD_DC,H4-3 (D2),屏幕 DC
+vcc,7,NC,—,未接（若需头部喇叭走线，自行接到 MAX98357 绿端子）
+vcc,8,NC,—,同上
+vcc,9,NC,—,1.25mm 8P 连接器侧脚，未接
+vcc,10,NC,—,同上
+vin,1,VIN,USB1-A9/B9,功放电源 5V（不是 3.3V）
+vin,2,GND,USB1-A12/B12 / vcc-2,功放地
+vin,3,SD,—,模块内部上拉使能，未接
+vin,4,GAIN,—,模块默认增益，未接
+vin,5,DIN,H4-1 (D0),I2S 数据
+vin,6,BCLK,H4-6 (D5),I2S 位时钟
+vin,7,LRC,H4-5 (D4),I2S 声道时钟
+X舵机,1,GND,USB1-A12/B12,舵机地（黑）
+X舵机,2,+5V,USB1-A9/B9,舵机电源（红）
+X舵机,3,SX(D9),H3-5,舵机信号（黄/白）GPIO8
+Y舵机,1,GND,USB1-A12/B12,舵机地（黑）
+Y舵机,2,+5V,USB1-A9/B9,舵机电源（红）
+Y舵机,3,SY(D3),H4-4,舵机信号（黄/白）GPIO4
+5.1k,1,CC1,USB1-A5,CC1 下拉电阻（0805 5.1kΩ）
+5.1k,2,GND,公共地,—
+1K1,1,CC2,USB1-B5,CC2 下拉电阻（位号 1K1，阻值同为 5.1kΩ，非 1.1kΩ）
+1K1,2,GND,公共地,—
+MAX98357 模块,绿端子 SPK+,喇叭+,—,喇叭直接接模块自带绿色 2P 接线端子
+MAX98357 模块,绿端子 SPK-,喇叭-,—,转接板本身不经过喇叭信号
