@@ -292,6 +292,26 @@ static CamPack camera_pick_pack(const uint8_t* buf, size_t len) {
   return best;
 }
 
+/** 诊断：dump 原始帧前 64 字节 + 解包后前 8 像素的 RGB 值。 */
+static void camera_diag_dump_frame(const camera_fb_t* fb) {
+  if (!fb || !fb->buf || fb->len < 64) return;
+  log_warn("[CAMERA/DIAG] fmt=%u %ux%u len=%u", (unsigned)fb->format,
+           (unsigned)fb->width, (unsigned)fb->height, (unsigned)fb->len);
+  /* 原始字节 */
+  char hex[200];
+  int pos = 0;
+  for (int i = 0; i < 64 && i < (int)fb->len; ++i) {
+    pos += snprintf(hex + pos, sizeof(hex) - pos, "%02x ", fb->buf[i]);
+  }
+  log_warn("[CAMERA/DIAG] raw: %s", hex);
+  /* 解包前 8 像素 */
+  for (int i = 0; i < 8; ++i) {
+    uint8_t r, g, b;
+    unpack_sample(fb->buf, i * 2u, s_cam_pack, &r, &g, &b);
+    log_warn("[CAMERA/DIAG] px%d pack=%s -> R=%u G=%u B=%u", i, cam_pack_name(s_cam_pack), r, g, b);
+  }
+}
+
 /** 解包为 BGR888（供 fmt2jpg RGB888：库内会 BGR→RGB）。 */
 static bool camera_buf_to_jpg(const uint8_t* src, size_t src_len, uint16_t width, uint16_t height,
                               CamPack pack, uint8_t quality, uint8_t** jpg, size_t* jpg_len) {
@@ -391,6 +411,7 @@ static bool camera_init_hw(void) {
     log_warn("[CAMERA] probe ok fmt=%u len=%uB %ux%u fb_get_ms=%u", (unsigned)probe->format,
              (unsigned)probe->len, (unsigned)probe->width, (unsigned)probe->height,
              (unsigned)got_ms);
+    camera_diag_dump_frame(probe);
     if (got_ms > 2500u) {
       log_warn("[CAMERA] probe fb_get too slow (%u ms), reject mode", (unsigned)got_ms);
       esp_camera_fb_return(probe);
@@ -409,26 +430,12 @@ static bool camera_init_hw(void) {
     }
 
     if (probe->format == PIXFORMAT_YUV422) {
-      /* 传感器 YUV422 + 库内 YUYV→JPEG（本机硬件 JPEG 不可用）。 */
+      /* 传感器 YUV422：直接用 kYuyv 手动解包，不走 frame2jpg（库版本兼容性问题）。 */
       s_cam_pack = CamPack::kYuyv;
-      uint8_t* jpg = nullptr;
-      size_t jpg_len = 0;
-      const bool jpg_ok = frame2jpg(probe, kJpegQuality, &jpg, &jpg_len);
-      log_warn("[CAMERA] pack=YUYV (lib frame2jpg) fmt=YUV422");
-      esp_camera_fb_return(probe);
-      if (!jpg_ok || !jpg || jpg_len == 0) {
-        log_error("[CAMERA] probe YUV frame2jpg failed");
-        if (jpg) {
-          free(jpg);
-        }
-        return false;
-      }
-      log_info("[CAMERA] probe jpeg=%uB", (unsigned)jpg_len);
-      free(jpg);
-      return true;
+    } else {
+      s_cam_pack = camera_pick_pack(probe->buf, probe->len);
     }
-
-    s_cam_pack = camera_pick_pack(probe->buf, probe->len);
+    /* 统一走 camera_buf_to_jpg 手动解包→JPEG */
     log_warn("[CAMERA] pack=%s (manual encode)", cam_pack_name(s_cam_pack));
     if (probe->len >= 8) {
       log_warn("[CAMERA] fb head %02x %02x %02x %02x %02x %02x %02x %02x", probe->buf[0],
@@ -465,7 +472,7 @@ static bool camera_init_hw(void) {
     const esp_err_t err = esp_camera_init(&config);
     if (err == ESP_OK) {
       s_hw_inited = true;
-      s_cam_pack = CamPack::kYuyv; /* frame2jpg 默认 YUYV；probe 仍会重选 */
+      s_cam_pack = CamPack::kYuyv;
       if (probe_after_init("YUV422")) {
         return true;
       }
@@ -499,7 +506,7 @@ static void task_loop_camera(void* /*arg*/) {
   uint32_t last_enq_fail_log_ms = 0;
   for (;;) {
     const uint32_t interval = s_interval_ms.load(std::memory_order_relaxed);
-    /* WS 未就绪时不抓不压：避免断线期间 frame2jpg 继续吃内部 heap，拖垮重连。 */
+    /* WS 未就绪时不抓不压：避免断线期间 JPEG 编码继续吃内部 heap，拖垮重连。 */
     if (!ws_transport_ok() || !ws_transport_ready()) {
       vTaskDelay(pdMS_TO_TICKS(interval > 0 ? interval : 1000u));
       continue;
@@ -603,6 +610,11 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
     return false;
   }
 
+  /* 诊断：前 3 帧 dump 原始像素 */
+  if (s_seq < 3u) {
+    camera_diag_dump_frame(fb);
+  }
+
   uint8_t* jpg = nullptr;
   size_t jpg_len = 0;
   bool jpg_ok = false;
@@ -616,16 +628,9 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
         jpg_ok = true;
       }
     }
-  } else if (fb->format == PIXFORMAT_YUV422) {
-    jpg_ok = frame2jpg(fb, kJpegQuality, &jpg, &jpg_len);
-    if (jpg_ok && jpg_len > kMaxJpegBin) {
-      log_warn("[CAMERA] jpeg too large %u", (unsigned)jpg_len);
-      free(jpg);
-      jpg = nullptr;
-      jpg_len = 0;
-      jpg_ok = false;
-    }
   } else {
+    /* 统一走 camera_buf_to_jpg：手动解包 YUV/RGB → BGR888 → fmt2jpg。
+     * 不用 frame2jpg：pioarduino 3.3.9 的 frame2jpg 在 S3 上 YUV→RGB 可能输出绿屏。 */
     jpg_ok = camera_fb_to_jpg(fb, kJpegQuality, &jpg, &jpg_len);
     if (jpg_ok && jpg_len > kMaxJpegBin) {
       log_warn("[CAMERA] jpeg too large %u", (unsigned)jpg_len);
