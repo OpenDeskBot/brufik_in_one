@@ -387,3 +387,8 @@ BaseType_t utils_task_create_pinned(TaskFunction_t fn, const char* name, uint32_
   /* 回落动态创建（可能仍走内部堆）。 */
   return xTaskCreatePinnedToCore(fn, name, stack_bytes, arg, prio, out_handle, core_id);
 }
+
+void* psram_malloc(size_t sz) {
+  void* p = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return p ? p : malloc(sz);
+}

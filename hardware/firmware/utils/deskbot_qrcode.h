@@ -2,8 +2,7 @@
  * MIT License — Richard Moore / Project Nayuki (ricmoo/QRCode).
  * Renamed to avoid ESP32 SDK qrcode.h conflict.
  */
-#ifndef DESKBOT_QRCODE_H
-#define DESKBOT_QRCODE_H
+#pragma once
 
 #include <stdint.h>
 
@@ -48,6 +47,4 @@ bool qrcode_getModule(QRCode* qrcode, uint8_t x, uint8_t y);
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif

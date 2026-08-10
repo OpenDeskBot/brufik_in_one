@@ -3,6 +3,23 @@
 #include "speaker.h"
 #include "task_trace.h"
 
+/** 解析 cmd 中从首个空格开始的空格分隔整数，写入 out[0..max_n-1]，返回实际解析个数。 */
+static int parse_int_args(const String& cmd, int* out, int max_n) {
+  int n = 0;
+  int i = cmd.indexOf(' ');
+  while (n < max_n && i >= 0) {
+    if (i + 1 >= (int)cmd.length()) break;
+    int j = cmd.indexOf(' ', i + 1);
+    String tok = (j < 0) ? cmd.substring(i + 1) : cmd.substring(i + 1, j);
+    tok.trim();
+    if (tok.length() == 0) break;
+    out[n++] = tok.toInt();
+    if (j < 0) break;
+    i = j;
+  }
+  return n;
+}
+
 void handle_cmd(String cmd) {
   if (Serial.available() > 0 && cmd == "") {
     cmd = Serial.readStringUntil('\n');
@@ -20,7 +37,7 @@ void handle_cmd(String cmd) {
     DeserializationError error = deserializeJson(doc, cmd);
 
     if (error) {
-      log_error("JSON parse failed: %s", error.c_str());
+      log_error("[CMD] JSON parse failed: %s", error.c_str());
       return;
     }
 
@@ -68,109 +85,46 @@ void executeCommand(String cmd) {
   } else if (cmd == "delay") {
     delay(1000);
   } else {
-    log_warn("Unknown action command: %s", cmd.c_str());
+    log_warn("[CMD] unknown action: %s", cmd.c_str());
     return;
   }
-  log_info("%s", cmd.c_str());
+  log_info("[CMD] %s", cmd.c_str());
 }
 
 void executeFactoryCommand(String cmd) {
   if (cmd == "reboot" || cmd == "restart") {
-    log_info("[Factory] Rebooting device...");
+    log_info("[CMD] Rebooting device...");
     ESP.restart();
   } else if (cmd == "head_clear_pending") {
     head_clear_motor_pending();
-    log_info("[Factory] head_clear_pending");
+    log_info("[CMD] head_clear_pending");
   } else if (cmd == "head_pos") {
     head_log_position();
   } else if (cmd.startsWith("head_move_abs_ex")) {
-    // head_move_abs_ex <x_deg> <y_deg> <step_deg> [hold_ms]
-    int v[5] = {0};
-    int n = 0;
-    int i = cmd.indexOf(' ');
-    while (n < 5 && i >= 0) {
-      int j = cmd.indexOf(' ', i + 1);
-      if (i + 1 >= (int)cmd.length()) {
-        break;
-      }
-      String tok = (j < 0) ? cmd.substring(i + 1) : cmd.substring(i + 1, j);
-      tok.trim();
-      if (tok.length() == 0) {
-        break;
-      }
-      v[n++] = tok.toInt();
-      if (j < 0) {
-        break;
-      }
-      i = j;
-    }
-    if (n < 3) {
-      log_warn("[Factory] head_move_abs_ex x y step [hold_ms]");
-    } else {
-      int x = v[0];
-      int y = v[1];
-      int step = constrain(v[2], 0, 255);
-      uint16_t hold_ms = (n >= 4 && v[3] > 0) ? (uint16_t)v[3] : 0;
-      head_move_abs_ex(x, y, (uint8_t)step, hold_ms);
-      log_info("[Factory] head_move_abs_ex %d %d step=%d hold=%u", x, y, step, (unsigned)hold_ms);
-    }
+    int v[5]; int n = parse_int_args(cmd, v, 5);
+    if (n < 3) { log_warn("[CMD] head_move_abs_ex x y step [hold_ms]"); }
+    else { head_move_abs_ex(v[0], v[1], (uint8_t)constrain(v[2], 0, 255),
+                           (n >= 4 && v[3] > 0) ? (uint16_t)v[3] : 0);
+           log_info("[CMD] head_move_abs_ex %d %d step=%d hold=%u", v[0], v[1], v[2],
+                    (n >= 4 && v[3] > 0) ? (unsigned)v[3] : 0u); }
   } else if (cmd.startsWith("head_move_abs")) {
-    int firstSpaceIndex = cmd.indexOf(' ');
-    if (firstSpaceIndex > 0) {
-      int secondSpaceIndex = cmd.indexOf(' ', firstSpaceIndex + 1);
-      if (secondSpaceIndex > 0) {
-        int x = cmd.substring(firstSpaceIndex + 1, secondSpaceIndex).toInt();
-        int y = cmd.substring(secondSpaceIndex + 1).toInt();
-        head_move_abs(x, y);
-        log_info("[Factory] head_move_abs %d %d", x, y);
-      }
-    }
+    int v[2]; int n = parse_int_args(cmd, v, 2);
+    if (n >= 2) { head_move_abs(v[0], v[1]); log_info("[CMD] head_move_abs %d %d", v[0], v[1]); }
   } else if (cmd.startsWith("head_move_ex")) {
-    // head_move_ex <dx> <dy> <step_deg> [hold_ms]
-    int v[5] = {0};
-    int n = 0;
-    int i = cmd.indexOf(' ');
-    while (n < 5 && i >= 0) {
-      int j = cmd.indexOf(' ', i + 1);
-      if (i + 1 >= (int)cmd.length()) {
-        break;
-      }
-      String tok = (j < 0) ? cmd.substring(i + 1) : cmd.substring(i + 1, j);
-      tok.trim();
-      if (tok.length() == 0) {
-        break;
-      }
-      v[n++] = tok.toInt();
-      if (j < 0) {
-        break;
-      }
-      i = j;
-    }
-    if (n < 3) {
-      log_warn("[Factory] head_move_ex dx dy step [hold_ms]");
-    } else {
-      int dx = v[0];
-      int dy = v[1];
-      int step = constrain(v[2], 0, 255);
-      uint16_t hold_ms = (n >= 4 && v[3] > 0) ? (uint16_t)v[3] : 0;
-      head_move_ex(dx, dy, (uint8_t)step, hold_ms);
-      log_info("[Factory] head_move_ex %d %d step=%d hold=%u", dx, dy, step, (unsigned)hold_ms);
-    }
+    int v[5]; int n = parse_int_args(cmd, v, 5);
+    if (n < 3) { log_warn("[CMD] head_move_ex dx dy step [hold_ms]"); }
+    else { head_move_ex(v[0], v[1], (uint8_t)constrain(v[2], 0, 255),
+                        (n >= 4 && v[3] > 0) ? (uint16_t)v[3] : 0);
+           log_info("[CMD] head_move_ex %d %d step=%d hold=%u", v[0], v[1], v[2],
+                    (n >= 4 && v[3] > 0) ? (unsigned)v[3] : 0u); }
   } else if (cmd.startsWith("head_move")) {
-    int firstSpaceIndex = cmd.indexOf(' ');
-    if (firstSpaceIndex > 0) {
-      int secondSpaceIndex = cmd.indexOf(' ', firstSpaceIndex + 1);
-      if (secondSpaceIndex > 0) {
-        int x_offset = cmd.substring(firstSpaceIndex + 1, secondSpaceIndex).toInt();
-        int y_offset = cmd.substring(secondSpaceIndex + 1).toInt();
-        head_move(x_offset, y_offset);
-      }
-    }
+    int v[2]; int n = parse_int_args(cmd, v, 2);
+    if (n >= 2) { head_move(v[0], v[1]); }
   } else if (cmd == "reset_wifi") {
     wifi_provision_reset();
   } else if (cmd == "chat") {
     /* 主 loop 已持续泵 pb；mic 自治上行，无需再切会话。 */
-    log_info("[Factory] chat: already running (serviceLoop + mic autonomous)");
+    log_info("[CMD] chat: already running (serviceLoop + mic autonomous)");
   } else if (cmd == "task") {
     log_task_dump();
   } else if (cmd.startsWith("play_url")) {
@@ -178,23 +132,23 @@ void executeFactoryCommand(String cmd) {
     // 典型用法：上位机合成 WAV、提供临时 URL，再经串口下发本命令由设备拉取播放。
     int firstSpaceIndex = cmd.indexOf(' ');
     if (firstSpaceIndex <= 0) {
-      log_warn("[Factory] play_url: empty url");
+      log_warn("[CMD] play_url: empty url");
       return;
     }
     String url = cmd.substring(firstSpaceIndex + 1);
     url.trim();
     if (url.isEmpty()) {
-      log_warn("[Factory] play_url: empty url");
+      log_warn("[CMD] play_url: empty url");
       return;
     }
-    log_info("[Factory] play_url: %s", url.c_str());
+    log_info("[CMD] play_url: %s", url.c_str());
     speaker_play_url(url.c_str());
   } else if (cmd.startsWith("asr_chat")) {
     /* mic_task 自治上行；无需再跑语音轮次。 */
-    log_info("[Factory] asr_chat: mic uplink is autonomous (no voice round)");
+    log_info("[CMD] asr_chat: mic uplink is autonomous (no voice round)");
   } else {
-    log_warn("[Factory] Unknown factory command: %s", cmd.c_str());
+    log_warn("[CMD] Unknown factory command: %s", cmd.c_str());
     return;
   }
-  log_info("%s", cmd.c_str());
+  log_info("[CMD] %s", cmd.c_str());
 }

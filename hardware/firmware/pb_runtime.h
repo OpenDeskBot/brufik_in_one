@@ -1,5 +1,4 @@
-#ifndef PB_RUNTIME_H
-#define PB_RUNTIME_H
+#pragma once
 
 #include <Arduino.h>
 #include "pb_model.h"
@@ -104,5 +103,3 @@ void pb_runtime_notify_link_down(void);
 
 /** 清空待处理下行帧（断线 / new_session）。 */
 void pb_runtime_discard_rx_queue(void);
-
-#endif

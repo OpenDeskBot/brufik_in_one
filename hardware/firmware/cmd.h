@@ -1,5 +1,4 @@
-#ifndef CMD_H
-#define CMD_H
+#pragma once
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -11,4 +10,3 @@ void handle_cmd(String cmd = "");
 void executeCommand(String cmd = "");
 void executeFactoryCommand(String cmd = "");
 
-#endif

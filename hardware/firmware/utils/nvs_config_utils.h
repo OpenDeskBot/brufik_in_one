@@ -1,5 +1,4 @@
-#ifndef DESKBOT_NVS_CONFIG_UTILS_H
-#define DESKBOT_NVS_CONFIG_UTILS_H
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -75,5 +74,3 @@ bool nvs_wifi_upsert(const char* ssid, const char* password);
 bool nvs_wifi_delete(const char* ssid);
 
 void nvs_wifi_clear();
-
-#endif

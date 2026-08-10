@@ -1,5 +1,4 @@
-#ifndef DESKBOT_WIFI_PROVISION_H
-#define DESKBOT_WIFI_PROVISION_H
+#pragma once
 
 typedef void (*WifiLinkHandler)(void);
 
@@ -26,5 +25,3 @@ void wifi_provision_maintain();
 
 /** 清除已保存 WiFi 并重启（串口 factory reset_wifi）。 */
 void wifi_provision_reset();
-
-#endif

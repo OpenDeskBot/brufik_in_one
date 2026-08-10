@@ -219,19 +219,12 @@ struct StoredLayer {
  * 插值前帧 + 当前帧共 12 层，原先为内部 DRAM BSS。它们仅由 display_render 串行访问，
  * 不是 DMA/ISR 数据，迁到 PSRAM 可回收约 30KB 内部 DRAM 给 Wi-Fi/lwIP 使用。
  */
+/** 6 层（bg, nose, mouth, eye_l, eye_r, extra）× prev/curr，数组化。 */
+static constexpr int kLayerCount = 6;
+
 struct StoredLayerPool {
-  StoredLayer prev_bg;
-  StoredLayer prev_nose;
-  StoredLayer prev_mouth;
-  StoredLayer prev_eye_l;
-  StoredLayer prev_eye_r;
-  StoredLayer prev_extra;
-  StoredLayer curr_bg;
-  StoredLayer curr_nose;
-  StoredLayer curr_mouth;
-  StoredLayer curr_eye_l;
-  StoredLayer curr_eye_r;
-  StoredLayer curr_extra;
+  StoredLayer prev[kLayerCount];
+  StoredLayer curr[kLayerCount];
 };
 
 static StoredLayerPool* s_layer_pool = nullptr;
@@ -257,12 +250,7 @@ static void pb_vector_interp_reset() {
     return;
   }
   s_have_prev = false;
-  memset(&s_layer_pool->prev_bg, 0, sizeof(s_layer_pool->prev_bg));
-  memset(&s_layer_pool->prev_nose, 0, sizeof(s_layer_pool->prev_nose));
-  memset(&s_layer_pool->prev_mouth, 0, sizeof(s_layer_pool->prev_mouth));
-  memset(&s_layer_pool->prev_eye_l, 0, sizeof(s_layer_pool->prev_eye_l));
-  memset(&s_layer_pool->prev_eye_r, 0, sizeof(s_layer_pool->prev_eye_r));
-  memset(&s_layer_pool->prev_extra, 0, sizeof(s_layer_pool->prev_extra));
+  memset(s_layer_pool->prev, 0, sizeof(s_layer_pool->prev));
 }
 
 static int lerp_i16(int16_t a, int16_t b, float t) {
@@ -358,15 +346,12 @@ static void layer_fill_from_pb_elements(const pb_anim_element* elements, size_t 
   }
 }
 
-static void stored_from_pb_elements(const pb_anim_element* elements, size_t count, StoredLayer* bg,
-                                    StoredLayer* nose, StoredLayer* mouth, StoredLayer* eye_l,
-                                    StoredLayer* eye_r, StoredLayer* extra) {
-  layer_fill_from_pb_elements(elements, count, pb_anim_element_layer::bg, bg);
-  layer_fill_from_pb_elements(elements, count, pb_anim_element_layer::nose, nose);
-  layer_fill_from_pb_elements(elements, count, pb_anim_element_layer::mouth, mouth);
-  layer_fill_from_pb_elements(elements, count, pb_anim_element_layer::eye_l, eye_l);
-  layer_fill_from_pb_elements(elements, count, pb_anim_element_layer::eye_r, eye_r);
-  layer_fill_from_pb_elements(elements, count, pb_anim_element_layer::extra, extra);
+static void stored_from_pb_elements(const pb_anim_element* elements, size_t count,
+                                    StoredLayer* out) {
+  for (int i = 0; i < kLayerCount; ++i) {
+    layer_fill_from_pb_elements(elements, count,
+        static_cast<pb_anim_element_layer>(i), &out[i]);
+  }
 }
 
 static void draw_prim(const StoredPrim& p) {
@@ -567,34 +552,18 @@ static void draw_layer_lerp(const StoredLayer* prev, const StoredLayer& curr, fl
   }
 }
 
-/** extra 层与其它层相同插值规则。 */
-static void draw_extra_layer_ordered(const StoredLayer* prev, const StoredLayer& curr, float t) {
-  draw_layer_lerp(prev, curr, t);
-}
-
-static void draw_stored_interpolated(const StoredLayer* pbg, const StoredLayer* pn, const StoredLayer* pm,
-                                     const StoredLayer* pel, const StoredLayer* per, const StoredLayer* pex,
-                                     const StoredLayer& cbg, const StoredLayer& cn, const StoredLayer& cm,
-                                     const StoredLayer& cel, const StoredLayer& cer, const StoredLayer& cex,
-                                     float t) {
-  draw_layer_lerp(pbg, cbg, t);
-  draw_layer_lerp(pn, cn, t);
-  draw_layer_lerp(pm, cm, t);
-  draw_layer_lerp(pel, cel, t);
-  draw_layer_lerp(per, cer, t);
-  draw_extra_layer_ordered(pex, cex, t);
+static void draw_stored_interpolated(const StoredLayer* prev, const StoredLayer* curr, float t) {
+  for (int i = 0; i < kLayerCount; ++i) {
+    draw_layer_lerp(prev ? &prev[i] : nullptr, curr[i], t);
+  }
 }
 
 static constexpr size_t kPbMaxAnimSegsPerChunk = 64;
 
-static void pb_commit_prev(const StoredLayer& bg, const StoredLayer& nose, const StoredLayer& mouth,
-                           const StoredLayer& eye_l, const StoredLayer& eye_r, const StoredLayer& extra) {
-  pb_commit_layer(&s_layer_pool->prev_bg, bg);
-  pb_commit_layer(&s_layer_pool->prev_nose, nose);
-  pb_commit_layer(&s_layer_pool->prev_mouth, mouth);
-  pb_commit_layer(&s_layer_pool->prev_eye_l, eye_l);
-  pb_commit_layer(&s_layer_pool->prev_eye_r, eye_r);
-  pb_commit_layer(&s_layer_pool->prev_extra, extra);
+static void pb_commit_prev(const StoredLayer* curr) {
+  for (int i = 0; i < kLayerCount; ++i) {
+    pb_commit_layer(&s_layer_pool->prev[i], curr[i]);
+  }
   s_have_prev = true;
 }
 
@@ -602,17 +571,14 @@ static std::atomic<bool> s_need_cancel{false};
 static bool poll_cancel();
 
 /** @return false 若中途 need_cancel。 */
-static bool pb_play_layers_interpolated(const StoredLayer* pbg, const StoredLayer* pn, const StoredLayer* pm,
-                                        const StoredLayer* pl, const StoredLayer* pr, const StoredLayer* px,
-                                        const StoredLayer& cbg, const StoredLayer& cn, const StoredLayer& cm,
-                                        const StoredLayer& cel, const StoredLayer& cer, const StoredLayer& cex,
+static bool pb_play_layers_interpolated(const StoredLayer* prev, const StoredLayer* curr,
                                         uint32_t segment_ms, uint16_t bg_rgb565) {
   if (poll_cancel()) {
     return false;
   }
   if (segment_ms == 0) {
     (*s_draw_gfx).fillScreen(bg_rgb565);
-    draw_stored_interpolated(pbg, pn, pm, pl, pr, px, cbg, cn, cm, cel, cer, cex, 1.f);
+    draw_stored_interpolated(prev, curr, 1.f);
     display_draw_mic_indicator();
     pb_canvas_push();
     return true;
@@ -640,7 +606,7 @@ static bool pb_play_layers_interpolated(const StoredLayer* pbg, const StoredLaye
     }
     const uint32_t t_push0 = millis();
     (*s_draw_gfx).fillScreen(bg_rgb565);
-    draw_stored_interpolated(pbg, pn, pm, pl, pr, px, cbg, cn, cm, cel, cer, cex, t);
+    draw_stored_interpolated(prev, curr, t);
     display_draw_mic_indicator();
     pb_canvas_push();
     const uint32_t push_ms = millis() - t_push0;
@@ -702,28 +668,15 @@ static void pb_render_anim_frames_timed(const pb_anim_frame* frames, size_t fram
     const pb_anim_frame& seg = frames[i];
     uint32_t seg_ms = seg.ms > 0 ? (uint32_t)seg.ms : 1u;
 
-    StoredLayer& cbg = s_layer_pool->curr_bg;
-    StoredLayer& cn = s_layer_pool->curr_nose;
-    StoredLayer& cm = s_layer_pool->curr_mouth;
-    StoredLayer& cel = s_layer_pool->curr_eye_l;
-    StoredLayer& cer = s_layer_pool->curr_eye_r;
-    StoredLayer& cex = s_layer_pool->curr_extra;
-    stored_from_pb_elements(seg.elements, seg.element_count, &cbg, &cn, &cm, &cel, &cer, &cex);
+    stored_from_pb_elements(seg.elements, seg.element_count, s_layer_pool->curr);
 
-    const uint16_t seg_bg = DESKBOT_DISPLAY_COLOR_BLACK;
+    const StoredLayer* prev = s_have_prev ? s_layer_pool->prev : nullptr;
 
-    const StoredLayer* pbg = s_have_prev ? &s_layer_pool->prev_bg : nullptr;
-    const StoredLayer* pn = s_have_prev ? &s_layer_pool->prev_nose : nullptr;
-    const StoredLayer* pm = s_have_prev ? &s_layer_pool->prev_mouth : nullptr;
-    const StoredLayer* pl = s_have_prev ? &s_layer_pool->prev_eye_l : nullptr;
-    const StoredLayer* pr = s_have_prev ? &s_layer_pool->prev_eye_r : nullptr;
-    const StoredLayer* px = s_have_prev ? &s_layer_pool->prev_extra : nullptr;
-
-    if (!pb_play_layers_interpolated(pbg, pn, pm, pl, pr, px, cbg, cn, cm, cel, cer, cex, seg_ms,
-                                     seg_bg)) {
+    if (!pb_play_layers_interpolated(prev, s_layer_pool->curr, seg_ms,
+                                     DESKBOT_DISPLAY_COLOR_BLACK)) {
       return;
     }
-    pb_commit_prev(cbg, cn, cm, cel, cer, cex);
+    pb_commit_prev(s_layer_pool->curr);
     seg_idx++;
   }
   log_warn("[PB_LAT] display_job_end frames=%u budget_sum=%u wall=%u", (unsigned)frame_count,
@@ -793,7 +746,7 @@ static void execute_display_job(DisplayRequest& req) {
   }
 }
 
-static void display_render_task(void* /*arg*/) {
+static void task_loop_display_render(void* /*arg*/) {
   DisplayRequest req{};
   for (;;) {
     (void)poll_cancel();
@@ -839,7 +792,7 @@ void task_setup_display() {
     /* U8g2 drawUTF8(gb2312) 栈较深；10KB 会触发 canary。 */
     /* prio 贴近 speaker(7)：预取可达 1s，过低会被音频饿死导致嘴形滞后。 */
     const BaseType_t rc =
-        utils_task_create_pinned(display_render_task, "display_render", 24 * 1024, nullptr, 6,
+        utils_task_create_pinned(task_loop_display_render, "display_render", 24 * 1024, nullptr, 6,
                                  &s_task, APP_CPU_NUM);
     if (rc != pdPASS) {
       log_error("[DISPLAY] task create failed rc=%d", (int)rc);
@@ -849,11 +802,6 @@ void task_setup_display() {
 }
 
 static void display_enqueue_request(DisplayRequest& req, bool wait_done) {
-  if (!s_queue) {
-    log_warn("[DISPLAY] queue not ready; free submit");
-    free_display_request(req);
-    return;
-  }
   if (wait_done) {
     xSemaphoreTake(s_caller_lock, portMAX_DELAY);
     xSemaphoreTake(s_done_sem, 0);

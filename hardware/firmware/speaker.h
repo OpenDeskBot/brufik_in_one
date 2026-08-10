@@ -1,5 +1,4 @@
-#ifndef SPEAKER_H
-#define SPEAKER_H
+#pragma once
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -47,5 +46,3 @@ void speaker_abort();
 /** xQueue 缓冲深度（供 pb 回压 / ack）。 */
 unsigned speaker_input_queue_depth();
 bool speaker_stream_pcm_active();
-
-#endif

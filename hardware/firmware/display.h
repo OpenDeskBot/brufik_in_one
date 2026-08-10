@@ -1,5 +1,4 @@
-#ifndef DISPLAY_H
-#define DISPLAY_H
+#pragma once
 
 #include <Arduino.h>
 #include <Adafruit_GFX.h>
@@ -61,4 +60,3 @@ unsigned display_render_input_queue_depth();
 /** 麦克风上行是否有效：屏顶麦克风图标，绿=开麦，红=关麦（跟 mic_capture_allowed）。 */
 bool deskbot_mic_uplink_active(void);
 
-#endif

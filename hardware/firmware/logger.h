@@ -1,5 +1,4 @@
-#ifndef LOGGER_H
-#define LOGGER_H
+#pragma once
 
 #include <Arduino.h>
 
@@ -28,4 +27,3 @@ void log_trace(const char* format, ...);
 void log_print(const char* format, ...);
 void log_println(const char* format, ...);
 
-#endif // LOGGER_H 

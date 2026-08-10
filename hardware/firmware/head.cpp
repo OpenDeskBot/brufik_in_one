@@ -296,7 +296,7 @@ static void execute_job(MotorJob& job) {
 
 /* ---- motor_task ---- */
 
-static void motor_task(void* /*arg*/) {
+static void task_loop_motor(void* /*arg*/) {
   MotorJob job{};
   for (;;) {
     (void)poll_cancel();
@@ -319,11 +319,6 @@ static void motor_task(void* /*arg*/) {
 
 /** 非阻塞入队。队列满时保留既有动作，丢弃新命令而不破坏正在排队的手势序列。 */
 static bool enqueue_motor_job(MotorJob job) {
-  if (!s_motor_queue) {
-    free_motor_job(job);
-    log_warn("[HEAD] motor queue not ready; drop command");
-    return false;
-  }
   if (xQueueSend(s_motor_queue, &job, 0) != pdTRUE) {
     free_motor_job(job);
     log_warn("[HEAD] motor queue full; drop new command");
@@ -360,7 +355,7 @@ void task_setup_head() {
     return;
   }
   const BaseType_t rc =
-      utils_task_create_pinned(motor_task, "motor", 8 * 1024, nullptr, 3, &s_motor_task, APP_CPU_NUM);
+      utils_task_create_pinned(task_loop_motor, "motor", 8 * 1024, nullptr, 3, &s_motor_task, APP_CPU_NUM);
   if (rc != pdPASS) {
     log_error("[HEAD] motor task create rc=%d", (int)rc);
   } else {

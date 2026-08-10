@@ -1,5 +1,4 @@
-#ifndef Head_h
-#define Head_h
+#pragma once
 
 #include <stddef.h>
 #include <ESP32Servo.h>
@@ -80,4 +79,3 @@ void head_clear_motor_pending();
 /** xQueue 缓冲深度（供 pb 回压）。 */
 unsigned head_motor_input_queue_depth();
 
-#endif

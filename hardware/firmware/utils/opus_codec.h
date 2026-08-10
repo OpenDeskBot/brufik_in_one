@@ -1,5 +1,4 @@
-#ifndef OPUS_CODEC_H
-#define OPUS_CODEC_H
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -29,6 +28,4 @@ size_t opus_codec_decode_batch(const uint8_t* payload, size_t len, int sample_ra
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif

@@ -1,5 +1,4 @@
-#ifndef PB_MODEL_H
-#define PB_MODEL_H
+#pragma once
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -147,5 +146,3 @@ const char* pb_model_type_name(int type);
 bool pb_model_is_play_type(int type);
 /** 队列调度链首：``pb_start`` / ``pb_single`` 且 ``idx==0``。 */
 bool pb_model_is_chain_head(const pb_model& model);
-
-#endif

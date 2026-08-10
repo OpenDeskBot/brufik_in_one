@@ -1,5 +1,4 @@
-#ifndef MIC_H
-#define MIC_H
+#pragma once
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -31,6 +30,8 @@ enum MicWsState : int8_t {
 };
 
 bool setup_mic();
+/** 相机 GDMA 重 init 后必须再调：否则 I2S0 PDM 常读空/挂死，表现为不收音。 */
+bool mic_restart_pdm();
 void task_setup_mic();
 
 void mic_set_speaker_state(MicSpeakerState s);
@@ -45,4 +46,3 @@ bool mic_capture_allowed(void);
 void enhance_voice(int16_t* data, size_t length);
 void enhance_voice_reset(void);
 
-#endif

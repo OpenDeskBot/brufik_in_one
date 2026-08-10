@@ -29,14 +29,14 @@ constexpr size_t kPlayBlockSamples = 1024;
 
 static std::atomic<bool> s_is_speaking{false};
 static std::atomic<float> s_volume{DESKBOT_AUDIO_PLAY_VOLUME};
-/** 流式会话：仅 speaker_task 写；pb 经 speaker_stream_pcm_active() 跨任务读 → 保持 atomic。 */
+/** 流式会话：仅 task_loop_speaker 写；pb 经 speaker_stream_pcm_active() 跨任务读 → 保持 atomic。 */
 static std::atomic<bool> s_stream_active{false};
 /** 跨任务请求取消当前 i2s 写出（abort 置位，见到 cancel 后清位）。 */
 static std::atomic<bool> s_need_cancel{false};
-/** 仅 speaker_task 访问。 */
+/** 仅 task_loop_speaker 访问。 */
 static bool s_mic_speak_held = false;
 static uint32_t s_i2s_rate = SAMPLE_RATE;
-static QueueHandle_t s_q = nullptr;
+static QueueHandle_t s_queue = nullptr;
 static TaskHandle_t s_task = nullptr;
 
 /* 与 mic 同用新 I2S 驱动（不可与 legacy driver/i2s.h 混用）。 */
@@ -128,11 +128,11 @@ static HeapFree caps_to_mode(uint32_t caps) {
 }
 
 static bool enqueue(Job& j) {
-  /* 满则失败（不从队列偷包，避免与 speaker_task 双消费者竞态）。 */
+  /* 满则失败（不从队列偷包，避免与 task_loop_speaker 双消费者竞态）。 */
   if (j.type == JobType::kChunk || j.type == JobType::kPbAudio) {
-    return xQueueSend(s_q, &j, 0) == pdTRUE;
+    return xQueueSend(s_queue, &j, 0) == pdTRUE;
   }
-  return xQueueSend(s_q, &j, portMAX_DELAY) == pdTRUE;
+  return xQueueSend(s_queue, &j, portMAX_DELAY) == pdTRUE;
 }
 
 /** 停流并放麦；force 时即使未 begin 也清 I2S/麦（WAV 收尾/abort）。 */
@@ -153,7 +153,7 @@ static bool poll_cancel() {
     return false;
   }
   Job j{};
-  while (xQueueReceive(s_q, &j, 0) == pdTRUE) {
+  while (xQueueReceive(s_queue, &j, 0) == pdTRUE) {
     if (j.type == JobType::kCancel) {
       s_need_cancel.store(false, std::memory_order_release);
       finish_cancel();
@@ -338,15 +338,11 @@ static bool play_pb_audio_owned(pb_audio* audio) {
   if (strcmp(audio->fmt, "opus") == 0) {
     const uint16_t opus_frames = audio->frames > 0 ? (uint16_t)audio->frames : (uint16_t)1;
     const size_t cap = opus_codec_decode_out_cap((int)audio->sr, opus_frames);
-    pcm_owned =
-        (int16_t*)heap_caps_malloc(cap * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!pcm_owned) {
-      pcm_owned = (int16_t*)heap_caps_malloc(cap * sizeof(int16_t), MALLOC_CAP_DEFAULT);
-      free_mode = HeapFree::kMalloc;
-    }
+    pcm_owned = (int16_t*)psram_malloc(cap * sizeof(int16_t));
     if (!pcm_owned) {
       return false;
     }
+    free_mode = HeapFree::kMalloc;
     samples = opus_frames > 1 ? opus_codec_decode_batch(payload, length, (int)audio->sr, opus_frames,
                                                         pcm_owned, cap)
                               : opus_codec_decode(payload, length, (int)audio->sr, pcm_owned, cap);
@@ -358,14 +354,11 @@ static bool play_pb_audio_owned(pb_audio* audio) {
     if ((length & 1u) != 0u) {
       return false;
     }
-    pcm_owned = (int16_t*)heap_caps_malloc(length, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!pcm_owned) {
-      pcm_owned = (int16_t*)heap_caps_malloc(length, MALLOC_CAP_DEFAULT);
-      free_mode = HeapFree::kMalloc;
-    }
+    pcm_owned = (int16_t*)psram_malloc(length);
     if (!pcm_owned) {
       return false;
     }
+    free_mode = HeapFree::kMalloc;
     memcpy(pcm_owned, payload, length);
     samples = length / 2;
   }
@@ -431,11 +424,11 @@ static void execute_job(Job& job) {
   }
 }
 
-static void speaker_task(void*) {
+static void task_loop_speaker(void*) {
   Job job{};
   for (;;) {
     (void)poll_cancel();
-    if (xQueueReceive(s_q, &job, portMAX_DELAY) != pdTRUE) {
+    if (xQueueReceive(s_queue, &job, portMAX_DELAY) != pdTRUE) {
       continue;
     }
     if (job.type == JobType::kCancel) {
@@ -468,26 +461,27 @@ void setup_speaker() {
     return;
   }
   s_i2s_rate = SAMPLE_RATE;
-  log_info("[SPEAKER] ready ESP_I2S DIN=%d vol=%.2f", (int)MAX98357_DIN,
-           (double)s_volume.load(std::memory_order_relaxed));
+  if (!s_queue) {
+    s_queue = xQueueCreate(SPEAKER_QUEUE_DEPTH, sizeof(Job));
+    if (!s_queue) {
+      log_error("[SPEAKER] queue create failed");
+      return;
+    }
+  }
+  log_info("[SPEAKER] ready ESP_I2S DIN=%d vol=%.2f depth=%d", (int)MAX98357_DIN,
+           (double)s_volume.load(std::memory_order_relaxed), (int)SPEAKER_QUEUE_DEPTH);
 }
 
 void task_setup_speaker() {
-  if (s_q && s_task) {
+  if (s_task) {
     return;
   }
-  if (!s_q) {
-    s_q = xQueueCreate(SPEAKER_QUEUE_DEPTH, sizeof(Job));
-  }
-  if (!s_task) {
-    const BaseType_t rc = utils_task_create_pinned(speaker_task, "speaker", kSpeakerTaskStack,
-                                                   nullptr, 7, &s_task, APP_CPU_NUM);
-    if (rc != pdPASS) {
-      log_error("[SPEAKER] task create rc=%d", (int)rc);
-    } else {
-      log_info("[SPEAKER] task started stack=%u depth=%d", (unsigned)kSpeakerTaskStack,
-               (int)SPEAKER_QUEUE_DEPTH);
-    }
+  const BaseType_t rc = utils_task_create_pinned(task_loop_speaker, "speaker", kSpeakerTaskStack,
+                                                 nullptr, 7, &s_task, APP_CPU_NUM);
+  if (rc != pdPASS) {
+    log_error("[SPEAKER] task create rc=%d", (int)rc);
+  } else {
+    log_info("[SPEAKER] task started stack=%u", (unsigned)kSpeakerTaskStack);
   }
 }
 
@@ -513,7 +507,7 @@ bool speaker_stream_pcm_active() {
 }
 
 unsigned speaker_input_queue_depth() {
-  return (unsigned)uxQueueMessagesWaiting(s_q);
+  return (unsigned)uxQueueMessagesWaiting(s_queue);
 }
 
 bool speaker_stream_pcm16_begin(uint32_t sample_rate, uint8_t channels) {
@@ -572,7 +566,7 @@ void speaker_abort() {
   Job j{};
   j.type = JobType::kCancel;
   s_need_cancel.store(true, std::memory_order_release);
-  (void)xQueueSend(s_q, &j, portMAX_DELAY);
+  (void)xQueueSend(s_queue, &j, portMAX_DELAY);
 }
 
 bool speaker_play_url(const char* url) {

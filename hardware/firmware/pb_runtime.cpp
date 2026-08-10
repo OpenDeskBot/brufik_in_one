@@ -15,6 +15,11 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+static void safe_copy(char* dst, size_t cap, const char* src) {
+  strncpy(dst, src, cap);
+  dst[cap - 1] = '\0';
+}
+
 PbRuntime::PbRuntime() {}
 
 uint8_t PbRuntime::normalizeAudioCh(uint8_t ch) {
@@ -115,8 +120,7 @@ void PbRuntime::maybeAck(const pb_model& model) {
     return;
   }
   updateAudioBufDecayWall();
-  strncpy(pb_ack_out_req_, model.req, sizeof(pb_ack_out_req_));
-  pb_ack_out_req_[sizeof(pb_ack_out_req_) - 1] = '\0';
+  safe_copy(pb_ack_out_req_, sizeof(pb_ack_out_req_), model.req);
   pb_ack_out_idx_ = (uint32_t)model.idx;
   const uint32_t chunk_ms = model.chunk_ms > 0 ? (uint32_t)model.chunk_ms : 127u;
   const unsigned qd = speaker_input_queue_depth();
@@ -142,8 +146,7 @@ void PbRuntime::applySideEffects(const pb_model& model) {
     pb_ch_ = model.ch;
   }
   if (model.fmt[0] != '\0') {
-    strncpy(pb_fmt_, model.fmt, sizeof(pb_fmt_));
-    pb_fmt_[sizeof(pb_fmt_) - 1] = '\0';
+    safe_copy(pb_fmt_, sizeof(pb_fmt_), model.fmt);
   }
 }
 
@@ -214,8 +217,7 @@ void PbRuntime::onChainHead(pb_model& model) {
     }
   }
 
-  strncpy(pb_req_, model.req, sizeof(pb_req_));
-  pb_req_[sizeof(pb_req_) - 1] = '\0';
+  safe_copy(pb_req_, sizeof(pb_req_), model.req);
   if (!voice_servo_only) {
     tts_active_ = true;
   }
@@ -251,8 +253,7 @@ bool PbRuntime::dispatchAudio(pb_model& model) {
     audio->ch = pb_ch_;
   }
   if (audio->fmt[0] == '\0' && pb_fmt_[0] != '\0') {
-    strncpy(audio->fmt, pb_fmt_, sizeof(audio->fmt));
-    audio->fmt[sizeof(audio->fmt) - 1] = '\0';
+    safe_copy(audio->fmt, sizeof(audio->fmt), pb_fmt_);
   }
   if (!speaker_submit_pb_audio_owned(audio)) {
     return false;
@@ -417,6 +418,11 @@ bool s_has_dispatched_model = false;
 /** 当前已 dispatch、仍在 chunk_ms 节拍中的优先级（不在 ring 内）。 */
 int s_playing_level = -1;
 
+static void reset_credit() {
+  s_dispatch_credit_ms = 0;
+  s_credit_wall_ms = millis();
+}
+
 size_t model_ring_at(size_t offset) {
   return (s_model_head + offset) % kPbModelRingCapacity;
 }
@@ -440,8 +446,7 @@ void model_ring_clear() {
   s_model_count = 0;
   s_has_dispatched_model = false;
   s_playing_level = -1;
-  s_dispatch_credit_ms = 0;
-  s_credit_wall_ms = millis();
+  reset_credit();
 }
 
 void dispatch_credit_decay(uint32_t now) {
@@ -573,8 +578,7 @@ bool model_ring_push(PbModelSlot& incoming) {
                  (unsigned)dropped);
       }
       /* replace 链头：清信用以便立刻派发；执行器打断由随后 onChainHead 负责。 */
-      s_dispatch_credit_ms = 0;
-      s_credit_wall_ms = millis();
+      reset_credit();
     }
     if (!servo_overlay) {
       const size_t dropped_lower = model_ring_drop_below_level(model.level);
@@ -585,8 +589,7 @@ bool model_ring_push(PbModelSlot& incoming) {
         speaker_abort();
         display_abort();
         head_abort();
-        s_dispatch_credit_ms = 0;
-        s_credit_wall_ms = millis();
+        reset_credit();
       }
     }
     const int max_level = model_ring_max_level();
@@ -625,8 +628,7 @@ bool model_ring_push(PbModelSlot& incoming) {
     log_info("[PB_SCHED] preempt now: incoming level=%d playing level=%d (flush credit)",
              incoming_level, s_playing_level);
     /* 不在此 abortRound：口播中的 realtime servo replace 只清舵机，由 onChainHead 决定。 */
-    s_dispatch_credit_ms = 0;
-    s_credit_wall_ms = millis();
+    reset_credit();
   }
   return true;
 }
@@ -677,8 +679,7 @@ void model_ring_dispatch_due(uint32_t now) {
     const int dispatch_level = slot.model.level;
     const int idx = slot.model.idx;
     char req_snap[37];
-    strncpy(req_snap, slot.model.req, sizeof(req_snap));
-    req_snap[sizeof(req_snap) - 1] = '\0';
+    safe_copy(req_snap, sizeof(req_snap), slot.model.req);
     const uint32_t t_disp = millis();
     s_runtime.dispatchModel(slot.model);
     const uint32_t disp_ms = millis() - t_disp;
@@ -702,7 +703,7 @@ void model_ring_dispatch_due(uint32_t now) {
   }
 }
 
-void pb_runtime_task(void* /*arg*/) {
+void task_loop_pb_runtime(void* /*arg*/) {
   for (;;) {
     /* 信用未满时短等收帧并尽量派发；已满则按墙钟 tick 等待再扣减。 */
     dispatch_credit_decay(millis());
@@ -783,7 +784,7 @@ bool task_setup_pb_runtime(void) {
   if (s_task) {
     return true;
   }
-  BaseType_t rc = utils_task_create_pinned(pb_runtime_task, "pb_runtime", kPbRuntimeStack, nullptr,
+  BaseType_t rc = utils_task_create_pinned(task_loop_pb_runtime, "pb_runtime", kPbRuntimeStack, nullptr,
                                            kPbRuntimePrio, &s_task, APP_CPU_NUM);
   if (rc != pdPASS) {
     log_error("[PB_RUNTIME] task create failed rc=%d (internal free=%u)", (int)rc,

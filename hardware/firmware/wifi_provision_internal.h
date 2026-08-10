@@ -1,5 +1,4 @@
-#ifndef DESKBOT_WIFI_PROVISION_INTERNAL_H
-#define DESKBOT_WIFI_PROVISION_INTERNAL_H
+#pragma once
 
 #include <Arduino.h>
 #include <WebServer.h>
@@ -49,5 +48,3 @@ void wifi_handle_events_in_main_context(void);
 
 void wifi_portal_setup_http(void);
 void wifi_portal_stop(bool power_off);
-
-#endif

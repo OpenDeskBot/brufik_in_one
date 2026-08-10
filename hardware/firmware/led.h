@@ -1,5 +1,4 @@
-#ifndef LED_H
-#define LED_H
+#pragma once
 
 #include <Arduino.h>
 
@@ -18,4 +17,3 @@ void setup_led();
 void set_led(uint32_t color, uint8_t brightness = 100);
 void blink_led(uint32_t color = COLOR_BLUE, uint8_t times = 1, uint8_t brightness = 5);
 
-#endif

@@ -106,7 +106,7 @@ static bool build_tx_item(WsTxType type, const char* json, const uint8_t* bin, s
   return out->packed != nullptr;
 }
 
-static void ws_transport_task(void* /*arg*/) {
+static void task_loop_ws_transport(void* /*arg*/) {
   for (;;) {
     ws_transport_ensure_connected();
     ws_client.loop();
@@ -226,7 +226,7 @@ bool task_setup_ws_transport(void) {
   if (s_task) {
     return true;
   }
-  BaseType_t rc = utils_task_create_pinned(ws_transport_task, "ws_transport", kTaskStack, nullptr,
+  BaseType_t rc = utils_task_create_pinned(task_loop_ws_transport, "ws_transport", kTaskStack, nullptr,
                                            kTaskPrio, &s_task, APP_CPU_NUM);
   if (rc != pdPASS) {
     log_error("[WS_TRANSPORT] task create failed rc=%d (internal free=%u)", (int)rc,

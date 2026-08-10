@@ -1,5 +1,4 @@
-#ifndef WS_TRANSPORT_H
-#define WS_TRANSPORT_H
+#pragma once
 
 #include <Arduino.h>
 #include <WebSocketsClient.h>
@@ -73,5 +72,3 @@ bool ws_transport_enqueue_audio(const char* json, const uint8_t* bin, size_t bin
  * 接管 packed 所有权：成功由 TX 队列释放；失败立即 free。
  */
 bool ws_transport_enqueue_camera(uint8_t* packed, size_t packed_len);
-
-#endif

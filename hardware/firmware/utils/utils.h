@@ -1,5 +1,4 @@
-#ifndef UTILS_H
-#define UTILS_H
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -89,4 +88,5 @@ BaseType_t utils_task_create_pinned(TaskFunction_t fn, const char* name, uint32_
                                     void* arg, UBaseType_t prio, TaskHandle_t* out_handle,
                                     BaseType_t core_id);
 
-#endif
+/** PSRAM 优先分配，失败回落内部堆。调用方 free() 或 heap_caps_free() 均可。 */
+void* psram_malloc(size_t sz);

@@ -1,5 +1,4 @@
-#ifndef DESKBOT_BOOT_GUIDE_H
-#define DESKBOT_BOOT_GUIDE_H
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -40,5 +39,3 @@ void deskbot_ws_build_service_path(char* buf, size_t buf_sz, const DeskbotWsTarg
 void deskbot_ws_client_begin(WebSocketsClient& client, const char* path_and_query);
 
 void deskbot_ws_format_active_url(char* buf, size_t buf_sz);
-
-#endif

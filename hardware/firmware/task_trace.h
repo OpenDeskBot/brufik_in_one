@@ -1,5 +1,4 @@
-#ifndef TASK_TRACE_H
-#define TASK_TRACE_H
+#pragma once
 
 #include <Arduino.h>
 
@@ -43,5 +42,3 @@ class LogTaskScope {
 
 #define LOG_TASK_SCOPE(task) LogTaskScope _log_task_scope_##__LINE__(task)
 #define LOG_TASK_SCOPE_D(task, detail) LogTaskScope _log_task_scope_##__LINE__(task, detail)
-
-#endif

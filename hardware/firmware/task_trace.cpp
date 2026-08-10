@@ -158,7 +158,7 @@ void dump_cpu_runtime_stats() {
            (int)portNUM_PROCESSORS);
 }
 
-void cpu_runtime_stats_task(void* /*arg*/) {
+void task_loop_cpu_runtime_stats(void* /*arg*/) {
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(DESKBOT_CPU_STATS_INTERVAL_MS));
     dump_cpu_runtime_stats();
@@ -326,7 +326,7 @@ void task_setup_cpu_runtime_stats() {
   }
 
   const BaseType_t ok = xTaskCreatePinnedToCore(
-      cpu_runtime_stats_task, "cpu_stats", 4 * 1024, nullptr, 1, nullptr, tskNO_AFFINITY);
+      task_loop_cpu_runtime_stats, "cpu_stats", 4 * 1024, nullptr, 1, nullptr, tskNO_AFFINITY);
   if (ok != pdPASS) {
     log_error("[CPU] failed to start cpu_stats task");
     return;
