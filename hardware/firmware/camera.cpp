@@ -459,7 +459,28 @@ static bool camera_init_hw(void) {
     return true;
   };
 
-  /* 硬件 JPEG 在本机始终 fb_get null，跳过以免拖慢启动。 */
+  /* ---- JPEG（OV2640 内部编码，绕过 S3 格式/颜色问题）---- */
+  {
+    camera_config_t config = {};
+    camera_fill_pins(config);
+    config.pixel_format = PIXFORMAT_JPEG;
+    config.frame_size = FRAMESIZE_QVGA;
+    config.fb_count = 2;
+    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+    const esp_err_t err = esp_camera_init(&config);
+    if (err == ESP_OK) {
+      s_hw_inited = true;
+      if (probe_after_init("JPEG")) {
+        return true;
+      }
+      esp_camera_deinit();
+      s_hw_inited = false;
+      delay(50);
+      log_warn("[CAMERA] JPEG probe failed, fallback YUV422");
+    } else {
+      log_warn("[CAMERA] esp_camera_init JPEG failed 0x%x, fallback YUV422", err);
+    }
+  }
 
   /* ---- YUV422（传感器原生，颜色矩阵正常；再手动压 JPEG）---- */
   {
