@@ -610,9 +610,19 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
     return false;
   }
 
-  /* 诊断：前 3 帧 dump 原始像素 */
+  /* 运行时根据 fb->format 实时修正 s_cam_pack，不依赖 probe 时的检测结果。 */
+  if (fb->format == PIXFORMAT_YUV422) {
+    s_cam_pack = CamPack::kYuyv;
+  } else if (fb->format != PIXFORMAT_JPEG && s_cam_pack == CamPack::kYuyv) {
+    /* probe 认为是 YUV422，但运行时 format 不是 → 重新探测。 */
+    s_cam_pack = camera_pick_pack(fb->buf, fb->len);
+    log_warn("[CAMERA] runtime fmt=%u mismatch probe; re-detected pack=%s",
+             (unsigned)fb->format, cam_pack_name(s_cam_pack));
+  }
+
   if (s_seq < 3u) {
     camera_diag_dump_frame(fb);
+    log_warn("[CAMERA/DIAG] s_cam_pack=%s fb->format=%u", cam_pack_name(s_cam_pack), (unsigned)fb->format);
   }
 
   uint8_t* jpg = nullptr;
