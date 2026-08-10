@@ -77,6 +77,7 @@ static void camera_fill_pins(camera_config_t& config) {
   config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
+  /* OV2640 在 XIAO ESP32S3 Sense 上 XCLK 用 10MHz；20MHz 会导致 DMA 数据损坏（绿屏）。 */
   config.xclk_freq_hz = 10000000;
   config.frame_size = FRAMESIZE_QVGA;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
@@ -461,7 +462,6 @@ static bool camera_init_hw(void) {
     config.frame_size = FRAMESIZE_QVGA;
     config.fb_count = 2;
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-    config.xclk_freq_hz = 20000000;
     const esp_err_t err = esp_camera_init(&config);
     if (err == ESP_OK) {
       s_hw_inited = true;
@@ -481,7 +481,6 @@ static bool camera_init_hw(void) {
   camera_config_t config = {};
   camera_fill_pins(config);
   config.pixel_format = PIXFORMAT_RGB565;
-  config.xclk_freq_hz = 20000000;
   const esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     log_error("[CAMERA] esp_camera_init RGB565 failed 0x%x", err);
