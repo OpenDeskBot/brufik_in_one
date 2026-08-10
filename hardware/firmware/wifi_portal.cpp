@@ -140,7 +140,6 @@ void wifi_portal_setup_http(void) {
     g_wifi_password = new_password;
     Serial.printf("[wifi] credentials saved ssid=%s\r\n", new_ssid.c_str());
     send_ok_body("\"message\":\"WiFi configuration saved\"");
-    g_wifi_done_config = true;
   });
 
   g_wifi_server.on("/device-config", HTTP_GET, []() {

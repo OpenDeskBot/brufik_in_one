@@ -23,7 +23,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     <section class="card hero">
       <span class="eyebrow">ONBOARDING · WIFI</span>
       <h1>给小歪连上家里的 Wi‑Fi</h1>
-      <p>按照屏幕上的地址打开本页，选择路由器并输入密码。保存后设备会关闭热点并自动连接新网络。</p>
+      <p>按照屏幕上的地址打开本页，选择路由器并输入密码。保存后点击「继续启动」连接新网络。</p>
       <div class="steps">
         <div class="step"><b>1 连接小歪热点</b><span>手机或电脑加入屏幕上的 Device ID 同名 Wi‑Fi</span></div>
         <div class="step"><b>2 打开屏幕上的网址</b><span>通常是 http://192.168.4.1</span></div>
@@ -223,7 +223,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
       saveBtn.disabled = true;
       saveBtn.textContent = '保存中...';
-      setMessage('保存配置中，设备马上会尝试连接新网络。', '');
+      setMessage('正在保存配置…', '');
 
       fetch('/save-wifi', {
         method: 'POST',
@@ -235,7 +235,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       .then(response => response.json())
       .then(data => {
         if (data.success) {
-          setMessage('WiFi 配置已保存。设备正在连接新 Wi‑Fi，请回到小歪屏幕查看新的 IP 地址。', 'ok');
+          setMessage('Wi‑Fi 配置已保存。点击下方「继续启动」后设备将连接新网络。', 'ok');
         } else {
           setMessage('错误: ' + data.message, 'err');
           saveBtn.disabled = false;
