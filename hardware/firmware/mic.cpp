@@ -30,15 +30,15 @@ I2SClass s_i2s(I2S_NUM_0);
 
 TaskHandle_t s_task = nullptr;
 
-std::atomic<MicSpeakerState> state_speaker{kMicSpeakEnd};
-std::atomic<MicWsState> state_ws{kMicWsError};
+std::atomic<MicSpeakerState> s_state_speaker{kMicSpeakEnd};
+std::atomic<MicWsState> s_state_ws{kMicWsError};
 
 uint8_t s_batch_bin[kUplinkBatchMaxBin];
 size_t s_batch_bin_len = 0;
 uint8_t s_batch_count = 0;
 volatile uint32_t s_samples_sent = 0;
 
-OpusEncoder* opus_encoder = nullptr;
+OpusEncoder* s_opus_encoder = nullptr;
 
 int16_t s_hpf_prev_in = 0;
 float s_hpf_prev_out = 0.0f;
@@ -55,7 +55,7 @@ uint32_t s_stat_gate_spk = 0;
 uint32_t s_stat_batch_drop = 0;
 unsigned long s_stat_log_ms = 0;
 
-void mic_task(void* arg);
+static void task_loop_mic(void* arg);
 
 }  // namespace
 
@@ -69,18 +69,32 @@ bool setup_mic() {
   s_i2s.setTimeout(100);
 
   int oerr = OPUS_OK;
-  opus_encoder = opus_encoder_create(kOpusSr, kOpusChannels, OPUS_APPLICATION_VOIP, &oerr);
-  if (oerr != OPUS_OK || opus_encoder == nullptr) {
+  s_opus_encoder = opus_encoder_create(kOpusSr, kOpusChannels, OPUS_APPLICATION_VOIP, &oerr);
+  if (oerr != OPUS_OK || s_opus_encoder == nullptr) {
     log_error("[MIC] Opus encoder create failed err=%d", oerr);
-    opus_encoder = nullptr;
+    s_opus_encoder = nullptr;
     s_i2s.end();
     return false;
   }
-  opus_encoder_ctl(opus_encoder, OPUS_SET_COMPLEXITY(0));
-  opus_encoder_ctl(opus_encoder, OPUS_SET_BITRATE(24000));
+  opus_encoder_ctl(s_opus_encoder, OPUS_SET_COMPLEXITY(0));
+  opus_encoder_ctl(s_opus_encoder, OPUS_SET_BITRATE(24000));
 
   log_info("[MIC] setup ok ESP_I2S PDM CLK=%d DATA=%d %uHz opus_encoder ready", (int)PDM_MIC_CLK,
            (int)PDM_MIC_DATA, (unsigned)SAMPLE_RATE);
+  return true;
+}
+
+bool mic_restart_pdm() {
+  /* 相机重 init 会动 GDMA/时钟；PDM 必须重新 begin，否则 read 长期 short/卡住。 */
+  s_i2s.end();
+  delay(20);
+  s_i2s.setPinsPdmRx((int8_t)PDM_MIC_CLK, (int8_t)PDM_MIC_DATA);
+  if (!s_i2s.begin(I2S_MODE_PDM_RX, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO)) {
+    log_error("[MIC] PDM restart begin failed CLK=%d DATA=%d", (int)PDM_MIC_CLK, (int)PDM_MIC_DATA);
+    return false;
+  }
+  s_i2s.setTimeout(100);
+  log_warn("[MIC] PDM restarted after camera");
   return true;
 }
 
@@ -90,7 +104,7 @@ void task_setup_mic() {
   }
   /* 40KB：opus_encode 栈；须在 display 之前创建，并靠缩小 loopTask 腾出内部 RAM。 */
   BaseType_t rc =
-      utils_task_create_pinned(mic_task, "mic", kMicTaskStack, nullptr, 6, &s_task, APP_CPU_NUM);
+      utils_task_create_pinned(task_loop_mic, "mic", kMicTaskStack, nullptr, 6, &s_task, APP_CPU_NUM);
   if (rc != pdPASS) {
     log_error("[MIC] task create failed rc=%d (internal free=%u psram free=%u)", (int)rc,
               (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -105,11 +119,11 @@ void task_setup_mic() {
 namespace {
 
 size_t opus_encode_frame(const int16_t* pcm, uint8_t* out_buf, size_t out_cap) {
-  if (!pcm || !out_buf || out_cap == 0 || !opus_encoder) {
+  if (!pcm || !out_buf || out_cap == 0 || !s_opus_encoder) {
     return 0;
   }
   const opus_int32 n =
-      opus_encode(opus_encoder, pcm, (int)kMicFrameSamples, out_buf, (opus_int32)out_cap);
+      opus_encode(s_opus_encoder, pcm, (int)kMicFrameSamples, out_buf, (opus_int32)out_cap);
   if (n < 0) {
     log_warn("[MIC] opus_encode failed: %s", opus_strerror(n));
     return 0;
@@ -120,8 +134,8 @@ size_t opus_encode_frame(const int16_t* pcm, uint8_t* out_buf, size_t out_cap) {
 void reset_segment_after_flush() {
   s_samples_sent = 0;
   s_segment_start_ms = millis();
-  if (opus_encoder) {
-    opus_encoder_ctl(opus_encoder, OPUS_RESET_STATE);
+  if (s_opus_encoder) {
+    opus_encoder_ctl(s_opus_encoder, OPUS_RESET_STATE);
   }
   enhance_voice_reset();
 }
@@ -252,37 +266,28 @@ void discard_batch() {
   enhance_voice_reset();
 }
 
-void mic_task(void* /*arg*/) {
+void task_loop_mic(void* /*arg*/) {
   MicFrame frame;
   /* 上一帧是否在采：用于开门沿重置 encoder/段计时，避免每帧都 reset。 */
-  bool was_open = false;
-  MicSpeakerState prev_spk = state_speaker.load(std::memory_order_relaxed);
-  MicWsState prev_ws = state_ws.load(std::memory_order_relaxed);
+  bool s_was_open = false;
+  MicSpeakerState s_prev_spk = s_state_speaker.load(std::memory_order_relaxed);
+  MicWsState s_prev_ws = s_state_ws.load(std::memory_order_relaxed);
 
   for (;;) {
     size_t bytes_read =
         s_i2s.readBytes(reinterpret_cast<char*>(frame.pcm), kMicFrameSamples * sizeof(int16_t));
-    if (bytes_read < kMicFrameSamples * sizeof(int16_t)) {
-      static uint32_t s_last_i2s_err_ms = 0;
-      const uint32_t now_err = millis();
-      if (s_last_i2s_err_ms == 0 || (uint32_t)(now_err - s_last_i2s_err_ms) >= 2000u) {
-        s_last_i2s_err_ms = now_err;
-        log_warn("[MIC] i2s_read short bytes=%u need=%u", (unsigned)bytes_read,
-                 (unsigned)(kMicFrameSamples * sizeof(int16_t)));
-      }
-      continue;
-    }
+    const bool short_rd = bytes_read < kMicFrameSamples * sizeof(int16_t);
 
-    const MicSpeakerState spk = state_speaker.load(std::memory_order_acquire);
-    const MicWsState ws = state_ws.load(std::memory_order_acquire);
+    const MicSpeakerState spk = s_state_speaker.load(std::memory_order_acquire);
+    const MicWsState ws = s_state_ws.load(std::memory_order_acquire);
 
-    if (ws != prev_ws) {
-      log_warn("[MIC] gate ws %s → %s", prev_ws == kMicWsOk ? "ok" : "error",
+    if (ws != s_prev_ws) {
+      log_warn("[MIC] gate ws %s → %s", s_prev_ws == kMicWsOk ? "ok" : "error",
                ws == kMicWsOk ? "ok" : "error");
-      prev_ws = ws;
+      s_prev_ws = ws;
     }
-    if (spk != prev_spk && ws == kMicWsOk) {
-      log_warn("[MIC] gate speak %s → %s", prev_spk == kMicSpeakEnd ? "end" : "start",
+    if (spk != s_prev_spk && ws == kMicWsOk) {
+      log_warn("[MIC] gate speak %s → %s", s_prev_spk == kMicSpeakEnd ? "end" : "start",
                spk == kMicSpeakEnd ? "end" : "start");
     }
 
@@ -291,11 +296,11 @@ void mic_task(void* /*arg*/) {
       s_stat_log_ms = now;
     } else if ((now - s_stat_log_ms) >= 1000UL) {
       log_warn("[MIC/1s] enc=%u enq_ok=%u enq_fail=%u batch_drop=%u gate_ws=%u gate_spk=%u "
-               "ws=%s speak=%s batch=%u",
+               "ws=%s speak=%s batch=%u short_rd=%u",
                (unsigned)s_stat_encode_ok, (unsigned)s_stat_enq_ok, (unsigned)s_stat_enq_fail,
                (unsigned)s_stat_batch_drop, (unsigned)s_stat_gate_ws, (unsigned)s_stat_gate_spk,
                ws == kMicWsOk ? "ok" : "err", spk == kMicSpeakEnd ? "end" : "start",
-               (unsigned)s_batch_count);
+               (unsigned)s_batch_count, short_rd ? 1u : 0u);
       s_stat_encode_ok = 0;
       s_stat_enq_ok = 0;
       s_stat_enq_fail = 0;
@@ -305,39 +310,49 @@ void mic_task(void* /*arg*/) {
       s_stat_log_ms = now;
     }
 
+    if (short_rd) {
+      static uint32_t s_last_i2s_err_ms = 0;
+      if (s_last_i2s_err_ms == 0 || (uint32_t)(now - s_last_i2s_err_ms) >= 2000u) {
+        s_last_i2s_err_ms = now;
+        log_warn("[MIC] i2s_read short bytes=%u need=%u", (unsigned)bytes_read,
+                 (unsigned)(kMicFrameSamples * sizeof(int16_t)));
+      }
+      continue;
+    }
+
     /* ws 不可用：清空积累 + 丢掉当次帧（条件靠前）。 */
     if (ws == kMicWsError) {
       ++s_stat_gate_ws;
       discard_batch();
       s_samples_sent = 0;
       s_segment_start_ms = 0;
-      was_open = false;
-      prev_spk = spk;
+      s_was_open = false;
+      s_prev_spk = spk;
       continue;
     }
 
     /* speak_start：边沿冲出不足 5 帧并 flush:1；之后各帧只丢弃当次、不再重复 flush。 */
     if (spk == kMicSpeakStart) {
       ++s_stat_gate_spk;
-      if (prev_spk == kMicSpeakEnd) {
+      if (s_prev_spk == kMicSpeakEnd) {
         (void)send_to_ws(nullptr, /*flush=*/true);
       }
-      was_open = false;
+      s_was_open = false;
       s_segment_start_ms = 0;
-      prev_spk = spk;
+      s_prev_spk = spk;
       continue;
     }
-    prev_spk = spk;
+    s_prev_spk = spk;
 
     /* speak_end && ws_ok：正常采上行。 */
-    if (!was_open) {
+    if (!s_was_open) {
       enhance_voice_reset();
-      if (opus_encoder) {
-        opus_encoder_ctl(opus_encoder, OPUS_RESET_STATE);
+      if (s_opus_encoder) {
+        opus_encoder_ctl(s_opus_encoder, OPUS_RESET_STATE);
       }
       s_samples_sent = 0;
       s_segment_start_ms = millis();
-      was_open = true;
+      s_was_open = true;
       log_warn("[MIC] uplink open (ws_ok, speak_end)");
     }
 
@@ -353,11 +368,11 @@ void mic_task(void* /*arg*/) {
 }  // namespace
 
 void mic_set_speaker_state(MicSpeakerState s) {
-  state_speaker.store(s, std::memory_order_release);
+  s_state_speaker.store(s, std::memory_order_release);
 }
 
 void mic_set_ws_state(MicWsState s) {
-  state_ws.store(s, std::memory_order_release);
+  s_state_ws.store(s, std::memory_order_release);
 }
 
 uint32_t mic_uplink_samples_sent(void) {
@@ -365,8 +380,8 @@ uint32_t mic_uplink_samples_sent(void) {
 }
 
 bool mic_capture_allowed(void) {
-  return state_speaker.load(std::memory_order_relaxed) == kMicSpeakEnd &&
-         state_ws.load(std::memory_order_relaxed) == kMicWsOk;
+  return s_state_speaker.load(std::memory_order_relaxed) == kMicSpeakEnd &&
+         s_state_ws.load(std::memory_order_relaxed) == kMicWsOk;
 }
 
 void enhance_voice_reset(void) {

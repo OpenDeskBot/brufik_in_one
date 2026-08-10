@@ -80,7 +80,7 @@ void setup() {
    * 先建 pb 帧队列，避免 WS ready 后下行帧因 pb 未 setup 被丢。
    * pb 任务必须在 display/head 队列就绪后再启动，否则 attention SLEEP 会对空 queue 断言。 */
   task_setup_speaker();
-  task_setup_mic();
+  /* mic 任务延后到相机重 init 之后再起，避免 GDMA 把 I2S0 PDM 冲掉。 */
   if (!setup_pb_runtime()) {
     log_error("[BOOT] pb_runtime setup failed");
   }
@@ -103,6 +103,11 @@ void setup() {
       log_warn("[BOOT] Camera reinit after WiFi failed");
     }
   }
+  /* 无论相机成败：只要走过相机路径，PDM 都重挂一次更稳。 */
+  if (!mic_restart_pdm()) {
+    log_error("[BOOT] mic PDM restart failed");
+  }
+  task_setup_mic();
   head_servo_boot_attach();
 
   /* ---- 阶段 C：执行器就绪后再启动 pb 泵 / camera 上行 ---- */
