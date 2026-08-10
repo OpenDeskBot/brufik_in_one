@@ -61,7 +61,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <input type="text" id="manual-ssid-input" placeholder="选择网络后自动填入，也可手动输入">
         <label for="password-input">Wi‑Fi 密码</label>
         <input type="password" id="password-input" name="password" autocomplete="current-password" placeholder="留空表示开放网络">
-        <button type="submit" id="save-btn" class="primary">保存并连接</button>
+        <button type="submit" id="save-btn" class="primary">保存</button>
       </form>
     </section>
 
@@ -239,13 +239,13 @@ const char index_html[] PROGMEM = R"rawliteral(
         } else {
           setMessage('错误: ' + data.message, 'err');
           saveBtn.disabled = false;
-          saveBtn.textContent = '保存并连接';
+          saveBtn.textContent = '保存';
         }
       })
       .catch(error => {
         setMessage('保存配置错误: ' + error.message, 'err');
         saveBtn.disabled = false;
-        saveBtn.textContent = '保存并连接';
+        saveBtn.textContent = '保存';
       });
     });
 
