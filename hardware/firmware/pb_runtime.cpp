@@ -396,9 +396,9 @@ struct PbRxFrame {
   size_t len = 0;
 };
 
-constexpr UBaseType_t kPbFrameQDepth = 16;
+constexpr UBaseType_t kPbFrameQDepth = 64;
 constexpr uint32_t kPbRuntimeStack = 24 * 1024;
-constexpr UBaseType_t kPbRuntimePrio = 4;
+constexpr UBaseType_t kPbRuntimePrio = 5;
 constexpr size_t kMaxPackedFrame = 1024 * 1024;
 constexpr size_t kPbModelRingCapacity = DESKBOT_PB_MODEL_RING_CAPACITY;
 constexpr int32_t kPbPrefetchTargetMs = (int32_t)DESKBOT_PB_PREFETCH_TARGET_MS;
@@ -813,8 +813,17 @@ bool pb_runtime_enqueue_frame(uint8_t* data, size_t length) {
   item.data = data;
   item.len = length;
   if (xQueueSend(s_frame_q, &item, 0) != pdTRUE) {
-    log_warn("[PB_RUNTIME] frame queue full len=%u", (unsigned)length);
-    return false;
+    /* 队列满：丢弃最旧帧，为新帧腾位（保证设备处理最新数据）。 */
+    PbRxFrame dropped{};
+    if (xQueueReceive(s_frame_q, &dropped, 0) == pdTRUE) {
+      if (dropped.kind == PbRxFrame::Kind::kPacked && dropped.data) {
+        free(dropped.data);
+      }
+    }
+    if (xQueueSend(s_frame_q, &item, 0) != pdTRUE) {
+      log_warn("[PB_RUNTIME] frame queue full after drop; free new len=%u", (unsigned)length);
+      return false;
+    }
   }
   log_warn("[PB_LAT] pb_q_in len=%u q=%u", (unsigned)length,
            (unsigned)uxQueueMessagesWaiting(s_frame_q));

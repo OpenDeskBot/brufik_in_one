@@ -26,7 +26,7 @@ camera_face:
 debug:
   asr_auto_reply: true
   live_service: false
-  camera_servo_auto_mode: follow
+  camera_servo_auto_mode: ''
 server:
   host: 0.0.0.0
   port: 9000
