@@ -8,15 +8,15 @@
  * 若 SSID 留空 → 开放热点（SSID=设备 ID，无密码），http://192.168.4.1/ 配网；NVS 已存凭证优先。
  * WS host 留空 → 禁用内置 WebSocket；可在配网页添加自定义云服务器。
  */
-#define WIFI_DEFAULT_SSID "Micband"
-#define WIFI_DEFAULT_PASSWORD "Xiaomi@2025"
+#define WIFI_DEFAULT_SSID "deskbot_wifi"
+#define WIFI_DEFAULT_PASSWORD "hello2026"
 
 /** 开机 AP 配网窗口（ms）编译期兜底；运行时以 NVS 为准（默认 20s，5–60s 可配）。 */
 #ifndef DESKBOT_AP_OFFER_TIMEOUT_MS
 #define DESKBOT_AP_OFFER_TIMEOUT_MS 20000
 #endif
 
-#define DESKBOT_WS_HOST "10.220.153.219"
+#define DESKBOT_WS_HOST "39.107.38.241"
 // #define DESKBOT_WS_HOST "39.107.38.241"
 #define DESKBOT_WS_PORT 9000
 
