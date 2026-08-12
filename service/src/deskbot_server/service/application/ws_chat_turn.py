@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
-from deskbot_server.core.types import ChatTurnResult
+from deskbot_server.model.chat import ChatTurnResult
 from deskbot_server.infrastructure.ws.downlink_adapter import WsDownlinkAdapter, WsPipelineEventsAdapter
 from deskbot_server.service.application.chat_flow import publish_chat_turn, run_chat_turn
 
@@ -19,14 +19,14 @@ async def run_ws_chat_turn(
     pipeline: ChatService,
     user_text: str,
     *,
-    request_id: Optional[str] = None,
-    dp_broker: Optional[DevicePipelineBroker] = None,
-    registry: Optional[DeviceRegistry] = None,
-    device_id: Optional[str] = None,
-    t_asr_start: Optional[float] = None,
-    t_asr_text: Optional[float] = None,
-    asr_chat_hub: Optional[Any] = None,
-    on_llm_error: Optional[Any] = None,
+    request_id: str | None = None,
+    dp_broker: DevicePipelineBroker | None = None,
+    registry: DeviceRegistry | None = None,
+    device_id: str | None = None,
+    t_asr_start: float | None = None,
+    t_asr_text: float | None = None,
+    asr_chat_hub: Any | None = None,
+    on_llm_error: Any | None = None,
 ) -> dict:
     downlink = WsDownlinkAdapter(websocket, settings=pipeline.settings, device_id=device_id, dp_broker=dp_broker)
     turn = await run_chat_turn(
@@ -48,14 +48,14 @@ async def run_ws_chat_turn(
 async def publish_ws_chat_turn(
     broker: DevicePipelineBroker,
     registry: DeviceRegistry,
-    device_id: Optional[str],
+    device_id: str | None,
     *,
     source: str,
-    asr_text: Optional[str],
-    t_asr_start: Optional[float],
-    t_asr_text: Optional[float],
+    asr_text: str | None,
+    t_asr_start: float | None,
+    t_asr_text: float | None,
     flow: dict,
-    request_id: Optional[str] = None,
+    request_id: str | None = None,
 ) -> None:
     if not device_id or broker is None:
         return

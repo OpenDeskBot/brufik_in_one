@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.dao.scene_playbooks_store import normalize_playbook
 from deskbot_server.pb.llm_plan import expand_llm_anims, expand_llm_moves
@@ -69,7 +69,7 @@ def _chunk_to_phase(chunk: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def playbook_to_phases(playbook: dict[str, Any], *, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def playbook_to_phases(playbook: dict[str, Any], *, device_id: str | None = None) -> list[dict[str, Any]]:
     """每个 ``chunks[]`` 条目 → 一轮 PB（口播 / 纯表情 / 纯舵机 / 组合）。"""
     pb = normalize_playbook(playbook)
     phases: list[dict[str, Any]] = []
@@ -83,7 +83,7 @@ def playbook_to_phases(playbook: dict[str, Any], *, device_id: Optional[str] = N
 
 
 def playbook_to_llm_plan(
-    playbook: dict[str, Any], *, device_id: Optional[str] = None
+    playbook: dict[str, Any], *, device_id: str | None = None
 ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], int]:
     """兼容旧接口：合并为单条 TTS 计划（多 chunk 时仅取首段口播）。"""
     phases = playbook_to_phases(playbook, device_id=device_id)
@@ -105,7 +105,7 @@ def playbook_to_llm_plan(
     return text, moves, anims, leading
 
 
-def playbook_debug_snapshot(playbook: dict[str, Any], *, device_id: Optional[str] = None) -> dict[str, Any]:
+def playbook_debug_snapshot(playbook: dict[str, Any], *, device_id: str | None = None) -> dict[str, Any]:
     pb = normalize_playbook(playbook)
     phases = playbook_to_phases(pb, device_id=device_id)
     text = playbook_collect_text(pb)

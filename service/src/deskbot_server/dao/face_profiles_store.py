@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import FACE_PROFILES_FILE
 from deskbot_server.utils.device_data import resolve_json_path
@@ -35,7 +35,7 @@ def _normalize_profile(raw: object) -> dict[str, Any]:
     return {"person_id": pid, "name": name, "descriptor": descriptor, "descriptor_kind": kind}
 
 
-def load_face_profiles(*, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def load_face_profiles(*, device_id: str | None = None) -> list[dict[str, Any]]:
     path = resolve_json_path(FACE_PROFILES_FILE, device_id)
     if not os.path.isfile(path):
         return []
@@ -56,7 +56,7 @@ def load_face_profiles(*, device_id: Optional[str] = None) -> list[dict[str, Any
     return out
 
 
-def save_face_profiles(profiles: list[dict[str, Any]], *, device_id: Optional[str] = None) -> None:
+def save_face_profiles(profiles: list[dict[str, Any]], *, device_id: str | None = None) -> None:
     path = resolve_json_path(FACE_PROFILES_FILE, device_id)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     cleaned = [_normalize_profile(p) for p in profiles]
@@ -81,9 +81,9 @@ def _same_descriptor_space(a: list[float], b: list[float]) -> bool:
 
 def best_profile_similarity(
     profiles: list[dict[str, Any]], descriptor: list[float]
-) -> tuple[Optional[dict[str, Any]], float]:
+) -> tuple[dict[str, Any] | None, float]:
     """返回最相似档案（不设阈值）；仅比较同类型向量。"""
-    best: Optional[dict[str, Any]] = None
+    best: dict[str, Any] | None = None
     best_sim = -1.0
     for p in profiles:
         pd = p.get("descriptor")
@@ -100,7 +100,7 @@ def best_profile_similarity(
 
 def find_profile_by_similarity(
     profiles: list[dict[str, Any]], descriptor: list[float], *, threshold: float
-) -> tuple[Optional[dict[str, Any]], float]:
+) -> tuple[dict[str, Any] | None, float]:
     best, best_sim = best_profile_similarity(profiles, descriptor)
     if best is not None and best_sim >= threshold:
         return best, best_sim
@@ -113,8 +113,8 @@ def resolve_profile_match(
     *,
     match_threshold: float,
     keep_threshold: float,
-    locked_person_id: Optional[int] = None,
-) -> tuple[Optional[dict[str, Any]], float]:
+    locked_person_id: int | None = None,
+) -> tuple[dict[str, Any] | None, float]:
     """档案匹配：已锁定 person 时用更低阈值保持，避免转头时 person_id 闪烁。"""
     best, best_sim = best_profile_similarity(profiles, descriptor)
     if locked_person_id is not None:
@@ -129,7 +129,7 @@ def resolve_profile_match(
     return None, best_sim
 
 
-def list_face_profiles_summary(*, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def list_face_profiles_summary(*, device_id: str | None = None) -> list[dict[str, Any]]:
     """列表展示用：不含 descriptor 向量。"""
     return [
         {
@@ -141,7 +141,7 @@ def list_face_profiles_summary(*, device_id: Optional[str] = None) -> list[dict[
     ]
 
 
-def delete_face_profile(person_id: int, *, device_id: Optional[str] = None) -> bool:
+def delete_face_profile(person_id: int, *, device_id: str | None = None) -> bool:
     """按 ``person_id`` 删除已注册人脸档案。"""
     try:
         pid = int(person_id)
@@ -157,7 +157,7 @@ def delete_face_profile(person_id: int, *, device_id: Optional[str] = None) -> b
     return True
 
 
-def update_face_profile_name(person_id: int, name: str, *, device_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+def update_face_profile_name(person_id: int, name: str, *, device_id: str | None = None) -> dict[str, Any] | None:
     """更新已注册人脸档案名称，返回摘要；档案不存在时返回 ``None``。"""
     try:
         pid = int(person_id)
@@ -186,7 +186,7 @@ def upsert_profile(
     *,
     name: str,
     descriptor: list[float],
-    person_id: Optional[int] = None,
+    person_id: int | None = None,
     merge_threshold: float = 0.88,
 ) -> dict[str, Any]:
     """注册或合并同名/相似档案，返回最终 profile。"""

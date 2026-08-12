@@ -6,7 +6,7 @@ import json
 import os
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import USER_MEMORY_FILE
 from deskbot_server.utils.device_data import resolve_json_path
@@ -31,7 +31,7 @@ def _normalize_entry(raw: object, *, device_id: str = "") -> dict[str, Any]:
     return {"id": entry_id, "device_id": dev, "text": text, "created_at": created_at}
 
 
-def load_memory_entries(*, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def load_memory_entries(*, device_id: str | None = None) -> list[dict[str, Any]]:
     path = resolve_json_path(USER_MEMORY_FILE, device_id)
     if not os.path.isfile(path):
         return []
@@ -49,7 +49,7 @@ def load_memory_entries(*, device_id: Optional[str] = None) -> list[dict[str, An
     return out
 
 
-def save_memory_entries(entries: list[dict[str, Any]], *, device_id: Optional[str] = None) -> None:
+def save_memory_entries(entries: list[dict[str, Any]], *, device_id: str | None = None) -> None:
     norm = [_normalize_entry(e, device_id=str(device_id or "")) for e in entries]
     path = resolve_json_path(USER_MEMORY_FILE, device_id)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -59,7 +59,7 @@ def save_memory_entries(entries: list[dict[str, Any]], *, device_id: Optional[st
 
 
 def list_memory_for_device(
-    device_id: Optional[str] = None, *, limit: int = _MAX_PROMPT_ENTRIES
+    device_id: str | None = None, *, limit: int = _MAX_PROMPT_ENTRIES
 ) -> list[dict[str, Any]]:
     """设备专属记忆；有 ``device_id`` 时读设备目录文件，否则读全局并含无 device 标记项。"""
     dev = str(device_id or "").strip()
@@ -74,7 +74,7 @@ def list_memory_for_device(
     return matched[:cap]
 
 
-def add_memory(text: str, *, device_id: Optional[str] = None) -> dict[str, Any]:
+def add_memory(text: str, *, device_id: str | None = None) -> dict[str, Any]:
     dev = str(device_id or "").strip()
     entries = load_memory_entries(device_id=dev or None)
     entry = _normalize_entry({"text": text, "device_id": dev})
@@ -85,7 +85,7 @@ def add_memory(text: str, *, device_id: Optional[str] = None) -> dict[str, Any]:
     return entry
 
 
-def get_memory(entry_id: str, *, device_id: Optional[str] = None) -> dict[str, Any] | None:
+def get_memory(entry_id: str, *, device_id: str | None = None) -> dict[str, Any] | None:
     eid = str(entry_id or "").strip()
     if not eid:
         return None
@@ -96,7 +96,7 @@ def get_memory(entry_id: str, *, device_id: Optional[str] = None) -> dict[str, A
     return None
 
 
-def update_memory(entry_id: str, text: str, *, device_id: Optional[str] = None) -> dict[str, Any] | None:
+def update_memory(entry_id: str, text: str, *, device_id: str | None = None) -> dict[str, Any] | None:
     eid = str(entry_id or "").strip()
     new_text = str(text or "").strip()
     if not eid or not new_text:
@@ -117,7 +117,7 @@ def update_memory(entry_id: str, text: str, *, device_id: Optional[str] = None) 
     return updated
 
 
-def delete_memory(entry_id: str, *, device_id: Optional[str] = None) -> bool:
+def delete_memory(entry_id: str, *, device_id: str | None = None) -> bool:
     eid = str(entry_id or "").strip()
     if not eid:
         return False

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Optional
+
 
 from deskbot_server.constants import EMOTION_EXPR_MAP_FILE
 from deskbot_server.utils.device_data import resolve_json_path
@@ -19,7 +19,7 @@ def _normalize(raw: object) -> dict[str, str]:
     return out
 
 
-def load_emotion_expr_map(*, device_id: Optional[str] = None) -> dict[str, str]:
+def load_emotion_expr_map(*, device_id: str | None = None) -> dict[str, str]:
     path = resolve_json_path(EMOTION_EXPR_MAP_FILE, device_id)
     if not os.path.isfile(path):
         return {}
@@ -27,7 +27,7 @@ def load_emotion_expr_map(*, device_id: Optional[str] = None) -> dict[str, str]:
         return _normalize(json.load(f))
 
 
-def save_emotion_expr_map(mapping: dict[str, str], *, device_id: Optional[str] = None) -> dict[str, str]:
+def save_emotion_expr_map(mapping: dict[str, str], *, device_id: str | None = None) -> dict[str, str]:
     norm = _normalize(mapping)
     path = resolve_json_path(EMOTION_EXPR_MAP_FILE, device_id)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

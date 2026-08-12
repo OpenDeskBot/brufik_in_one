@@ -525,7 +525,7 @@ def debug_simulation(request: Request, user: RequireUser):
 @router.post("/api/tts/phoneme_tts")
 def api_tts_phoneme_tts(request: Request, user: RequireUser):
     """豆包 TTS + 音素分片，供仿真调试等页面使用。"""
-    from deskbot_server.core.settings import AppSettings
+    from deskbot_server.model.settings import AppSettings
     from deskbot_server.infrastructure.tts.factory import build_tts_adapter
 
     payload = get_json(request, force=True, silent=True) or {}

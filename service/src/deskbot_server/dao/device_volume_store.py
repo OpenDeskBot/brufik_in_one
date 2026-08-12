@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import DEVICE_VOLUME_FILE
 from deskbot_server.pb.servo_pcm import parse_pb_volume
@@ -13,7 +13,7 @@ from deskbot_server.utils.device_data import resolve_json_path
 _DEFAULT_VOLUME = 80
 
 
-def _load_doc(*, device_id: Optional[str] = None) -> dict[str, Any]:
+def _load_doc(*, device_id: str | None = None) -> dict[str, Any]:
     path = resolve_json_path(DEVICE_VOLUME_FILE, device_id)
     if not os.path.isfile(path):
         return {"default": _DEFAULT_VOLUME, "devices": {}}
@@ -27,7 +27,7 @@ def _load_doc(*, device_id: Optional[str] = None) -> dict[str, Any]:
     return raw
 
 
-def _save_doc(doc: dict[str, Any], *, device_id: Optional[str] = None) -> None:
+def _save_doc(doc: dict[str, Any], *, device_id: str | None = None) -> None:
     path = resolve_json_path(DEVICE_VOLUME_FILE, device_id)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -41,7 +41,7 @@ def get_default_volume() -> int:
     return v if v is not None else _DEFAULT_VOLUME
 
 
-def get_device_volume(device_id: Optional[str] = None) -> int:
+def get_device_volume(device_id: str | None = None) -> int:
     """读取设备音量；无记录时用 ``default``。"""
     dev = str(device_id or "").strip()
     if dev:
@@ -65,7 +65,7 @@ def get_device_volume(device_id: Optional[str] = None) -> int:
     return v if v is not None else _DEFAULT_VOLUME
 
 
-def persist_device_volume(volume: object, *, device_id: Optional[str] = None) -> int:
+def persist_device_volume(volume: object, *, device_id: str | None = None) -> int:
     """写入音量并落盘；有 ``device_id`` 时只写设备目录，不写全局文件。"""
     v = parse_pb_volume(volume)
     if v is None:

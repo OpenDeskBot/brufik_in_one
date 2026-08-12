@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import threading
-from typing import Optional
+
 
 _lock = threading.Lock()
-_frontal_threshold: Optional[float] = None
-_gaze_yaw_threshold_deg: Optional[float] = None
-_gaze_pitch_threshold_deg: Optional[float] = None
-_eye_yaw_range_deg: Optional[float] = None
-_horizontal_fov_deg: Optional[float] = None
-_frontal_angle_threshold_deg: Optional[float] = None
-_identity_similarity_threshold: Optional[float] = None
-_face_embedding_enabled: Optional[bool] = None
+_frontal_threshold: float | None = None
+_gaze_yaw_threshold_deg: float | None = None
+_gaze_pitch_threshold_deg: float | None = None
+_eye_yaw_range_deg: float | None = None
+_horizontal_fov_deg: float | None = None
+_frontal_angle_threshold_deg: float | None = None
+_identity_similarity_threshold: float | None = None
+_face_embedding_enabled: bool | None = None
 
 
 def get_frontal_threshold(default: float = 0.4) -> float:
@@ -23,7 +23,7 @@ def get_frontal_threshold(default: float = 0.4) -> float:
         return float(default)
 
 
-def set_frontal_threshold(value: Optional[float]) -> None:
+def set_frontal_threshold(value: float | None) -> None:
     global _frontal_threshold
     with _lock:
         _frontal_threshold = None if value is None else float(value)
@@ -74,25 +74,25 @@ def apply_camera_face_tune(cfg: dict) -> None:
     set_identity_similarity_threshold(float(cfg.get("identity_similarity_threshold", ist_default)))
 
 
-def set_gaze_yaw_threshold_deg(value: Optional[float]) -> None:
+def set_gaze_yaw_threshold_deg(value: float | None) -> None:
     global _gaze_yaw_threshold_deg
     with _lock:
         _gaze_yaw_threshold_deg = None if value is None else float(value)
 
 
-def set_gaze_pitch_threshold_deg(value: Optional[float]) -> None:
+def set_gaze_pitch_threshold_deg(value: float | None) -> None:
     global _gaze_pitch_threshold_deg
     with _lock:
         _gaze_pitch_threshold_deg = None if value is None else float(value)
 
 
-def set_eye_yaw_range_deg(value: Optional[float]) -> None:
+def set_eye_yaw_range_deg(value: float | None) -> None:
     global _eye_yaw_range_deg
     with _lock:
         _eye_yaw_range_deg = None if value is None else float(value)
 
 
-def set_horizontal_fov_deg(value: Optional[float]) -> None:
+def set_horizontal_fov_deg(value: float | None) -> None:
     global _horizontal_fov_deg
     with _lock:
         _horizontal_fov_deg = None if value is None else float(value)
@@ -112,13 +112,13 @@ def get_identity_similarity_threshold(default: float = 0.88) -> float:
         return float(default)
 
 
-def set_frontal_angle_threshold_deg(value: Optional[float]) -> None:
+def set_frontal_angle_threshold_deg(value: float | None) -> None:
     global _frontal_angle_threshold_deg
     with _lock:
         _frontal_angle_threshold_deg = None if value is None else float(value)
 
 
-def set_identity_similarity_threshold(value: Optional[float]) -> None:
+def set_identity_similarity_threshold(value: float | None) -> None:
     global _identity_similarity_threshold
     with _lock:
         _identity_similarity_threshold = None if value is None else float(value)
@@ -131,7 +131,7 @@ def get_face_embedding_enabled(default: bool = True) -> bool:
         return bool(default)
 
 
-def set_face_embedding_enabled(value: Optional[bool]) -> None:
+def set_face_embedding_enabled(value: bool | None) -> None:
     global _face_embedding_enabled
     with _lock:
         _face_embedding_enabled = None if value is None else bool(value)

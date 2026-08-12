@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.utils.util import _format_ts
 from deskbot_server.ws.device_pin import clear_online_pin, set_online_pin
@@ -85,7 +85,7 @@ class DeviceRegistry:
             )
         return dev_snapshot
 
-    async def disconnect(self, ws) -> Optional[dict]:
+    async def disconnect(self, ws) -> dict | None:
         async with self._lock:
             key = self._ws_to_key.pop(id(ws), None)
             if key is None:
@@ -117,7 +117,7 @@ class DeviceRegistry:
         )
         return dict(dev)
 
-    async def touch(self, device_id: str, status: Optional[str] = None) -> None:
+    async def touch(self, device_id: str, status: str | None = None) -> None:
         """`/asr_chat` 每完成一轮流水线时调用，刷新最后状态与时间。"""
         if not device_id:
             return
@@ -149,7 +149,7 @@ class DeviceRegistry:
             dev["last_pb_ack_ts"] = now
             dev["last_pb_ack_mono"] = time.monotonic()
 
-    async def pb_ack_llm_context(self, device_id: Optional[str]) -> Optional[str]:
+    async def pb_ack_llm_context(self, device_id: str | None) -> str | None:
         """返回该设备最近一次 ``pb_ack`` 的紧凑 JSON 字符串；无则 ``None``。"""
         if not device_id:
             return None

@@ -5,8 +5,6 @@ import json
 import logging
 import time
 from collections import deque
-from typing import Optional
-
 from websockets.exceptions import ConnectionClosed
 
 from deskbot_server.constants import DEVICE_PIPELINE_MAX_EVENTS
@@ -29,7 +27,7 @@ logger = logging.getLogger("deskbot-server")
 _PIPELINE_DEDUPE_SOURCES = frozenset({"auto_idle_silence"})
 
 
-def _pipeline_dedupe_request_id(source: str, device_id: str) -> Optional[str]:
+def _pipeline_dedupe_request_id(source: str, device_id: str) -> str | None:
     if source in _PIPELINE_DEDUPE_SOURCES:
         return f"__{source}__:{device_id}"
     return None
@@ -45,7 +43,7 @@ class DevicePipelineBroker:
     def __init__(self, max_events: int = DEVICE_PIPELINE_MAX_EVENTS) -> None:
         self._max_events = max_events
         self._events: deque = deque(maxlen=max_events)
-        # ws -> Optional[str] 过滤的 device_id；None 表示全部
+        # ws -> str | None 过滤的 device_id；None 表示全部
         self._subscribers: dict = {}
         self._lock = asyncio.Lock()
         self._seq = 0
@@ -55,7 +53,7 @@ class DevicePipelineBroker:
     def max_events(self) -> int:
         return self._max_events
 
-    async def has_subscribers_for_device(self, device_id: Optional[str] = None) -> bool:
+    async def has_subscribers_for_device(self, device_id: str | None = None) -> bool:
         """是否有调试订阅者在监听该设备（或全部设备）。"""
         device_id = str(device_id or "").strip() or None
         async with self._lock:
@@ -101,7 +99,7 @@ class DevicePipelineBroker:
             self._fanout.submit(ws, msg)
         return evt
 
-    async def add_subscriber(self, ws, device_filter: Optional[str] = None) -> None:
+    async def add_subscriber(self, ws, device_filter: str | None = None) -> None:
         async with self._lock:
             self._subscribers[ws] = device_filter
             if device_filter:
@@ -136,7 +134,7 @@ class DevicePipelineBroker:
         for ws in targets:
             self._fanout.submit(ws, msg)
 
-    def snapshot_events(self, device_id: Optional[str] = None, limit: int = 100) -> list:
+    def snapshot_events(self, device_id: str | None = None, limit: int = 100) -> list:
         if device_id:
             items = [e for e in self._events if e.get("device_id") == device_id]
         else:
@@ -146,7 +144,7 @@ class DevicePipelineBroker:
         return items
 
     @staticmethod
-    def normalize_event(data: dict, default_device_id: Optional[str] = None) -> Optional[dict]:
+    def normalize_event(data: dict, default_device_id: str | None = None) -> dict | None:
         """把任意上报字典规范化为统一的流水线事件结构。"""
         if not isinstance(data, dict):
             return None
@@ -155,7 +153,7 @@ class DevicePipelineBroker:
             return None
         device_id = str(device_id)
 
-        def _fnum(key: str) -> Optional[float]:
+        def _fnum(key: str) -> float | None:
             v = data.get(key)
             if v is None:
                 return None
@@ -196,14 +194,14 @@ class DevicePipelineBroker:
 
 
 async def publish_auto_dispatch_event(
-    broker: Optional["DevicePipelineBroker"],
+    broker: "DevicePipelineBroker" | None,
     *,
     device_id: str,
     request_id: str,
     source: str,
     summary: str,
     status: str = "ok",
-    error: Optional[str] = None,
+    error: str | None = None,
 ) -> None:
     """无交互自动下发写入流水窗口（idle、人脸跟随等）。"""
     if broker is None or not device_id:

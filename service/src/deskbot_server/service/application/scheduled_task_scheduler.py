@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from deskbot_server.infrastructure.ws.downlink_adapter import WsDownlinkAdapter, WsPipelineEventsAdapter
 from deskbot_server.service.application.chat_flow import _voice_was_played, publish_chat_turn, run_chat_turn
@@ -41,7 +41,7 @@ class ScheduledTaskScheduler:
         self._broker = dp_broker
         self._poll_interval = max(30.0, float(poll_interval_sec))
         self._lookback_minutes = max(1.0, float(lookback_minutes))
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running_ids: set[str] = set()
 
     def start(self) -> None:

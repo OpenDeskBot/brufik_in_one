@@ -10,7 +10,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import JSONResponse
@@ -24,23 +24,19 @@ from deskbot_server.controller.auth import (
     require_web_ws_subscriber_auth,
 )
 from deskbot_server.controller.runtime import get_runtime
-from deskbot_server.dao.debug_prefs_store import (
+from deskbot_server.service.config_service import (
     debug_prefs_snapshot,
+    design_frames_to_pb_chain,
+    find_design_scene_by_name,
     get_camera_servo_auto_mode,
     get_live_service_enabled,
+    load_face_expr_scenes_file,
+    load_servo_cfg_file,
     normalize_camera_servo_auto_mode,
+    normalize_servo_document,
     persist_asr_auto_reply,
     persist_camera_servo_auto_mode,
     persist_live_service,
-)
-from deskbot_server.dao.face_expr_scenes_store import (
-    design_frames_to_pb_chain,
-    find_design_scene_by_name,
-    load_face_expr_scenes_file,
-)
-from deskbot_server.dao.servo_config_store import (
-    load_servo_cfg_file,
-    normalize_servo_document,
     save_servo_cfg_file,
     servo_limits,
 )
@@ -61,7 +57,7 @@ logger = logging.getLogger("deskbot-server")
 router = APIRouter(tags=["web"])
 
 
-def _config_device_id(qargs: dict, body: object = None) -> Optional[str]:
+def _config_device_id(qargs: dict, body: object = None) -> str | None:
     dev = (_extract_device_id(qargs) or "").strip()
     if not dev and isinstance(body, dict):
         dev = str(body.get("device_id") or "").strip()
@@ -325,8 +321,8 @@ async def api_device_servo(request: Request) -> JSONResponse:
     attach_pb_device_hints_from_config(payload)
 
     with_scene = (qargs.get("with_scene") or qargs.get("append_scene") or "").strip()
-    tail_frames: Optional[list[dict]] = None
-    scene_req: Optional[str] = None
+    tail_frames: list[dict] | None = None
+    scene_req: str | None = None
     if with_scene:
         if _pb_scene_entry_by_name({}, with_scene):
             scene_req = uuid.uuid4().hex[:16]
@@ -404,7 +400,7 @@ async def api_device_pb_scenes(request: Request) -> JSONResponse:
 @router.get("/api/device_face_catalog")
 @require_api_auth
 async def api_device_face_catalog(request: Request) -> JSONResponse:
-    from deskbot_server.dao.face_design_store import build_face_expression_catalog
+    from deskbot_server.service.config_service import build_face_expression_catalog
 
     peer = _request_peer(request)
     try:
@@ -435,7 +431,7 @@ async def api_device_face_play(request: Request) -> JSONResponse:
     if request.method.upper() != "GET":
         return JSONResponse(status_code=405, content={"ok": False, "error": "method not allowed", "t": time.time()})
     from deskbot_server.controller.runtime import get_runtime
-    from deskbot_server.dao.face_design_store import (
+    from deskbot_server.service.config_service import (
         _load_face_design_cached,
         build_face_expression_catalog,
         ensure_face_design_file,
@@ -641,7 +637,7 @@ async def api_device_tts(request: Request) -> JSONResponse:
 @require_api_auth
 async def api_scene_playbook_run(request: Request) -> JSONResponse:
     from deskbot_server.controller.runtime import get_runtime
-    from deskbot_server.dao.scene_playbooks_store import (
+    from deskbot_server.service.config_service import (
         find_playbook_by_name,
         load_scene_playbooks_file,
         normalize_playbook,
@@ -913,7 +909,7 @@ async def api_device_pb_anim(request: Request) -> JSONResponse:
     peer = _request_peer(request)
     method = request.method.upper()
 
-    anim: Optional[dict[str, Any] | list] = None
+    anim: dict[str, Any] | list | None = None
     dev = ""
     chunk_ms = 500
     act = PB_ACTION_REPLACE

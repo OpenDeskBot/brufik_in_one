@@ -8,7 +8,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.dao.face_expr_scenes_store import design_frames_to_pb_chain
 from deskbot_server.pb.llm_plan import _resolve_servo_preset_steps, expand_llm_anims, expand_llm_moves
@@ -42,7 +42,7 @@ class LiveState(str, Enum):
 @dataclass
 class _Dev:
     mode: LiveState = LiveState.WANDER
-    loop: Optional[asyncio.Task] = None
+    loop: asyncio.Task | None = None
     interrupt: asyncio.Event = field(default_factory=asyncio.Event)
     in_conversation: bool = False
     resume_at: float = field(default_factory=time.monotonic)
@@ -312,7 +312,7 @@ class LiveService(metaclass=SingletonMeta):
         self,
         device_id: str,
         moves: list[dict[str, Any]],
-        scene: Optional[str],
+        scene: str | None,
         source: str,
         summary: str,
     ) -> int:

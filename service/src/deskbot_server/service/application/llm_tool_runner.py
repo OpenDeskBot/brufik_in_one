@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode, persist_camera_servo_auto_mode
-from deskbot_server.dao.device_camera_frame_store import capture_camera_for_device_async
+from deskbot_server.service.camera_face_service import capture_camera_for_device_async
 from deskbot_server.dao.device_tmp_store import read_device_tmp_file, write_device_tmp_file
 from deskbot_server.dao.memory_dao import MemoryDao
 from deskbot_server.dao.session_dao import SessionDao
@@ -45,8 +45,8 @@ def _normalize_follow_mode(raw: object) -> str:
 async def execute_llm_tools(
     tools: list[dict[str, Any]],
     *,
-    device_id: Optional[str] = None,
-    session_id: Optional[str] = None,
+    device_id: str | None = None,
+    session_id: str | None = None,
     asr_chat_hub: Any = None,
     cam_fps: int | None = None,
 ) -> list[dict[str, Any]]:

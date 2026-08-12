@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
 from deskbot_server.dao.servo_config_store import clamp_servo_step, servo_limits
@@ -40,7 +40,7 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
-def _screen_angles_from_analysis(analysis: dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
+def _screen_angles_from_analysis(analysis: dict[str, Any]) -> tuple[float | None, float | None]:
     landmarks = analysis.get("landmarks") or []
     nose = next((p for p in landmarks if isinstance(p, dict) and p.get("name") == "nose"), None)
     w = int(analysis.get("image_w") or 0)

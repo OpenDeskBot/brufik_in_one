@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from deskbot_server.config import load_config, save_config
-from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled, set_asr_voice_auto_reply_enabled
+from deskbot_server.dao.auto_reply_store import get_asr_voice_auto_reply_enabled, set_asr_voice_auto_reply_enabled
 
 logger = logging.getLogger("deskbot-server")
 

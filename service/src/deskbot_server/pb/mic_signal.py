@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from deskbot_server.pb.shapes import PB_ACTION_DEFAULT, PB_LEVEL_TASK
 
 PbMicMode = Literal["hold", "mute", "open"]
 
 
-def parse_pb_mic(raw: Any) -> Optional[PbMicMode]:
+def parse_pb_mic(raw: Any) -> PbMicMode | None:
     if raw is None or raw == "":
         return None
     s = str(raw).strip().lower()

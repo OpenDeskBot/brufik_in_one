@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.config import load_config
 from deskbot_server.dao.llm_config_store import LlmModelEntry, get_active_llm_model
@@ -145,7 +145,7 @@ def resolve_system_llm_config() -> ResolvedLlmConfig:
     )
 
 
-def resolve_llm_config(device_id: Optional[str] = None) -> ResolvedLlmConfig:
+def resolve_llm_config(device_id: str | None = None) -> ResolvedLlmConfig:
     entry = get_active_llm_model(device_id)
     if entry is None:
         return resolve_system_llm_config()
@@ -419,8 +419,8 @@ def _request_chat_completion_stream(
     temperature: float,
     json_mode: bool,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
-    on_delta: Optional[Callable[[str], None]] = None,
-) -> tuple[str, Optional[dict[str, Any]]]:
+    on_delta: Callable[[str], None] | None = None,
+) -> tuple[str, dict[str, Any] | None]:
     """SSE 流式 Chat Completions；``on_delta`` 收到 content 增量时回调。"""
     _validate_api_key(cfg)
     url = _completion_url(cfg.api_base, cfg.protocol)
@@ -447,7 +447,7 @@ def _request_chat_completion_stream(
         raise RuntimeError(f"LLM API 请求失败: {exc.reason}") from exc
 
     parts: list[str] = []
-    usage: Optional[dict[str, Any]] = None
+    usage: dict[str, Any] | None = None
     try:
         with resp:
             for event in _iter_sse_json_events(resp):
@@ -524,12 +524,12 @@ def _request_chat_completion(
 async def chat_acompletion(
     messages: list[dict[str, str]],
     *,
-    device_id: Optional[str] = None,
+    device_id: str | None = None,
     temperature: float = 0.7,
     config: ResolvedLlmConfig | None = None,
     json_mode: bool = True,
     stream: bool = False,
-    on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
+    on_tts_ready: Callable[[str], Awaitable[None]] | None = None,
     first_token_timeout: float | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Call an OpenAI-compatible Chat Completions endpoint."""
@@ -537,7 +537,7 @@ async def chat_acompletion(
     if first_token_timeout is None:
         first_token_timeout = resolve_first_token_timeout(cfg.protocol)
     use_stream = bool(stream or on_tts_ready)
-    usage_dict: Optional[dict[str, Any]] = None
+    usage_dict: dict[str, Any] | None = None
     tts_extractor: JsonTtsStreamExtractor | None = None
 
     async def _fire_tts_ready(text: str) -> None:
@@ -549,7 +549,7 @@ async def chat_acompletion(
 
     if use_stream:
         tts_extractor = JsonTtsStreamExtractor()
-        pending_tts: dict[str, Optional[str]] = {"text": None}
+        pending_tts: dict[str, str | None] = {"text": None}
         loop = asyncio.get_running_loop()
         first_token_event = asyncio.Event()
 
@@ -630,7 +630,7 @@ async def chat_acompletion(
 def chat_completion(
     messages: list[dict[str, str]],
     *,
-    device_id: Optional[str] = None,
+    device_id: str | None = None,
     temperature: float = 0.7,
     config: ResolvedLlmConfig | None = None,
     json_mode: bool = True,

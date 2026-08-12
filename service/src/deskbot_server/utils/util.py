@@ -9,7 +9,7 @@ import time
 import traceback
 import uuid
 import wave
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import unquote_plus
 
 __all__ = [
@@ -51,7 +51,7 @@ def save_temp_wav(pcm_bytes: bytes, sample_rate: int) -> str:
     return path
 
 
-def _ms_between(a: Optional[float], b: Optional[float]) -> Optional[float]:
+def _ms_between(a: float | None, b: float | None) -> float | None:
     if a is None or b is None:
         return None
     return round((b - a) * 1000.0, 1)
@@ -64,7 +64,7 @@ def _format_ts(ts: float) -> str:
         return ""
 
 
-def _normalize_incoming_pb_ack(data: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _normalize_incoming_pb_ack(data: dict[str, Any]) -> dict[str, Any] | None:
     """校验 ESP32 上行的 ``pb_ack``，供入库与注入 LLM。"""
     if not isinstance(data, dict) or data.get("type") != "pb_ack":
         return None
@@ -126,7 +126,7 @@ def _parse_query(query: str) -> dict:
     return out
 
 
-def _extract_device_id(qargs: dict) -> Optional[str]:
+def _extract_device_id(qargs: dict) -> str | None:
     """从 URL 查询参数里按兼容顺序取 device_id。
 
     支持的别名：``device_id`` / ``deviceid`` / ``device`` / ``id``，均大小写不敏感。
@@ -141,7 +141,7 @@ def _extract_device_id(qargs: dict) -> Optional[str]:
     return None
 
 
-def _extract_pin_code(qargs: dict) -> Optional[str]:
+def _extract_pin_code(qargs: dict) -> str | None:
     """从 URL 查询参数取 pin_code（别名 ``pin`` / ``pincode``）。"""
     for key in ("pin_code", "pincode", "pin"):
         v = qargs.get(key)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deskbot_server.core.ports.tts import PhonemeSegment
+from deskbot_server.ports.tts import PhonemeSegment
 from deskbot_server.infrastructure.tts.doubao_phoneme_align import (
     TimedPhoneme,
     build_phoneme_segments,

@@ -11,7 +11,7 @@ import json
 import os
 import re
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import SCENE_PLAYBOOKS_FILE
 from deskbot_server.utils.device_data import resolve_json_path
@@ -149,8 +149,8 @@ def _seed_default_playbooks() -> list[dict[str, Any]]:
 
 
 def load_scene_playbooks_file(
-    *, seed_if_missing: bool = True, device_id: Optional[str] = None
-) -> Optional[list[dict[str, Any]]]:
+    *, seed_if_missing: bool = True, device_id: str | None = None
+) -> list[dict[str, Any]] | None:
     path = resolve_json_path(SCENE_PLAYBOOKS_FILE, device_id)
     if not os.path.isfile(path):
         if not seed_if_missing:
@@ -163,7 +163,7 @@ def load_scene_playbooks_file(
     return normalize_scene_playbooks(raw)
 
 
-def save_scene_playbooks_file(rows: list[dict[str, Any]], *, device_id: Optional[str] = None) -> None:
+def save_scene_playbooks_file(rows: list[dict[str, Any]], *, device_id: str | None = None) -> None:
     norm = normalize_scene_playbooks(rows)
     path = resolve_json_path(SCENE_PLAYBOOKS_FILE, device_id)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -172,7 +172,7 @@ def save_scene_playbooks_file(rows: list[dict[str, Any]], *, device_id: Optional
         f.write("\n")
 
 
-def find_playbook_by_name(rows: list[dict[str, Any]], name: str) -> Optional[dict[str, Any]]:
+def find_playbook_by_name(rows: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
     want = str(name or "").strip().lower()
     if not want:
         return None
@@ -183,7 +183,7 @@ def find_playbook_by_name(rows: list[dict[str, Any]], name: str) -> Optional[dic
 
 
 def collect_missing_servo_presets(
-    playbooks: list[dict[str, Any]] | dict[str, Any], *, device_id: Optional[str] = None
+    playbooks: list[dict[str, Any]] | dict[str, Any], *, device_id: str | None = None
 ) -> list[str]:
     """编排引用的 ``servo.preset`` 在 ``servo.json`` 中不存在时返回 id 列表。"""
     from deskbot_server.pb.llm_plan import _resolve_servo_preset_steps

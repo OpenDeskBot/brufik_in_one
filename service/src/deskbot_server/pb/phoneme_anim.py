@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.pb.shapes import (
     _blink_eye_phase,
@@ -60,7 +60,7 @@ def _phoneme_seq_from_design(segments: list[dict[str, Any]], design: dict[str, A
 
 
 def phoneme_seq_to_anim_seq(
-    segments: list[dict[str, Any]], face_bundle: dict[str, Any], *, device_id: Optional[str] = None
+    segments: list[dict[str, Any]], face_bundle: dict[str, Any], *, device_id: str | None = None
 ) -> list[dict[str, Any]]:
     """返回每片 ``idx, chunk_ms, phoneme, anim``（与仿真页 / pb 一致）。
 

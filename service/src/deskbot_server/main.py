@@ -10,8 +10,8 @@ from deskbot_server.config import load_config
 from deskbot_server.constants import CAMERA_VIEW_PATH, DEVICE_PIPELINE_PATH
 from deskbot_server.controller.app import create_fastapi_app
 from deskbot_server.controller.runtime import AppRuntime
-from deskbot_server.core.concurrency import configure_concurrency
-from deskbot_server.core.settings import AppSettings
+from deskbot_server.utils.concurrency import configure_concurrency
+from deskbot_server.model.settings import AppSettings
 from deskbot_server.dao.debug_prefs_store import apply_debug_prefs_from_config
 from deskbot_server.infrastructure.bootstrap import build_chat_service
 from deskbot_server.service.application.scheduled_task_scheduler import ScheduledTaskScheduler

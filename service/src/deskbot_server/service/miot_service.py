@@ -8,7 +8,7 @@ import sys
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Optional, TypeVar
+from typing import Any, TypeVar
 
 from deskbot_server.utils.device_data import device_data_dir
 
@@ -347,7 +347,7 @@ def resolve_scene(device_id: str, *, scene_id: str | None = None, scene_name: st
     raise ValueError(f"场景名歧义，请改用 scene_id：{', '.join(labels)}")
 
 
-def llm_miot_prompt_appendix(device_id: Optional[str] = None) -> str:
+def llm_miot_prompt_appendix(device_id: str | None = None) -> str:
     """注入 system prompt：绑定状态 + 家庭/房间/设备摘要。"""
     did = str(device_id or "").strip()
     if not did:

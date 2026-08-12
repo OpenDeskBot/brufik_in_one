@@ -6,7 +6,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+
 
 import numpy as np
 import onnxruntime
@@ -94,7 +94,7 @@ class SileroVadStream:
             return 0.0
         return max(0.0, self._audio_ms_processed - self._last_voice_audio_ms)
 
-    def _maybe_finish_utterance(self, *, force: bool = False) -> Optional[bytes]:
+    def _maybe_finish_utterance(self, *, force: bool = False) -> bytes | None:
         if not self._client_have_voice or not self._speech_pcm:
             return None
         silence_ms = self._silence_ms_since_voice()
@@ -112,7 +112,7 @@ class SileroVadStream:
         self._reset_utterance()
         return utterance
 
-    def _process_chunk(self, chunk: bytes) -> Optional[bytes]:
+    def _process_chunk(self, chunk: bytes) -> bytes | None:
         """喂入一个 Silero 块；若切句完成则返回 utterance PCM。"""
         self._audio_ms_processed += self._chunk_ms
         have_voice = self._classify_chunk(chunk)
@@ -135,11 +135,11 @@ class SileroVadStream:
             return self._maybe_finish_utterance()
         return None
 
-    def feed_pcm(self, pcm: bytes) -> Optional[bytes]:
+    def feed_pcm(self, pcm: bytes) -> bytes | None:
         if not pcm:
             return None
         self._pending_pcm.extend(pcm)
-        utterance: Optional[bytes] = None
+        utterance: bytes | None = None
 
         while len(self._pending_pcm) >= SILERO_CHUNK_SAMPLES * 2:
             chunk = bytes(self._pending_pcm[: SILERO_CHUNK_SAMPLES * 2])
@@ -150,7 +150,7 @@ class SileroVadStream:
 
         return utterance
 
-    def flush(self) -> Optional[bytes]:
+    def flush(self) -> bytes | None:
         if self._pending_pcm:
             tail = bytes(self._pending_pcm)
             self._pending_pcm.clear()

@@ -29,7 +29,7 @@ def request_qargs(request: Request) -> dict:
 
 def try_api_auth(request: Request) -> tuple[Any | None, JSONResponse | None]:
     """returns (auth, None) or (None, error_json_response)."""
-    from deskbot_server.dao.api_key_service import QuotaExceededError
+    from deskbot_server.model.exceptions import QuotaExceededError
     from deskbot_server.ws.api_key_gate import QUOTA_MESSAGE, http_require_api_key
 
     qargs = request_qargs(request)

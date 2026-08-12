@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Callable, Optional
+from typing import Callable
 
 _TTS_KEY_RE = re.compile(r'"tts"\s*:\s*', re.IGNORECASE)
 
 
-def try_extract_tts_from_partial_json(buf: str) -> tuple[Optional[str], bool]:
+def try_extract_tts_from_partial_json(buf: str) -> tuple[str | None, bool]:
     """尝试从部分 JSON 文本中提取 ``tts`` 字符串值。
 
     返回 ``(value, complete)``：
@@ -68,7 +68,7 @@ def _read_json_string(text: str, *, start: int) -> tuple[str, int]:
 class JsonTtsStreamExtractor:
     """累积流式 delta，在 ``tts`` 字符串闭合时回调一次。"""
 
-    def __init__(self, on_tts_ready: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(self, on_tts_ready: Callable[[str], None] | None = None) -> None:
         self._buf = ""
         self._fired = False
         self._on_tts_ready = on_tts_ready
@@ -77,7 +77,7 @@ class JsonTtsStreamExtractor:
     def buffer(self) -> str:
         return self._buf
 
-    def feed(self, chunk: str) -> Optional[str]:
+    def feed(self, chunk: str) -> str | None:
         if self._fired or not chunk:
             return None
         self._buf += chunk

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 
 class PipelineEventsPort(Protocol):
@@ -17,14 +17,14 @@ class DownlinkPort(Protocol):
         self,
         stage: str,
         *,
-        request_id: Optional[str],
-        client_fields: Optional[dict[str, Any]] = None,
-        event_fields: Optional[dict[str, Any]] = None,
+        request_id: str | None,
+        client_fields: dict[str, Any] | None = None,
+        event_fields: dict[str, Any] | None = None,
         send_client: bool = True,
     ) -> None: ...
 
     async def send_pb_wire(
-        self, wire_text: str, binaries: Optional[list[bytes]] = None, pcm: Optional[bytes] = None
+        self, wire_text: str, binaries: list[bytes] | None = None, pcm: bytes | None = None
     ) -> bool: ...
 
     def pb_serial_chain(self) -> AbstractAsyncContextManager[None]: ...

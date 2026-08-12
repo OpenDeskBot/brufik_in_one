@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
-def _env_bool(name: str) -> Optional[bool]:
+def _env_bool(name: str) -> bool | None:
     raw = (os.environ.get(name) or "").strip().lower()
     if raw in ("1", "true", "yes", "on"):
         return True
@@ -19,7 +19,7 @@ class ServerSettings:
     host: str = "0.0.0.0"
     port: int = 9000
     ws_path: str = "/asr_chat"
-    ws_ping_interval: Optional[float] = 20.0
+    ws_ping_interval: float | None = 20.0
     ws_ping_timeout: float = 20.0
     asr_chat_device_pb_only: bool = True
     asr_chat_minimal_device_downlink: bool = False
@@ -206,7 +206,7 @@ class AppSettings:
             raw=config,
         )
 
-    def pb_random_servo_cfg(self) -> Optional[dict[str, Any]]:
+    def pb_random_servo_cfg(self) -> dict[str, Any] | None:
         sub = self.tts.pb_random_servo
         env = _env_bool("DESKBOT_PB_RANDOM_SERVO")
         enabled = bool(sub.get("enabled", False))
@@ -238,7 +238,7 @@ class AppSettings:
         return base
 
 
-def _parse_ping_interval(env_val: Optional[str], cfg_val: Any) -> Optional[float]:
+def _parse_ping_interval(env_val: str | None, cfg_val: Any) -> float | None:
     raw = env_val if env_val is not None else str(cfg_val)
     raw = str(raw).strip().lower()
     if raw in ("0", "none", "off", "false"):

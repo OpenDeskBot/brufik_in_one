@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 import cv2  # type: ignore
 import numpy as np
@@ -57,9 +57,9 @@ class CameraUndistorter:
         self.camera_matrix = camera_matrix
         self.dist_coeffs = dist_coeffs
         self.alpha = alpha
-        self._map1: Optional[np.ndarray] = None
-        self._map2: Optional[np.ndarray] = None
-        self._cached_wh: Optional[tuple[int, int]] = None
+        self._map1: np.ndarray | None = None
+        self._map2: np.ndarray | None = None
+        self._cached_wh: tuple[int, int] | None = None
 
     def apply(self, rgb: np.ndarray) -> np.ndarray:
         if rgb.ndim != 3 or rgb.shape[2] != 3:
@@ -108,7 +108,7 @@ def _parse_K_dist_from_mapping(obj: dict[str, Any]) -> tuple[np.ndarray, np.ndar
     return K, dist, cw, ch
 
 
-def try_build_undistorter(camera_face_cfg: dict[str, Any]) -> Optional[CameraUndistorter]:
+def try_build_undistorter(camera_face_cfg: dict[str, Any]) -> CameraUndistorter | None:
     ud = dict(camera_face_cfg.get("undistort") or {})
     env_on = os.environ.get("CAMERA_UNDISTORT", "").strip().lower() in ("1", "true", "yes", "on")
     if not ud.get("enabled") and not env_on:
@@ -119,8 +119,8 @@ def try_build_undistorter(camera_face_cfg: dict[str, Any]) -> Optional[CameraUnd
         or str(ud.get("calibration_json") or ud.get("calibration_file") or "").strip()
     )
 
-    K: Optional[np.ndarray] = None
-    dist: Optional[np.ndarray] = None
+    K: np.ndarray | None = None
+    dist: np.ndarray | None = None
     cw: int = int(ud.get("calib_width") or ud.get("image_width") or 0)
     ch: int = int(ud.get("calib_height") or ud.get("image_height") or 0)
     alpha = float(ud.get("alpha", 1.0))

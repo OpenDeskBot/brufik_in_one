@@ -1,11 +1,8 @@
-# 调试页「启用自动应答」：为 False 时 /asr_chat 不执行 LLM+TTS，且不触发任何自动 pb 下发（含 idle）
-_asr_voice_auto_reply_enabled = True
+"""自动应答状态：重导出 ``dao.auto_reply_store``，供 service 层使用。"""
 
+from deskbot_server.dao.auto_reply_store import (
+    get_asr_voice_auto_reply_enabled,
+    set_asr_voice_auto_reply_enabled,
+)
 
-def get_asr_voice_auto_reply_enabled() -> bool:
-    return _asr_voice_auto_reply_enabled
-
-
-def set_asr_voice_auto_reply_enabled(enabled: bool) -> None:
-    global _asr_voice_auto_reply_enabled
-    _asr_voice_auto_reply_enabled = bool(enabled)
+__all__ = ["get_asr_voice_auto_reply_enabled", "set_asr_voice_auto_reply_enabled"]

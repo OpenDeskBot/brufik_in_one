@@ -5,8 +5,6 @@ import base64
 import json
 import logging
 import time
-from typing import Optional
-
 from websockets.exceptions import ConnectionClosed
 
 from deskbot_server.infrastructure.ws.downlink_adapter import WsDownlinkAdapter
@@ -57,20 +55,20 @@ logger = logging.getLogger("deskbot-server")
 
 async def _feed_rom_uplink(
     payload: bytes,
-    codec: Optional[str],
+    codec: str | None,
     *,
     session: ConnectionSession,
     asr_chat_hub: AsrChatHub,
-    device_id: Optional[str],
-    sample_rate: Optional[int] = None,
-    channels: Optional[int] = None,
-    opus_frames: Optional[int] = None,
+    device_id: str | None,
+    sample_rate: int | None = None,
+    channels: int | None = None,
+    opus_frames: int | None = None,
     websocket=None,
-    pipeline: Optional[ChatService] = None,
-    audio_cfg: Optional[AudioConfig] = None,
-    dp_broker: Optional[DevicePipelineBroker] = None,
-    registry: Optional[DeviceRegistry] = None,
-    turn_task_holder: Optional[list] = None,
+    pipeline: ChatService | None = None,
+    audio_cfg: AudioConfig | None = None,
+    dp_broker: DevicePipelineBroker | None = None,
+    registry: DeviceRegistry | None = None,
+    turn_task_holder: list | None = None,
     device_pb_only: bool = False,
 ) -> None:
     note_uplink_audio(device_id)
@@ -112,12 +110,12 @@ async def _schedule_asr_turn(
     audio_cfg: AudioConfig,
     session: ConnectionSession,
     pcm_segment: bytes,
-    device_id: Optional[str],
+    device_id: str | None,
     dp_broker: DevicePipelineBroker,
     registry: DeviceRegistry,
     asr_chat_hub: AsrChatHub,
     turn_task_holder: list,
-    uplink_sample_rate: Optional[int] = None,
+    uplink_sample_rate: int | None = None,
     uplink_channels: int = 1,
     uplink_codec: str = "pcm16",
 ) -> None:
@@ -154,7 +152,7 @@ async def _schedule_asr_turn(
 async def _ingest_asr_chat_camera_frame(
     *,
     payload: bytes,
-    device_id: Optional[str],
+    device_id: str | None,
     camera_face_enabled: bool,
     enc: str = "binary",
 ) -> None:
@@ -174,16 +172,16 @@ async def _ingest_asr_chat_camera_frame(
 
 
 async def _publish_asr_capture(
-    dp_broker: Optional[DevicePipelineBroker],
-    device_id: Optional[str],
+    dp_broker: DevicePipelineBroker | None,
+    device_id: str | None,
     *,
     request_id: str,
     pcm_segment: bytes,
     sample_rate: int,
-    asr_text: Optional[str],
-    asr_ms: Optional[float],
+    asr_text: str | None,
+    asr_ms: float | None,
     asr_valid: bool,
-    error: Optional[str] = None,
+    error: str | None = None,
     channels: int = 1,
     codec: str = "pcm16",
 ) -> None:
@@ -223,11 +221,11 @@ async def _publish_asr_capture(
 async def _publish_asr_terminal(
     dp_broker: DevicePipelineBroker,
     registry: DeviceRegistry,
-    device_id: Optional[str],
+    device_id: str | None,
     *,
     request_id: str,
-    asr_text: Optional[str],
-    asr_ms: Optional[float],
+    asr_text: str | None,
+    asr_ms: float | None,
     t_asr_start: float,
     t_asr_text: float,
     status: str,
@@ -249,7 +247,7 @@ async def _publish_asr_terminal(
     )
 
 
-async def _send_mic_open_signal(asr_chat_hub: Optional[AsrChatHub], device_id: Optional[str], *, reason: str) -> None:
+async def _send_mic_open_signal(asr_chat_hub: AsrChatHub | None, device_id: str | None, *, reason: str) -> None:
     if not asr_chat_hub or not device_id:
         return
     from deskbot_server.pb.mic_signal import build_mic_signal_pb
@@ -275,11 +273,11 @@ async def _run_asr_turn(
     audio_cfg: AudioConfig,
     session: ConnectionSession,
     pcm_segment: bytes,
-    device_id: Optional[str],
+    device_id: str | None,
     dp_broker: DevicePipelineBroker,
     registry: DeviceRegistry,
-    asr_chat_hub: Optional[AsrChatHub] = None,
-    uplink_sample_rate: Optional[int] = None,
+    asr_chat_hub: AsrChatHub | None = None,
+    uplink_sample_rate: int | None = None,
     uplink_channels: int = 1,
     uplink_codec: str = "pcm16",
 ) -> None:
@@ -460,7 +458,7 @@ async def _dispatch_rom_flush(
     pipeline: ChatService,
     audio_cfg: AudioConfig,
     session: ConnectionSession,
-    device_id: Optional[str],
+    device_id: str | None,
     dp_broker: DevicePipelineBroker,
     registry: DeviceRegistry,
     asr_chat_hub: AsrChatHub,
@@ -519,12 +517,12 @@ async def handle_asr_chat(
     websocket,
     pipeline: ChatService,
     audio_cfg: AudioConfig,
-    device_id: Optional[str],
+    device_id: str | None,
     registry: DeviceRegistry,
     dp_broker: DevicePipelineBroker,
     asr_chat_hub: AsrChatHub,
     *,
-    pin_code: Optional[str] = None,
+    pin_code: str | None = None,
 ) -> None:
     """/asr_chat WS：音频/文本上行；可选 ``camera_frame`` + JPEG（``next_bin_len``）。
 
@@ -535,7 +533,7 @@ async def handle_asr_chat(
     except RuntimeError:
         session = ConnectionSession(pipeline, audio_cfg)
     peer = WsUtils.peer_str(websocket)
-    pending: Optional[PendingUplinkBinary] = None
+    pending: PendingUplinkBinary | None = None
     turn_task_holder: list[asyncio.Task] = []
     device_pb_only = getattr(pipeline, "asr_chat_device_pb_only", False)
     camera_face_enabled = bool(device_id and CameraFaceService().is_configured())
@@ -567,7 +565,7 @@ async def handle_asr_chat(
             await deliver_boot_wake_scene(asr_chat_hub, device_id)
 
         async for message in websocket:
-            attached_media: Optional[bytes] = None
+            attached_media: bytes | None = None
             try:
                 # --- 等待中的 binary（上一帧 JSON 已声明 next_bin_len）---
                 if pending is not None:

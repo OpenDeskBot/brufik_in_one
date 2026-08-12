@@ -146,7 +146,7 @@ def test_openai_adapter_with_ark_device(device_env, monkeypatch):
     from tests.device_bind_helpers import bind_device_online
     from deskbot_server.auth.service import create_user
     from deskbot_server.config import load_config
-    from deskbot_server.core.settings import AppSettings
+    from deskbot_server.model.settings import AppSettings
     from deskbot_server.dao.llm_config_store import add_llm_model, set_active_llm_model
     from deskbot_server.infrastructure.llm.openai_compat import OpenAiLlmAdapter
 

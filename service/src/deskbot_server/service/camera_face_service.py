@@ -9,7 +9,7 @@ import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable
 
 import numpy as np
 
@@ -31,7 +31,7 @@ _worker_opts_key: tuple | None = None
 class CameraFaceRuntime:
     """全局共用的人脸推理参数（所有设备同一套）。"""
 
-    undistorter: Optional[CameraUndistorter]
+    undistorter: CameraUndistorter | None
     min_face_detection_confidence: float
     min_face_presence_confidence: float
     num_faces: int = 5
@@ -237,7 +237,7 @@ class CameraFaceService(metaclass=SingletonMeta):
         self._trackers: dict[str, FaceTracker] = {}
         self._inflight: dict[str, asyncio.Task] = {}
         self._frame_count: dict[str, int] = {}
-        self._video_subs: dict[str, tuple[Optional[str], VideoStreamCallback]] = {}
+        self._video_subs: dict[str, tuple[str | None, VideoStreamCallback]] = {}
         self._video_subs_lock = asyncio.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -306,9 +306,9 @@ class CameraFaceService(metaclass=SingletonMeta):
         self,
         embedding: list[float],
         *,
-        device_id: Optional[str] = None,
-        threshold: Optional[float] = None,
-    ) -> Optional[dict[str, Any]]:
+        device_id: str | None = None,
+        threshold: float | None = None,
+    ) -> dict[str, Any] | None:
         """用 embedding 在 ``face_profiles`` 中查找匹配人名。"""
         from deskbot_server.dao.camera_face_config_store import load_camera_face_cfg_file
         from deskbot_server.dao.face_profiles_store import find_profile_by_similarity, load_face_profiles
@@ -346,7 +346,7 @@ class CameraFaceService(metaclass=SingletonMeta):
         name: str,
         embedding: list[float],
         *,
-        device_id: Optional[str] = None,
+        device_id: str | None = None,
     ) -> dict[str, Any]:
         """将 embedding 写入 ``face_profiles``，并刷新 tracker。"""
         from deskbot_server.dao.camera_face_config_store import load_camera_face_cfg_file
@@ -378,7 +378,7 @@ class CameraFaceService(metaclass=SingletonMeta):
     # ----- 视频流订阅 / 抓拍 -----
 
     async def subscribe_video_stream(
-        self, conn_id: str, callback: VideoStreamCallback, *, device_id: Optional[str] = None
+        self, conn_id: str, callback: VideoStreamCallback, *, device_id: str | None = None
     ) -> None:
         self._note_loop()
         flt = str(device_id).strip() if device_id else None
@@ -393,7 +393,7 @@ class CameraFaceService(metaclass=SingletonMeta):
             logger.info("[CameraFaceService] 视频流取消订阅 conn_id=%s", conn_id)
 
     async def try_emit_video_frame(
-        self, device_id: str, frame_bytes: bytes, *, meta: Optional[dict[str, Any]] = None
+        self, device_id: str, frame_bytes: bytes, *, meta: dict[str, Any] | None = None
     ) -> None:
         """有匹配订阅者才推流；无订阅者时直接返回。"""
         if not frame_bytes:
@@ -544,7 +544,7 @@ class CameraFaceService(metaclass=SingletonMeta):
         frame_source: str,
         log_channel: str,
     ) -> None:
-        from deskbot_server.core.concurrency import face_infer_slot
+        from deskbot_server.utils.concurrency import face_infer_slot
         from deskbot_server.vision.geometry import FACE_FRAME_HEIGHT, FACE_FRAME_WIDTH
 
         runtime = self.runtime
@@ -700,3 +700,40 @@ class CameraFaceService(metaclass=SingletonMeta):
             frame_bytes,
             meta=self._preview_meta(frame_source=frame_source, detect=detect),
         )
+
+
+# ---------- 相机抓拍辅助函数 ----------
+
+_DEFAULT_CAPTURE_FPS = 5
+_DEFAULT_WAIT_TIMEOUT_S = 4.0
+
+
+async def request_camera_fps_boost(device_id: str, hub: Any, *, cam_fps: int = _DEFAULT_CAPTURE_FPS) -> None:
+    """通过 pb 提示设备提高相机上行帧率（经 /asr_chat）。"""
+    dev = str(device_id or "").strip()
+    if not dev or hub is None:
+        return
+    try:
+        from deskbot_server.pb.cam_signal import build_cam_fps_signal_pb
+
+        payload = build_cam_fps_signal_pb(cam_fps=cam_fps)
+        n = await hub.send(dev, payload)
+        logger.info("[capture_camera] cam_fps=%d boost device_id=%s delivered=%s", cam_fps, dev, n)
+    except Exception as exc:
+        logger.warning("[capture_camera] cam_fps boost failed device_id=%s: %s", dev, exc)
+
+
+async def capture_camera_for_device_async(
+    device_id: str,
+    *,
+    hub: Any = None,
+    cam_fps: int = _DEFAULT_CAPTURE_FPS,
+    wait_timeout_s: float = _DEFAULT_WAIT_TIMEOUT_S,
+) -> dict[str, Any]:
+    """异步抓拍：可选提升 cam_fps，临时订阅视频流取一帧后取消订阅。"""
+    dev = str(device_id or "").strip()
+    if not dev:
+        return {"ok": False, "error": "缺少 device_id"}
+
+    await request_camera_fps_boost(dev, hub, cam_fps=cam_fps)
+    return await CameraFaceService().capture_frame_async(dev, timeout_s=wait_timeout_s)

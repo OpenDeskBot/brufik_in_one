@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any
 
-from deskbot_server.core.settings import AppSettings
+from deskbot_server.model.settings import AppSettings
 from deskbot_server.ws.device_pipeline import DevicePipelineBroker
 from deskbot_server.ws.stages import _emit_stage
 from deskbot_server.ws.ws_send import _maybe_pb_serial_chain_guard, _send_pb_wire_to_asr_device
@@ -13,7 +13,7 @@ class WsDownlinkAdapter:
     """WebSocket 下行适配器：实现 DownlinkPort。"""
 
     def __init__(
-        self, websocket, *, settings: AppSettings, device_id: Optional[str], dp_broker: Optional[DevicePipelineBroker]
+        self, websocket, *, settings: AppSettings, device_id: str | None, dp_broker: DevicePipelineBroker | None
     ) -> None:
         self._ws = websocket
         self._settings = settings
@@ -24,9 +24,9 @@ class WsDownlinkAdapter:
         self,
         stage: str,
         *,
-        request_id: Optional[str],
-        client_fields: Optional[dict[str, Any]] = None,
-        event_fields: Optional[dict[str, Any]] = None,
+        request_id: str | None,
+        client_fields: dict[str, Any] | None = None,
+        event_fields: dict[str, Any] | None = None,
         send_client: bool = True,
     ) -> None:
         await _emit_stage(
@@ -41,7 +41,7 @@ class WsDownlinkAdapter:
         )
 
     async def send_pb_wire(
-        self, wire_text: str, binaries: Optional[list[bytes]] = None, pcm: Optional[bytes] = None
+        self, wire_text: str, binaries: list[bytes] | None = None, pcm: bytes | None = None
     ) -> bool:
         return await _send_pb_wire_to_asr_device(self._ws, wire_text, binaries=binaries, pcm=pcm)
 

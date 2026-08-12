@@ -4,7 +4,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Optional
+
 
 from deskbot_server.constants import PB_CHUNK_GAP_SEC, PB_MAX_PCM_BIN_BYTES, SAFE_SEND_TIMEOUT
 from deskbot_server.service.application.asr_chat_uplink import pack_ws_downlink_frame
@@ -218,7 +218,7 @@ def _ensure_pb_device_downlink_worker(ws) -> None:
 
 
 async def enqueue_pb_device_downlink_unlocked(
-    ws, wire: str, binaries: Optional[list[bytes]] = None, pcm: Optional[bytes] = None
+    ws, wire: str, binaries: list[bytes] | None = None, pcm: bytes | None = None
 ) -> None:
     """将 pb 下行排入队列（不设链锁；链式发送方须已持 :func:`_pb_ws_chain_serial_lock`）。"""
     _ensure_pb_device_downlink_worker(ws)
@@ -232,7 +232,7 @@ async def enqueue_pb_device_downlink_unlocked(
 
 
 async def enqueue_pb_device_downlink(
-    ws, wire: str, binaries: Optional[list[bytes]] = None, pcm: Optional[bytes] = None
+    ws, wire: str, binaries: list[bytes] | None = None, pcm: bytes | None = None
 ) -> None:
     """单条 pb 入队；``device_pb_only`` 时持链锁，避免与其它生产者单片交叉。"""
     if getattr(ws, "_asr_chat_pb_serial_queue", False):
@@ -249,7 +249,7 @@ async def _stop_pb_device_downlink_worker(ws) -> None:
         return
     try:
         await q.put(None)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best effort cleanup
         pass
     try:
         await asyncio.wait_for(task, timeout=5.0)
@@ -263,16 +263,16 @@ async def _stop_pb_device_downlink_worker(ws) -> None:
     try:
         delattr(ws, _PB_DEVICE_WORKER_ATTR)
         delattr(ws, _PB_DEVICE_QUEUE_ATTR)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best effort cleanup
         pass
     try:
         delattr(ws, _PB_WS_CHAIN_SERIAL_LOCK_ATTR)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best effort cleanup
         pass
 
 
 async def _send_pb_wire_to_asr_device(
-    websocket, wire: str, binaries: Optional[list[bytes]] = None, pcm: Optional[bytes] = None
+    websocket, wire: str, binaries: list[bytes] | None = None, pcm: bytes | None = None
 ) -> bool:
     """TTS 等：在仅 pb 设备连接上经队列发送，否则直接发送。返回是否完整成功。"""
     bins = list(binaries or [])

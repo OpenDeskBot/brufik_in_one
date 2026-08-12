@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
 from deskbot_server.service.application.face_snapshot_cache import list_device_faces
@@ -105,7 +105,7 @@ def list_faces_for_prompt(device_id: str, *, limit: int = 5) -> list[dict[str, A
     return rows[:cap]
 
 
-def llm_face_scene_prompt_appendix(device_id: Optional[str] = None) -> str:
+def llm_face_scene_prompt_appendix(device_id: str | None = None) -> str:
     """当前画面人脸（含 face_id、姓名、置信度、画面方位与归一化坐标）。"""
     device_id = str(device_id or "").strip()
     if not device_id:

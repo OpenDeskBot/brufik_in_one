@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections import deque
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.dao.face_expr_scenes_store import (
     _extract_frame_elements,
@@ -62,7 +62,7 @@ def _scale_ms_values(raw_ms: list[int], target_ms: int) -> list[int]:
     return scaled
 
 
-def _resolve_servo_preset_steps(preset_id: str, *, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def _resolve_servo_preset_steps(preset_id: str, *, device_id: str | None = None) -> list[dict[str, Any]]:
     want = str(preset_id or "").strip()
     if not want:
         return []
@@ -82,13 +82,13 @@ def _resolve_servo_preset_steps(preset_id: str, *, device_id: Optional[str] = No
     return []
 
 
-def preset_default_ms(preset_id: str, *, device_id: Optional[str] = None) -> int:
+def preset_default_ms(preset_id: str, *, device_id: str | None = None) -> int:
     """预设动作默认总时长（各 step ``ms`` 之和）。"""
     steps = _resolve_servo_preset_steps(preset_id, device_id=device_id)
     return sum(max(1, int(s.get("ms") or 0)) for s in steps)
 
 
-def resolve_anim_scene_frames(anim_name: str, *, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def resolve_anim_scene_frames(anim_name: str, *, device_id: str | None = None) -> list[dict[str, Any]]:
     """加载表情场景帧；未找到时回退 ``name=default``。"""
     rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id) or []
     ent = find_design_scene_by_name(rows, anim_name)
@@ -102,13 +102,13 @@ def resolve_anim_scene_frames(anim_name: str, *, device_id: Optional[str] = None
     return copy.deepcopy(frames)
 
 
-def anim_default_ms(anim_name: str, *, device_id: Optional[str] = None) -> int:
+def anim_default_ms(anim_name: str, *, device_id: str | None = None) -> int:
     """动画场景默认总时长（各 frame ``ms`` 之和）。"""
     frames = resolve_anim_scene_frames(anim_name, device_id=device_id)
     return sum(max(1, int(fr.get("ms") or 0)) for fr in frames)
 
 
-def expand_llm_moves(moves: list[dict[str, Any]] | None, *, device_id: Optional[str] = None) -> list[dict[str, int]]:
+def expand_llm_moves(moves: list[dict[str, Any]] | None, *, device_id: str | None = None) -> list[dict[str, int]]:
     """将 ``[{move, ms}, ...]`` 展开为缩放后的舵机 step 列表。"""
     out: list[dict[str, int]] = []
     for item in moves or []:
@@ -163,7 +163,7 @@ def expand_llm_moves(moves: list[dict[str, Any]] | None, *, device_id: Optional[
     return out
 
 
-def expand_llm_anims(anims: list[dict[str, Any]] | None, *, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def expand_llm_anims(anims: list[dict[str, Any]] | None, *, device_id: str | None = None) -> list[dict[str, Any]]:
     """将 ``[{anim, ms}, ...]`` 展开为缩放后的 ``{ms, elements}`` 帧列表。"""
     out: list[dict[str, Any]] = []
     for item in anims or []:
@@ -260,7 +260,7 @@ def interleave_tts_segs_with_llm_plan(
                 ms = max(ms, int(move_steps[mi].get("ms", _FRAME_MS_MIN)))
             seg = _silence_phoneme_seg(ms, sample_rate)
 
-        servo_cmd: Optional[dict[str, int]] = None
+        servo_cmd: dict[str, int] | None = None
         if mi < len(move_steps):
             servo_cmd = move_steps[mi]
 
@@ -305,7 +305,7 @@ def build_anim_rows_for_llm_plan(
     parallel_anim: list[dict[str, Any] | None] | None,
     face_bundle: dict[str, Any],
     *,
-    device_id: Optional[str] = None,
+    device_id: str | None = None,
 ) -> list[dict[str, Any]]:
     phoneme_rows = phoneme_seq_to_anim_seq(segs, face_bundle, device_id=device_id)
     return merge_llm_plan_anim_rows(segs, phoneme_rows, parallel_anim)

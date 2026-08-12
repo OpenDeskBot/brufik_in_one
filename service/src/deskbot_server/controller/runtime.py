@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from deskbot_server.core.settings import AppSettings
+    from deskbot_server.model.settings import AppSettings
     from deskbot_server.service.application.chat_service import ChatService
     from deskbot_server.service.pipeline.audio import AudioConfig
     from deskbot_server.ws.asr_chat_hub import AsrChatHub
@@ -23,7 +23,7 @@ class AppRuntime:
     device_pipeline_broker: "DevicePipelineBroker"
     registry: "DeviceRegistry"
     asr_chat_hub: "AsrChatHub"
-    scheduler: Optional[object] = None
+    scheduler: object | None = None
 
 
 _RUNTIME: AppRuntime | None = None

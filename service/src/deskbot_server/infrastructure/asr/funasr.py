@@ -9,8 +9,8 @@ from typing import Any
 
 import numpy as np
 
-from deskbot_server.core.concurrency import asr_infer_slot
-from deskbot_server.core.settings import AppSettings
+from deskbot_server.utils.concurrency import asr_infer_slot
+from deskbot_server.model.settings import AppSettings
 from deskbot_server.infrastructure.asr.model_dir import asr_model_dir_ready, ensure_asr_quant_onnx, has_quant_onnx
 from deskbot_server.utils.paths import MODELS_DIR, PROJECT_ROOT
 from deskbot_server.utils.util import pcm_to_wav_bytes

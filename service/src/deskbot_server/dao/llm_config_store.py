@@ -6,7 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.utils.device_data import device_data_dir
 
@@ -165,7 +165,7 @@ def get_llm_model(device_id: str, model_id: str) -> LlmModelEntry | None:
     return None
 
 
-def get_active_llm_model(device_id: Optional[str]) -> LlmModelEntry | None:
+def get_active_llm_model(device_id: str | None) -> LlmModelEntry | None:
     did = str(device_id or "").strip()
     if not did:
         return None

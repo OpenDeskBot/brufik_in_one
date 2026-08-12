@@ -7,7 +7,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("deskbot-server")
 
@@ -69,7 +69,7 @@ class PbAckGate:
                 st.last_idx = idx
             st.cond.notify_all()
 
-    async def wait_idx(self, device_id: str, req: str, idx: int, *, timeout: Optional[float] = None) -> bool:
+    async def wait_idx(self, device_id: str, req: str, idx: int, *, timeout: float | None = None) -> bool:
         if not device_id or not req:
             return True
         if timeout is None:

@@ -7,7 +7,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import PB_MAX_WIRE_JSON_BYTES
 from deskbot_server.pb.face_bundle import resolve_pb_face_bundle
@@ -78,11 +78,11 @@ def build_pb_wire_pairs(
     moves: list[dict[str, Any]] | None = None,
     anims: list[dict[str, Any]] | None = None,
     sample_rate: int,
-    request_id: Optional[str] = None,
-    random_servo_cfg: Optional[dict[str, Any]] = None,
+    request_id: str | None = None,
+    random_servo_cfg: dict[str, Any] | None = None,
     volume: int | None = None,
     cam_fps: int | None = None,
-    device_id: Optional[str] = None,
+    device_id: str | None = None,
     action: str = PB_ACTION_REPLACE,
     leading_move_steps: int = 0,
 ) -> tuple[list[tuple[dict[str, Any], list[bytes]]], str, int, int]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 
 from starlette.websockets import WebSocketDisconnect
 from websockets.exceptions import ConnectionClosed
@@ -26,7 +26,7 @@ class WsUtils:
         return (str(device_id), str(path))
 
     @staticmethod
-    async def keep_only_one_link(device_id: Optional[str], path: str, ws: Any) -> None:
+    async def keep_only_one_link(device_id: str | None, path: str, ws: Any) -> None:
         """同一 ``device_id`` + ``path`` 只保留最新一条连接，关闭旧 peer。"""
         if not device_id or ws is None:
             return
@@ -43,7 +43,7 @@ class WsUtils:
         WsUtils._active[key] = ws
 
     @staticmethod
-    def release_link(device_id: Optional[str], path: str, ws: Any) -> bool:
+    def release_link(device_id: str | None, path: str, ws: Any) -> bool:
         """连接断开时若仍是当前活跃 peer，则注销；返回是否注销成功。"""
         if not device_id or ws is None:
             return False
@@ -54,7 +54,7 @@ class WsUtils:
         return False
 
     @staticmethod
-    def is_current_link(device_id: Optional[str], path: str, ws: Any) -> bool:
+    def is_current_link(device_id: str | None, path: str, ws: Any) -> bool:
         if not device_id or ws is None:
             return False
         return WsUtils._active.get(WsUtils._key(device_id, path)) is ws
@@ -66,7 +66,7 @@ class WsUtils:
             peer = getattr(websocket, "remote_address", None)
             if peer and isinstance(peer, tuple) and len(peer) >= 2:
                 return f"{peer[0]}:{peer[1]}"
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort cleanup
             pass
         return "?"
 
@@ -88,7 +88,7 @@ class WsUtils:
         return lock
 
     @staticmethod
-    async def safe_send_once(websocket, message, *, timeout: Optional[float] = None) -> bool:
+    async def safe_send_once(websocket, message, *, timeout: float | None = None) -> bool:
         """对 ``websocket`` 执行单次 ``send``（**不**加锁；由调用方保证互斥或独占锁）。
 
         返回是否成功写出（``True``）；连接已关/超时/其它异常返回 ``False``。
@@ -139,7 +139,7 @@ class WsUtils:
             return False
 
     @staticmethod
-    async def safe_send(websocket, message, *, timeout: Optional[float] = None) -> bool:
+    async def safe_send(websocket, message, *, timeout: float | None = None) -> bool:
         """往 WS 发一条消息；与同连接上其它发送共享互斥锁，保证帧顺序。
 
         - 客户端已断开：吞掉 ConnectionClosed，避免 ERROR 日志刷屏。

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
-
 FACE_FRAME_WIDTH = 320
 FACE_FRAME_HEIGHT = 240
 FACE_KEYPOINT_NAMES = ("left_eye", "right_eye", "nose", "mouth_left", "mouth_right")
@@ -76,14 +74,14 @@ def landmarks_by_name(landmarks: list) -> dict[str, dict]:
     }
 
 
-def _midpoint(a: dict, b: dict) -> Optional[tuple[float, float]]:
+def _midpoint(a: dict, b: dict) -> tuple[float, float] | None:
     try:
         return (float(a["x"]) + float(b["x"])) * 0.5, (float(a["y"]) + float(b["y"])) * 0.5
     except (TypeError, ValueError, KeyError):
         return None
 
 
-def eye_centers_from_landmarks(landmarks: list) -> tuple[Optional[tuple[float, float]], Optional[tuple[float, float]]]:
+def eye_centers_from_landmarks(landmarks: list) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
     """从 9 点 landmarks 得到左右眼中心（优先虹膜，否则内外眼角中点）。"""
     by = landmarks_by_name(landmarks)
     left = None
@@ -111,7 +109,7 @@ def eye_centers_from_landmarks(landmarks: list) -> tuple[Optional[tuple[float, f
     return left, right
 
 
-def kps5_from_landmarks(landmarks: list) -> Optional[list[dict]]:
+def kps5_from_landmarks(landmarks: list) -> list[dict] | None:
     """InsightFace 对齐用：从 landmarks 派生 5 点 ``{name,x,y}``（不对外暴露为 points）。"""
     by = landmarks_by_name(landmarks)
     left, right = eye_centers_from_landmarks(landmarks)
@@ -194,7 +192,7 @@ def compute_frontal_score(landmarks: list) -> float:
     return round(max(0.0, min(1.0, score)), 3)
 
 
-def compute_face_yaw_deg(landmarks: list) -> Optional[float]:
+def compute_face_yaw_deg(landmarks: list) -> float | None:
     """根据 9 点 landmarks 估算用户面向相机的 **yaw 角**（左右转头），单位**度**。
 
     符号约定（**前提：摄像头未做水平镜像**——大多数 ESP32 / 后置摄像头是
@@ -267,7 +265,7 @@ def compute_face_yaw_deg(landmarks: list) -> Optional[float]:
     return round(YAW_SIGN * yaw_deg, 1)
 
 
-def compute_face_pitch_deg(landmarks: list) -> Optional[float]:
+def compute_face_pitch_deg(landmarks: list) -> float | None:
     """根据 9 点 landmarks 估算用户面向相机的 **pitch 角**（上下转头/俯仰），
     单位**度**。
 
@@ -441,7 +439,7 @@ def compute_face_score(
     return round(max(0.0, min(1.0, score)), 3)
 
 
-def compute_frontal_angle_deg(yaw_deg: Optional[float], pitch_deg: Optional[float]) -> Optional[float]:
+def compute_frontal_angle_deg(yaw_deg: float | None, pitch_deg: float | None) -> float | None:
     """正脸角度（°）：头部相对镜头轴线的偏差，取 ``max(|yaw|, |pitch|)``。
 
     正对镜头 → 0°；转头/抬头幅度越大值越大。与 ``frontal_score``（几何分）不同，
@@ -455,8 +453,8 @@ def compute_frontal_angle_deg(yaw_deg: Optional[float], pitch_deg: Optional[floa
 
 
 def compute_is_frontal_by_angle(
-    yaw_deg: Optional[float], pitch_deg: Optional[float], *, threshold_deg: float = FRONTAL_ANGLE_THRESHOLD_DEG
-) -> Optional[bool]:
+    yaw_deg: float | None, pitch_deg: float | None, *, threshold_deg: float = FRONTAL_ANGLE_THRESHOLD_DEG
+) -> bool | None:
     """按正脸角度阈值判定是否正对镜头。"""
     angle = compute_frontal_angle_deg(yaw_deg, pitch_deg)
     if angle is None:
@@ -464,7 +462,7 @@ def compute_is_frontal_by_angle(
     return angle <= float(threshold_deg)
 
 
-def decompose_facial_transform_matrix(matrix: list | tuple) -> Optional[dict[str, float]]:
+def decompose_facial_transform_matrix(matrix: list | tuple) -> dict[str, float] | None:
     """从 MediaPipe ``facial_transformation_matrixes``（4×4 行主序）分解头部位姿角。
 
     矩阵将 canonical face model 映射到检测脸在相机坐标系中的位姿；取旋转子矩阵
@@ -503,7 +501,7 @@ def decompose_facial_transform_matrix(matrix: list | tuple) -> Optional[dict[str
     }
 
 
-def compute_eye_yaw_offset_deg(iris_offsets: dict, *, eye_yaw_range_deg: float = EYE_YAW_RANGE_DEG) -> Optional[float]:
+def compute_eye_yaw_offset_deg(iris_offsets: dict, *, eye_yaw_range_deg: float = EYE_YAW_RANGE_DEG) -> float | None:
     """瞳孔相对人脸的左右偏角（°）：虹膜在眼角连线 0.5 为 0，向图像 x 大侧为正。"""
     vals: list[float] = []
     for key in ("left_eye", "right_eye"):
@@ -523,18 +521,18 @@ def compute_eye_yaw_offset_deg(iris_offsets: dict, *, eye_yaw_range_deg: float =
 
 
 def compute_gaze_angles(
-    face_yaw_deg: Optional[float],
-    face_pitch_deg: Optional[float],
+    face_yaw_deg: float | None,
+    face_pitch_deg: float | None,
     iris_offsets: dict,
     *,
     eye_yaw_range_deg: float = EYE_YAW_RANGE_DEG,
-) -> dict[str, Optional[float]]:
+) -> dict[str, float | None]:
     """合成注视角：头相对镜头 yaw/pitch + 眼相对头的偏角 → 视线相对镜头。
 
     当前模型仅有虹膜横向 offset，pitch 方向暂只用 head pitch。
     """
     eye_yaw = compute_eye_yaw_offset_deg(iris_offsets, eye_yaw_range_deg=eye_yaw_range_deg)
-    gaze_yaw: Optional[float] = None
+    gaze_yaw: float | None = None
     if face_yaw_deg is not None:
         gaze_yaw = round(float(face_yaw_deg) + (eye_yaw or 0.0), 1)
     elif eye_yaw is not None:
@@ -544,12 +542,12 @@ def compute_gaze_angles(
 
 
 def compute_is_looking_at_camera(
-    gaze_yaw_deg: Optional[float],
-    gaze_pitch_deg: Optional[float],
+    gaze_yaw_deg: float | None,
+    gaze_pitch_deg: float | None,
     *,
     yaw_threshold_deg: float = FRONTAL_YAW_THRESHOLD_DEG,
     pitch_threshold_deg: float = FRONTAL_YAW_THRESHOLD_DEG,
-) -> Optional[bool]:
+) -> bool | None:
     """视线是否朝向镜头：合成 yaw/pitch 均在阈值内为 True。"""
     if gaze_yaw_deg is None and gaze_pitch_deg is None:
         return None

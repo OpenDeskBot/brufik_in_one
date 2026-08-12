@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import FACE_DESIGN_FILE
 from deskbot_server.dao.face_expr_scenes_store import normalize_design_scene
@@ -15,7 +15,7 @@ from deskbot_server.utils.device_data import resolve_json_path
 _design_cache: tuple[str, float, dict[str, Any] | None] | None = None
 
 
-def resolve_face_design_path(*, device_id: Optional[str] = None) -> str:
+def resolve_face_design_path(*, device_id: str | None = None) -> str:
     """所有设备共用 ``data/global/deskbot-face.json``。"""
     del device_id
     return resolve_json_path(FACE_DESIGN_FILE, None)
@@ -55,8 +55,8 @@ def normalize_face_design_doc(raw: object) -> dict[str, Any]:
 
 
 def load_face_design_file(
-    *, seed_if_missing: bool = False, device_id: Optional[str] = None
-) -> Optional[dict[str, Any]]:
+    *, seed_if_missing: bool = False, device_id: str | None = None
+) -> dict[str, Any] | None:
     del seed_if_missing
     path = resolve_face_design_path(device_id=device_id)
     if not os.path.isfile(path):
@@ -66,7 +66,7 @@ def load_face_design_file(
     return normalize_face_design_doc(raw)
 
 
-def ensure_face_design_file(*, device_id: Optional[str] = None) -> dict[str, Any]:
+def ensure_face_design_file(*, device_id: str | None = None) -> dict[str, Any]:
     """加载 ``data/global/deskbot-face.json``。"""
     del device_id
     doc = load_face_design_file()
@@ -79,7 +79,7 @@ def ensure_face_design_file(*, device_id: Optional[str] = None) -> dict[str, Any
         return normalize_face_design_doc(json.load(f))
 
 
-def save_face_design_file(doc: dict[str, Any], *, device_id: Optional[str] = None) -> dict[str, Any]:
+def save_face_design_file(doc: dict[str, Any], *, device_id: str | None = None) -> dict[str, Any]:
     norm = normalize_face_design_doc(doc)
     path = resolve_face_design_path(device_id=device_id)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -95,7 +95,7 @@ def clear_face_design_cache() -> None:
     _design_cache = None
 
 
-def design_file_mtime(*, device_id: Optional[str] = None) -> float:
+def design_file_mtime(*, device_id: str | None = None) -> float:
     path = resolve_face_design_path(device_id=device_id)
     try:
         return float(os.stat(path).st_mtime)
@@ -103,7 +103,7 @@ def design_file_mtime(*, device_id: Optional[str] = None) -> float:
         return 0.0
 
 
-def _load_face_design_cached(*, device_id: Optional[str] = None) -> dict[str, Any] | None:
+def _load_face_design_cached(*, device_id: str | None = None) -> dict[str, Any] | None:
     global _design_cache
     path = resolve_face_design_path(device_id=device_id)
     try:
@@ -132,7 +132,7 @@ def expression_match_keys(expr: dict[str, Any]) -> list[str]:
 
 def find_design_expression(
     expressions: list[dict[str, Any]], key: str, *, phoneme: bool = True
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     want = simplify_phoneme_key(str(key or "").strip()) if phoneme else str(key or "").strip().lower()
     if not want:
         return None
@@ -144,13 +144,13 @@ def find_design_expression(
     return None
 
 
-def find_phoneme_expression(doc: dict[str, Any] | None, phoneme: str) -> Optional[dict[str, Any]]:
+def find_phoneme_expression(doc: dict[str, Any] | None, phoneme: str) -> dict[str, Any] | None:
     if not isinstance(doc, dict):
         return None
     return find_design_expression(doc.get("phonemes") or [], phoneme, phoneme=True)
 
 
-def find_emotion_expression(doc: dict[str, Any] | None, name: str) -> Optional[dict[str, Any]]:
+def find_emotion_expression(doc: dict[str, Any] | None, name: str) -> dict[str, Any] | None:
     if not isinstance(doc, dict):
         return None
     return find_design_expression(merged_emotion_expressions(doc), name, phoneme=False)
@@ -304,7 +304,7 @@ def _summarize_expression(expr: dict[str, Any], *, kind: str) -> dict[str, Any]:
     }
 
 
-def build_face_expression_catalog(*, device_id: Optional[str] = None) -> dict[str, Any]:
+def build_face_expression_catalog(*, device_id: str | None = None) -> dict[str, Any]:
     """音素 + 情绪摘要列表，供调试页展示。"""
     doc = _load_face_design_cached(device_id=device_id)
     if not isinstance(doc, dict):
@@ -326,7 +326,7 @@ def build_face_expression_catalog(*, device_id: Optional[str] = None) -> dict[st
     return {"phonemes": phonemes, "emotions": emotions}
 
 
-def resolve_face_expression(doc: dict[str, Any] | None, *, kind: str, name: str) -> Optional[dict[str, Any]]:
+def resolve_face_expression(doc: dict[str, Any] | None, *, kind: str, name: str) -> dict[str, Any] | None:
     """按 ``kind=phoneme|emotion`` 与 ``name``（含 alias）查表情条目。"""
     k = str(kind or "").strip().lower()
     if k == "phoneme":

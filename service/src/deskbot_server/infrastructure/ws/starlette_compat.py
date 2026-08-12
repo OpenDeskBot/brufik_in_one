@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any
 
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 from websockets.exceptions import ConnectionClosedError
@@ -23,7 +23,7 @@ class StarletteWsCompat:
         path = websocket.url.path or ""
         self.path = f"{path}?{q}" if q else path
         client = websocket.client
-        self.remote_address: Optional[tuple[str, int]] = (client.host, client.port) if client is not None else None
+        self.remote_address: tuple[str, int] | None = (client.host, client.port) if client is not None else None
         self.request = SimpleNamespace(path=self.path, headers=websocket.headers)
 
     @property

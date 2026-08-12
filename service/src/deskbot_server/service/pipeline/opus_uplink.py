@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import struct
-from typing import Optional
+
 
 import opuslib_next
 
@@ -16,7 +16,7 @@ def opus_frame_samples(sample_rate: int) -> int:
 
 
 def decode_opus_uplink(
-    decoder: opuslib_next.Decoder, payload: bytes, *, sample_rate: int, opus_frames: Optional[int] = None
+    decoder: opuslib_next.Decoder, payload: bytes, *, sample_rate: int, opus_frames: int | None = None
 ) -> bytes:
     """解码上行 Opus binary。
 

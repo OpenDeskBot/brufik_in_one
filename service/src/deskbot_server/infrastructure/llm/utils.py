@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import SERVO_CFG_FILE
 from deskbot_server.dao.face_design_store import resolve_face_design_path
@@ -19,7 +19,7 @@ from deskbot_server.utils.device_data import resolve_json_path
 _LLM_APPENDIX_CACHE: dict[str, tuple[float, str]] = {}
 
 
-def _face_expr_scene_entries(*, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def _face_expr_scene_entries(*, device_id: str | None = None) -> list[dict[str, Any]]:
     try:
         rows = load_face_expr_scenes_file(seed_if_missing=False, device_id=device_id)
     except (OSError, ValueError, json.JSONDecodeError):
@@ -52,7 +52,7 @@ def _cached_appendix(cache_key: str, mtime_path: str, build_fn) -> str:
     return text
 
 
-def llm_pb_moves_prompt_appendix(*, device_id: Optional[str] = None) -> str:
+def llm_pb_moves_prompt_appendix(*, device_id: str | None = None) -> str:
     """供 system prompt 追加：合法 ``moves`` 预设 id、label 与默认时长。"""
 
     def _build() -> str:
@@ -90,7 +90,7 @@ def llm_pb_moves_prompt_appendix(*, device_id: Optional[str] = None) -> str:
     return _cached_appendix(cache_key, mtime_path, _build)
 
 
-def llm_pb_anims_prompt_appendix(*, device_id: Optional[str] = None) -> str:
+def llm_pb_anims_prompt_appendix(*, device_id: str | None = None) -> str:
     """供 system prompt 追加：合法 ``anims`` 场景 name、title 与默认时长。"""
 
     def _build() -> str:
@@ -125,18 +125,18 @@ def llm_pb_anims_prompt_appendix(*, device_id: Optional[str] = None) -> str:
     return _cached_appendix(cache_key, mtime_path, _build)
 
 
-def llm_pb_plan_prompt_appendix(*, device_id: Optional[str] = None) -> str:
+def llm_pb_plan_prompt_appendix(*, device_id: str | None = None) -> str:
     """moves + anims 附录合并（替代旧 ``scenes`` / ``servo`` 直写说明）。"""
     parts = [llm_pb_moves_prompt_appendix(device_id=device_id), llm_pb_anims_prompt_appendix(device_id=device_id)]
     return "".join(p for p in parts if p)
 
 
-def llm_pb_scenes_prompt_appendix(*, device_id: Optional[str] = None) -> str:
+def llm_pb_scenes_prompt_appendix(*, device_id: str | None = None) -> str:
     """兼容旧调用名；返回 moves/anims 计划附录。"""
     return llm_pb_plan_prompt_appendix(device_id=device_id)
 
 
-def llm_memory_prompt_appendix(device_id: Optional[str] = None) -> str:
+def llm_memory_prompt_appendix(device_id: str | None = None) -> str:
     """长期记忆列表，注入 system prompt。"""
     from deskbot_server.dao.memory_store import list_memory_for_device
 
@@ -152,7 +152,7 @@ def llm_memory_prompt_appendix(device_id: Optional[str] = None) -> str:
     return "长期记忆（可用 memory_delete 删除，id 见方括号）：\n" + "\n".join(lines)
 
 
-def llm_device_screen_appendix(device_id: Optional[str] = None) -> str:
+def llm_device_screen_appendix(device_id: str | None = None) -> str:
     """屏幕分辨率与当前音量，注入 system prompt。"""
     from deskbot_server.dao.device_volume_store import get_device_volume
     from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
@@ -219,25 +219,25 @@ def llm_tools_prompt_appendix() -> str:
     )
 
 
-def llm_miot_prompt_appendix(device_id: Optional[str] = None) -> str:
+def llm_miot_prompt_appendix(device_id: str | None = None) -> str:
     """米家家庭/设备摘要，注入 system prompt。"""
     from deskbot_server.service.miot_service import llm_miot_prompt_appendix as _miot_ax
 
     return _miot_ax(device_id)
 
 
-def llm_static_context_prompt_appendix(device_id: Optional[str] = None) -> str:
+def llm_static_context_prompt_appendix(device_id: str | None = None) -> str:
     """长期记忆 + 米家摘要 + 工具说明（传感器/人脸见每轮 user 消息）。"""
     parts = [llm_memory_prompt_appendix(device_id), llm_miot_prompt_appendix(device_id), llm_tools_prompt_appendix()]
     return "\n\n".join(p for p in parts if p)
 
 
-def llm_face_context_prompt_appendix(device_id: Optional[str] = None) -> str:
+def llm_face_context_prompt_appendix(device_id: str | None = None) -> str:
     """兼容旧调用名；人脸已移至 user 消息，此处仅记忆与工具。"""
     return llm_static_context_prompt_appendix(device_id)
 
 
-def llm_recognized_faces_prompt_appendix(device_id: Optional[str] = None) -> str:
+def llm_recognized_faces_prompt_appendix(device_id: str | None = None) -> str:
     """兼容旧调用名。"""
     return llm_static_context_prompt_appendix(device_id)
 
@@ -265,7 +265,7 @@ def _parsed_json_need_reply(parsed: dict) -> bool:
     return _parse_need_reply_value(parsed.get("need_reply"))
 
 
-def parse_servo_plan_item(obj: Any) -> Optional[dict[str, Any]]:
+def parse_servo_plan_item(obj: Any) -> dict[str, Any] | None:
     """解析 ``servo`` 数组单条：延时 ``hold_ms`` / ``hold``+``ms``，或标准 ``xm``…``ms``。"""
     if not isinstance(obj, dict):
         return None
@@ -286,7 +286,7 @@ def parse_servo_plan_item(obj: Any) -> Optional[dict[str, Any]]:
     return normalize_pb_servo_dict(obj)
 
 
-def normalize_pb_servo_dict(obj: Any) -> Optional[dict[str, int]]:
+def normalize_pb_servo_dict(obj: Any) -> dict[str, int] | None:
     """校验并归一化单条 pb 舵机指令（``xm``/``ym``/``x``/``y``/``ms``），非法则 ``None``。"""
     if not isinstance(obj, dict):
         return None
@@ -379,7 +379,7 @@ def _parse_llm_tool_items(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _coerce_llm_reply_object(obj: Any) -> Optional[dict[str, Any]]:
+def _coerce_llm_reply_object(obj: Any) -> dict[str, Any] | None:
     """把 LLM 误输出的「仅 tools 数组 / 单条 tool 对象」规范为完整 JSON 对象。"""
     if isinstance(obj, list):
         tools = _parse_llm_tool_items(obj)
@@ -419,7 +419,7 @@ def parse_llm_reply(raw: str) -> dict:
     失败时把整段文本当作 ``reply`` 返回，**不抛异常**。
     """
     text = (raw or "").strip()
-    parsed: Optional[dict] = None
+    parsed: dict | None = None
 
     candidates = []
     if text:

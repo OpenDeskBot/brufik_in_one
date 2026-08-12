@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import struct
-from typing import Optional
+
 
 import opuslib_next
 
@@ -34,7 +34,7 @@ def encode_pcm_s16le_to_opus_batch(pcm: bytes, sample_rate: int) -> tuple[bytes,
 
 
 def decode_opus_batch_to_pcm_s16le(
-    decoder: opuslib_next.Decoder, payload: bytes, *, sample_rate: int, opus_frames: Optional[int] = None
+    decoder: opuslib_next.Decoder, payload: bytes, *, sample_rate: int, opus_frames: int | None = None
 ) -> bytes:
     """Opus batch → mono s16le PCM（供单测与调试）。"""
     if not payload:

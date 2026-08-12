@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import weakref
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.infrastructure.llm.utils import coerce_pb_v2_downlink_payload
 from deskbot_server.pb.payload_types import _is_pb_downlink_payload
@@ -52,7 +52,7 @@ class AsrChatHub:
     :func:`enqueue_pb_device_downlink` 队列顺序写出；其它载荷直接丢弃计数为 0。
     """
 
-    def __init__(self, device_pb_only: bool = False, *, pipeline_broker: Optional[Any] = None) -> None:
+    def __init__(self, device_pb_only: bool = False, *, pipeline_broker: Any | None = None) -> None:
         self._by_device: dict = {}
         self._lock = asyncio.Lock()
         # 给 ESP32 反压（比如它在播 TTS 时 RX 满）时不会卡住调用方
@@ -62,7 +62,7 @@ class AsrChatHub:
         self._device_pb_only = bool(device_pb_only)
         self.pipeline_broker = pipeline_broker
 
-    def ws_asr_device_id(self, ws) -> Optional[str]:
+    def ws_asr_device_id(self, ws) -> str | None:
         return self._asr_ws_dev.get(ws)
 
     async def attach(self, device_id: str, ws) -> None:
@@ -145,8 +145,8 @@ class AsrChatHub:
         device_id: str,
         frames: list[dict],
         *,
-        pcm_per_frame: Optional[list[Optional[bytes]]] = None,
-        binaries_per_frame: Optional[list[list[bytes]]] = None,
+        pcm_per_frame: list[bytes | None] | None = None,
+        binaries_per_frame: list[list[bytes]] | None = None,
     ) -> int:
         """按顺序逐帧下发 pb JSON（经 :func:`_json_msg`），可选每帧紧随 PCM。
 
@@ -221,7 +221,7 @@ class AsrChatHub:
         return n
 
     async def send_pb_single_then_chain_ordered(
-        self, device_id: str, single_payload: dict, tail_frames: Optional[list[dict]]
+        self, device_id: str, single_payload: dict, tail_frames: list[dict] | None
     ) -> int:
         """在 ``device_pb_only`` 下持**同一把**链锁：先发 ``pb_single``，再顺序发 ``tail_frames``。
 

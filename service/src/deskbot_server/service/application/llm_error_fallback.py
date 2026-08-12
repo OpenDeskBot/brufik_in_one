@@ -6,7 +6,7 @@ import asyncio
 import logging
 import random
 from contextlib import suppress
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.service.application.interaction_feedback import _send_servo_moves
 from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled
@@ -88,7 +88,7 @@ async def llm_error_motion_loop(hub: Any, device_id: str, done: asyncio.Event) -
 
 
 def start_llm_error_motion_feedback(
-    hub: Any, device_id: Optional[str]
+    hub: Any, device_id: str | None
 ) -> tuple[asyncio.Event | None, asyncio.Task | None]:
     dev = str(device_id or "").strip()
     if not dev or hub is None or not get_asr_voice_auto_reply_enabled():

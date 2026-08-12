@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.vision.face_identity import (
     compute_face_descriptor,
@@ -83,7 +83,7 @@ def list_recognized_faces(device_id: str, *, limit: int = 5) -> list[dict[str, A
     return ranked[:cap]
 
 
-def resolve_descriptor_from_payload(payload: dict[str, Any]) -> Optional[list[float]]:
+def resolve_descriptor_from_payload(payload: dict[str, Any]) -> list[float] | None:
     """从注册请求提取 embedding：优先 payload 向量，否则 ``jpeg_base64`` + landmarks。"""
     from deskbot_server.vision.camera_face_tune import get_face_embedding_enabled
 

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Optional
-
-from deskbot_server.core.ports.llm import LlmPort
+from deskbot_server.ports.llm import LlmPort
 from deskbot_server.utils.singleton import SingletonMeta
 
 
@@ -30,7 +28,7 @@ class LlmService(metaclass=SingletonMeta):
         device_id: str | None = None,
         history_messages: list[dict[str, str]] | None = None,
         extra_messages: list[dict[str, str]] | None = None,
-        on_tts_ready: Optional[Callable[[str], Awaitable[None]]] = None,
+        on_tts_ready: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
         return await self.llm.complete(
             text,

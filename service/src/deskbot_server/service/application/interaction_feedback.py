@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from contextlib import suppress
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
 from deskbot_server.dao.servo_config_store import clamp_servo_step, servo_limits
@@ -56,7 +56,7 @@ def clear_face_analysis(device_id: str) -> None:
         _face_cache.pop(dev, None)
 
 
-def get_valid_face_analysis(device_id: str, *, max_age_sec: float = _FACE_STALE_SEC) -> Optional[dict[str, Any]]:
+def get_valid_face_analysis(device_id: str, *, max_age_sec: float = _FACE_STALE_SEC) -> dict[str, Any] | None:
     dev = str(device_id or "").strip()
     if not dev:
         return None
@@ -74,7 +74,7 @@ def get_valid_face_analysis(device_id: str, *, max_age_sec: float = _FACE_STALE_
     return analysis
 
 
-def _gaze_servo_step(analysis: dict[str, Any], *, device_id: Optional[str] = None) -> Optional[dict[str, int]]:
+def _gaze_servo_step(analysis: dict[str, Any], *, device_id: str | None = None) -> dict[str, int] | None:
     screen_yaw, screen_pitch = _screen_angles_from_analysis(analysis)
     if screen_yaw is None or screen_pitch is None:
         return None
@@ -102,7 +102,7 @@ def listen_feedback_moves(device_id: str) -> tuple[str, list[dict[str, Any]]]:
     ]
 
 
-def llm_wait_nod_moves(*, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def llm_wait_nod_moves(*, device_id: str | None = None) -> list[dict[str, Any]]:
     """等待 LLM 时只做一次短点头，避免在 motor 队列积压完整双点头。"""
     return [{"move": "nod_head", "ms": _LLM_WAIT_NOD_MS}]
 
@@ -144,8 +144,8 @@ def _group_servo_steps_by_chunk_ms(
 
 
 def build_servo_only_pb_frames(
-    moves: list[dict[str, Any]], *, device_id: str, request_id: Optional[str] = None
-) -> Optional[tuple[list[dict[str, Any]], str]]:
+    moves: list[dict[str, Any]], *, device_id: str, request_id: str | None = None
+) -> tuple[list[dict[str, Any]], str] | None:
     """LLM move 列表 → 纯舵机 pb 链（每片 ``chunk_ms`` ≤ ``PB_CHUNK_MS_MAX``）。"""
     steps = expand_llm_moves(moves, device_id=device_id)
     if not steps:
@@ -185,8 +185,8 @@ def build_servo_only_pb_frames(
 
 
 def build_servo_only_pb_payload(
-    moves: list[dict[str, Any]], *, device_id: str, request_id: Optional[str] = None
-) -> Optional[tuple[dict[str, Any], str]]:
+    moves: list[dict[str, Any]], *, device_id: str, request_id: str | None = None
+) -> tuple[dict[str, Any], str] | None:
     """兼容旧调用：仅当结果为单片时返回；多片请用 ``build_servo_only_pb_frames``。"""
     built = build_servo_only_pb_frames(moves, device_id=device_id, request_id=request_id)
     if built is None:
@@ -285,14 +285,14 @@ async def llm_wait_nod_feedback_loop(hub: AsrChatHub, device_id: str, done: asyn
         raise
 
 
-def schedule_listen_feedback(hub: AsrChatHub, device_id: Optional[str]) -> None:
+def schedule_listen_feedback(hub: AsrChatHub, device_id: str | None) -> None:
     dev = str(device_id or "").strip()
     if not dev:
         return
     asyncio.create_task(maybe_send_listen_feedback(hub, dev))
 
 
-def start_llm_wait_nod_feedback(hub: AsrChatHub, device_id: Optional[str]) -> tuple[asyncio.Event, asyncio.Task]:
+def start_llm_wait_nod_feedback(hub: AsrChatHub, device_id: str | None) -> tuple[asyncio.Event, asyncio.Task]:
     done = asyncio.Event()
     task = asyncio.create_task(llm_wait_nod_feedback_loop(hub, str(device_id or "").strip(), done))
     return done, task

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import CAMERA_FACE_CFG_FILE
 from deskbot_server.utils.device_data import resolve_json_path
@@ -48,7 +48,7 @@ def normalize_camera_face_document(raw: object) -> dict[str, Any]:
     return out
 
 
-def load_camera_face_cfg_file(*, device_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+def load_camera_face_cfg_file(*, device_id: str | None = None) -> dict[str, Any] | None:
     path = resolve_json_path(CAMERA_FACE_CFG_FILE, device_id)
     if not os.path.isfile(path):
         return None
@@ -57,7 +57,7 @@ def load_camera_face_cfg_file(*, device_id: Optional[str] = None) -> Optional[di
     return normalize_camera_face_document(raw)
 
 
-def save_camera_face_cfg_file(cfg: dict[str, Any], *, device_id: Optional[str] = None) -> None:
+def save_camera_face_cfg_file(cfg: dict[str, Any], *, device_id: str | None = None) -> None:
     path = resolve_json_path(CAMERA_FACE_CFG_FILE, device_id)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

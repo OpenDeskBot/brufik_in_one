@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -28,7 +28,7 @@ def resolve_camera_model_path() -> str:
     return CAMERA_MODEL_DEFAULT_PATH
 
 
-def _extract_face_landmarks(face: Any, *, w: int, h: int, coord_w: int, coord_h: int) -> Optional[dict[str, Any]]:
+def _extract_face_landmarks(face: Any, *, w: int, h: int, coord_w: int, coord_h: int) -> dict[str, Any] | None:
     sx = float(coord_w)
     sy = float(coord_h)
 
@@ -57,8 +57,8 @@ class CameraFaceDetector:
         self,
         *,
         num_faces: int = 5,
-        model_path: Optional[str] = None,
-        undistorter: Optional[CameraUndistorter] = None,
+        model_path: str | None = None,
+        undistorter: CameraUndistorter | None = None,
         min_face_detection_confidence: float = 0.5,
         min_face_presence_confidence: float = 0.5,
         frame_width: int = FACE_FRAME_WIDTH,
@@ -94,7 +94,7 @@ class CameraFaceDetector:
         )
         self._landmarker = mp_vision.FaceLandmarker.create_from_options(options)
         self._closed = False
-        self._last_bgr: Optional[np.ndarray] = None
+        self._last_bgr: np.ndarray | None = None
 
     def close(self) -> None:
         if self._closed:
@@ -154,10 +154,10 @@ class CameraFaceDetector:
         return out
 
     @property
-    def last_bgr(self) -> Optional[np.ndarray]:
+    def last_bgr(self) -> np.ndarray | None:
         return self._last_bgr
 
-    def detect_5pt(self, image_bytes: bytes) -> Optional[dict]:
+    def detect_5pt(self, image_bytes: bytes) -> dict | None:
         """兼容旧接口：仅返回第一张脸。"""
         faces = self.detect_faces(image_bytes)
         return faces[0] if faces else None

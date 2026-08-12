@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.pb.shapes import is_mouth_phoneme_group_entry, simplify_phoneme_key
 
@@ -91,8 +91,8 @@ def normalize_face_mouth_groups(raw: object) -> list[dict[str, Any]]:
 
 
 def load_face_mouth_cfg_file(
-    *, seed_if_missing: bool = True, device_id: Optional[str] = None
-) -> Optional[list[dict[str, Any]]]:
+    *, seed_if_missing: bool = True, device_id: str | None = None
+) -> list[dict[str, Any]] | None:
     from deskbot_server.dao.face_design_store import (
         _load_face_design_cached,
         ensure_face_design_file,
@@ -107,7 +107,7 @@ def load_face_mouth_cfg_file(
     return phonemes_to_mouth_groups(design)
 
 
-def save_face_mouth_cfg_file(groups: list[dict[str, Any]], *, device_id: Optional[str] = None) -> None:
+def save_face_mouth_cfg_file(groups: list[dict[str, Any]], *, device_id: str | None = None) -> None:
     from deskbot_server.dao.face_design_store import (
         apply_mouth_groups_to_design,
         ensure_face_design_file,

@@ -6,15 +6,14 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Optional
 
 logger = logging.getLogger("deskbot-server")
 
-_asr_sem: Optional[asyncio.Semaphore] = None
-_face_sem: Optional[asyncio.Semaphore] = None
+_asr_sem: asyncio.Semaphore | None = None
+_face_sem: asyncio.Semaphore | None = None
 
 
-def _resolve_limit(cfg_val: int, *, env_name: str, default_when_zero: int) -> Optional[int]:
+def _resolve_limit(cfg_val: int, *, env_name: str, default_when_zero: int) -> int | None:
     raw_env = (os.environ.get(env_name) or "").strip()
     if raw_env:
         try:

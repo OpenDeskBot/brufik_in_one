@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from deskbot_server.core.ports.tts import PhonemeSegment
+from deskbot_server.ports.tts import PhonemeSegment
 from deskbot_server.infrastructure.tts.doubao_words_phoneme import align_doubao_words, mouth_units_for_text
 from deskbot_server.pb.shapes import simplify_phoneme_key
 

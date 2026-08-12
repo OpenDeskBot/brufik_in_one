@@ -68,7 +68,13 @@ target-version = "py311"
 skip-magic-trailing-comma = true
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+# E   = pycodestyle errors
+# F   = pyflakes（未使用 import 等）
+# I   = isort（import 排序）
+# B   = bugbear（常见 bug 检测）
+# UP  = pyupgrade（现代化语法）
+# SIM = simplify（简化代码）
 ignore = ["E501", "E741"]
 
 [tool.ruff.lint.isort]

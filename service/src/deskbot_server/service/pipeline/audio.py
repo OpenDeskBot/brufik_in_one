@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import opuslib_next
 
@@ -73,7 +73,7 @@ class ConnectionSession:
         )
         self._vad = SileroVadStream(self._silero_cfg, sample_rate=audio_cfg.sample_rate)
 
-    def _decode(self, payload: bytes, codec: Optional[str] = None, *, opus_frames: Optional[int] = None) -> bytes:
+    def _decode(self, payload: bytes, codec: str | None = None, *, opus_frames: int | None = None) -> bytes:
         use_codec = (codec or self.rom_codec or self.audio_cfg.input_codec).lower()
         if use_codec == "pcm16":
             return payload
@@ -86,12 +86,12 @@ class ConnectionSession:
     async def feed_audio(
         self,
         payload: bytes,
-        codec: Optional[str] = None,
+        codec: str | None = None,
         *,
-        sample_rate: Optional[int] = None,
-        channels: Optional[int] = None,
-        opus_frames: Optional[int] = None,
-    ) -> tuple[Optional[bytes], bool, Optional[bytes]]:
+        sample_rate: int | None = None,
+        channels: int | None = None,
+        opus_frames: int | None = None,
+    ) -> tuple[bytes | None, bool, bytes | None]:
         """返回 ``(utterance_pcm_or_none, uplink_started, None)``。
 
         Opus 解码与 Silero VAD 推理均为 CPU 密集型同步操作，通过
@@ -145,7 +145,7 @@ class ConnectionSession:
                 utterance = None
             return utterance, uplink_started, None
 
-    def flush(self) -> Optional[RomUplinkFlush]:
+    def flush(self) -> RomUplinkFlush | None:
         utterance = self._vad.flush()
         self._reset_rom()
         if not utterance:

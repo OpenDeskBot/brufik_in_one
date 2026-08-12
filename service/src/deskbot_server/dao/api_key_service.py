@@ -11,15 +11,12 @@ from sqlalchemy.exc import IntegrityError
 
 from deskbot_server.db.engine import get_session
 from deskbot_server.db.models import ApiKey, UsageDaily, UsageDailyDevice
+from deskbot_server.model.exceptions import QuotaExceededError
 
 FREE_DAILY_QUOTA_BYTES = 1_073_741_824  # 1 GiB
 FREE_FILE_KEY_ID = "00000000-0000-4000-8000-000000000001"
 FREE_FILE_KEY_HASH_SENTINEL = "__file_based_free_key__"
 USAGE_CATEGORIES = ("asr", "face", "llm", "tts")
-
-
-class QuotaExceededError(Exception):
-    pass
 
 
 @dataclass(frozen=True)

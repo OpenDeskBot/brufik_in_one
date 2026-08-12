@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.service.application.face_snapshot_cache import list_device_faces, resolve_descriptor_from_payload
 
 
 def register_face_for_device(
-    device_id: str, name: str, *, face_id: Optional[int] = None, extra: Optional[dict[str, Any]] = None
+    device_id: str, name: str, *, face_id: int | None = None, extra: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """将当前帧 ``face_id`` 的人脸写入 ``face_profiles.json``。"""
     from deskbot_server.service.camera_face_service import CameraFaceService

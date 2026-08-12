@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import SERVO_CFG_FILE
 from deskbot_server.utils.device_data import resolve_json_path
@@ -30,7 +30,7 @@ def normalize_perspective(raw: object) -> str:
     return p if p in _VALID_PERSPECTIVES else DEFAULT_SERVO_PERSPECTIVE
 
 
-def servo_perspective(*, device_id: Optional[str] = None) -> str:
+def servo_perspective(*, device_id: str | None = None) -> str:
     """``servo.json`` 中的 left/right 语义：``viewer``（默认）或 ``robot``。"""
     try:
         cfg = load_servo_cfg_file(device_id=device_id)
@@ -42,7 +42,7 @@ def servo_perspective(*, device_id: Optional[str] = None) -> str:
 
 
 def resolve_move_for_perspective(
-    move_id: str, *, device_id: Optional[str] = None, perspective: Optional[str] = None
+    move_id: str, *, device_id: str | None = None, perspective: str | None = None
 ) -> str:
     """按视角解析 move/preset id（``viewer`` 时对调 left/right 类预设）。"""
     pid = str(move_id or "").strip()
@@ -64,7 +64,7 @@ def _clamp_axis(v: int, lo: int, hi: int) -> int:
     return max(a, min(b, int(v)))
 
 
-def _limits_with_reverse(limits: Optional[dict[str, int]] = None, *, device_id: Optional[str] = None) -> dict[str, int]:
+def _limits_with_reverse(limits: dict[str, int] | None = None, *, device_id: str | None = None) -> dict[str, int]:
     lim = dict(DEFAULT_SERVO_LIMITS)
     if limits:
         lim.update({k: int(limits[k]) for k in DEFAULT_SERVO_LIMITS if k in limits})
@@ -104,7 +104,7 @@ def logical_step_to_protocol(step: dict[str, Any], limits: dict[str, int]) -> di
     return {"xm": xm, "ym": ym, "x": x, "y": y, "ms": ms}
 
 
-def servo_limits(*, device_id: Optional[str] = None) -> dict[str, int]:
+def servo_limits(*, device_id: str | None = None) -> dict[str, int]:
     """读取设备/全局 ``servo.json`` 限位；缺失字段回退 ``DEFAULT_SERVO_LIMITS``。"""
     out = dict(DEFAULT_SERVO_LIMITS)
     try:
@@ -119,7 +119,7 @@ def servo_limits(*, device_id: Optional[str] = None) -> dict[str, int]:
 
 
 def clamp_servo_step(
-    step: dict[str, Any], *, device_id: Optional[str] = None, limits: Optional[dict[str, int]] = None
+    step: dict[str, Any], *, device_id: str | None = None, limits: dict[str, int] | None = None
 ) -> dict[str, int]:
     """逻辑 step → 协议 step（限位 clamp + xReverse/yReverse）。"""
     lim = _limits_with_reverse(limits, device_id=device_id)
@@ -193,7 +193,7 @@ def normalize_servo_document(raw: object, *, require_presets: bool = False) -> d
     return out
 
 
-def load_servo_cfg_file(*, device_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+def load_servo_cfg_file(*, device_id: str | None = None) -> dict[str, Any] | None:
     path = resolve_json_path(SERVO_CFG_FILE, device_id)
     if not os.path.isfile(path):
         return None
@@ -202,7 +202,7 @@ def load_servo_cfg_file(*, device_id: Optional[str] = None) -> Optional[dict[str
     return normalize_servo_document(raw)
 
 
-def save_servo_cfg_file(cfg: dict[str, Any], *, device_id: Optional[str] = None) -> None:
+def save_servo_cfg_file(cfg: dict[str, Any], *, device_id: str | None = None) -> None:
     path = resolve_json_path(SERVO_CFG_FILE, device_id)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     norm = normalize_servo_document(cfg, require_presets="presets" in cfg)

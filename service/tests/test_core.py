@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from deskbot_server.core.settings import AppSettings
+from deskbot_server.model.settings import AppSettings
 from deskbot_server.infrastructure.llm.utils import parse_llm_reply
 
 

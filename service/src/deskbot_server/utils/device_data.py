@@ -6,7 +6,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Optional
+
 
 from deskbot_server.utils.paths import DATA_DIR
 from deskbot_server.ws.device_pin import device_storage_dirname, resolve_pin_for_storage, validate_pin_code
@@ -21,7 +21,7 @@ _STORAGE_DIR_SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
 SHARED_CONFIG_NAMES = frozenset({"deskbot-face.json", "camera_face.json", LLM_SYSTEM_FILENAME})
 
 
-def _normalize_device_id(device_id: Optional[str]) -> str:
+def _normalize_device_id(device_id: str | None) -> str:
     return str(device_id or "").strip()
 
 
@@ -33,7 +33,7 @@ def is_shared_config_basename(name: str) -> bool:
     return name in SHARED_CONFIG_NAMES
 
 
-def device_data_dir(device_id: str, pin_code: Optional[str] = None) -> Path:
+def device_data_dir(device_id: str, pin_code: str | None = None) -> Path:
     did = _normalize_device_id(device_id)
     if not did:
         raise ValueError("device_id required")
@@ -67,7 +67,7 @@ def list_data_seed_files() -> list[Path]:
     return list_data_json_files()
 
 
-def resolve_json_path(global_path: str, device_id: Optional[str] = None, pin_code: Optional[str] = None) -> str:
+def resolve_json_path(global_path: str, device_id: str | None = None, pin_code: str | None = None) -> str:
     """共用配置解析到 ``data/global/``；其余有 ``device_id`` 时解析到 ``data/{id}_{pin}/``。"""
     base = os.path.basename(global_path)
     if is_shared_config_basename(base):
@@ -78,7 +78,7 @@ def resolve_json_path(global_path: str, device_id: Optional[str] = None, pin_cod
     return str(device_data_dir(did, pin_code) / base)
 
 
-def load_llm_system_prompt(device_id: Optional[str] = None) -> str:
+def load_llm_system_prompt(device_id: str | None = None) -> str:
     """读取 LLM system prompt：统一 ``data/global/llm_system.txt``，再回退 config。"""
     del device_id
     global_path = global_llm_system_path()

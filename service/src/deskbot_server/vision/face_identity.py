@@ -5,14 +5,14 @@ from __future__ import annotations
 import base64
 import io
 import math
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.vision.camera_face_tune import get_face_embedding_enabled
 from deskbot_server.vision.face_embedding import is_embedding_vector, is_legacy_geometric_vector
 from deskbot_server.vision.geometry import compute_eye_iris_offsets, eye_centers_from_landmarks, kps5_from_landmarks
 
 
-def compute_face_descriptor(landmarks: list) -> Optional[list[float]]:
+def compute_face_descriptor(landmarks: list) -> list[float] | None:
     """提取尺度不变的人脸几何特征向量（L2 归一化，适合余弦相似度）。
 
     特征仅依赖五官相对比例，与脸在画面中的位置无关；对小幅 yaw/pitch 有一定鲁棒性，
@@ -107,7 +107,7 @@ def match_threshold_for_descriptor(
     return max(0.75, min(0.99, float(geometry_threshold)))
 
 
-def attach_descriptor(face: dict[str, Any], *, bgr_image: Any = None) -> Optional[list[float]]:
+def attach_descriptor(face: dict[str, Any], *, bgr_image: Any = None) -> list[float] | None:
     """为单张检出脸附加 ``embedding`` / ``face_descriptor``（embedding 或几何）。"""
     existing = face.get("embedding") or face.get("face_descriptor")
     if isinstance(existing, list) and existing and bgr_image is None:
@@ -116,7 +116,7 @@ def attach_descriptor(face: dict[str, Any], *, bgr_image: Any = None) -> Optiona
         return existing
 
     landmarks = face.get("landmarks") or []
-    desc: Optional[list[float]] = None
+    desc: list[float] | None = None
     kind = "geometry"
 
     if get_face_embedding_enabled() and bgr_image is not None:
@@ -143,7 +143,7 @@ def attach_descriptors_to_faces(faces: list[dict[str, Any]], *, bgr_image: Any =
             attach_descriptor(face, bgr_image=bgr_image)
 
 
-def descriptor_from_jpeg_bytes(jpeg_bytes: bytes, landmarks: list) -> Optional[list[float]]:
+def descriptor_from_jpeg_bytes(jpeg_bytes: bytes, landmarks: list) -> list[float] | None:
     if not get_face_embedding_enabled() or not jpeg_bytes:
         return None
     try:
@@ -159,7 +159,7 @@ def descriptor_from_jpeg_bytes(jpeg_bytes: bytes, landmarks: list) -> Optional[l
         return None
 
 
-def descriptor_from_jpeg_base64(b64: str, landmarks: list) -> Optional[list[float]]:
+def descriptor_from_jpeg_base64(b64: str, landmarks: list) -> list[float] | None:
     raw = (b64 or "").strip()
     if not raw:
         return None
@@ -171,7 +171,7 @@ def descriptor_from_jpeg_base64(b64: str, landmarks: list) -> Optional[list[floa
         return None
 
 
-def _landmarks_bbox(face: dict[str, Any]) -> Optional[tuple[float, float, float, float]]:
+def _landmarks_bbox(face: dict[str, Any]) -> tuple[float, float, float, float] | None:
     """返回 (min_x, min_y, max_x, max_y)。"""
     xs: list[float] = []
     ys: list[float] = []
@@ -208,14 +208,14 @@ def _bbox_iou(a: tuple[float, float, float, float], b: tuple[float, float, float
     return inter / union
 
 
-def _eye_distance(face: dict[str, Any]) -> Optional[float]:
+def _eye_distance(face: dict[str, Any]) -> float | None:
     left, right = eye_centers_from_landmarks(face.get("landmarks") or [])
     if not (left and right):
         return None
     return math.hypot(right[0] - left[0], right[1] - left[1])
 
 
-def _nose_xy(face: dict[str, Any]) -> Optional[tuple[float, float]]:
+def _nose_xy(face: dict[str, Any]) -> tuple[float, float] | None:
     for p in face.get("landmarks") or []:
         if isinstance(p, dict) and p.get("name") == "nose":
             try:
@@ -267,7 +267,7 @@ def deduplicate_overlapping_faces(
 
     kept: list[dict[str, Any]] = []
     kept_meta: list[
-        tuple[tuple[float, float, float, float], list[float], Optional[tuple[float, float]], Optional[float]]
+        tuple[tuple[float, float, float, float], list[float], tuple[float, float] | None, float | None]
     ] = []
 
     for q, face, bbox, desc in candidates:

@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Optional
-
 import numpy as np
 
 from deskbot_server.vision.geometry import kps5_from_landmarks
@@ -17,8 +15,8 @@ FACE_EMBEDDING_DIM = 512
 _LEGACY_GEOMETRIC_DIM = 9
 
 _engine_lock = threading.Lock()
-_engine: Optional["FaceEmbeddingEngine"] = None
-_engine_init_error: Optional[str] = None
+_engine: "FaceEmbeddingEngine" | None = None
+_engine_init_error: str | None = None
 
 
 def is_embedding_vector(desc: list[float] | None) -> bool:
@@ -75,7 +73,7 @@ class FaceEmbeddingEngine:
             "[face_embedding] InsightFace 识别模型已加载 pack=%s path=%s dim=%d", pack, model_path, FACE_EMBEDDING_DIM
         )
 
-    def compute(self, bgr: np.ndarray, landmarks: list) -> Optional[list[float]]:
+    def compute(self, bgr: np.ndarray, landmarks: list) -> list[float] | None:
         from insightface.utils import face_align  # type: ignore
 
         kps_list = kps5_from_landmarks(landmarks)
@@ -98,7 +96,7 @@ class FaceEmbeddingEngine:
             return None
 
 
-def get_face_embedding_engine() -> Optional[FaceEmbeddingEngine]:
+def get_face_embedding_engine() -> FaceEmbeddingEngine | None:
     global _engine, _engine_init_error
     if _engine is not None:
         return _engine
@@ -116,7 +114,7 @@ def get_face_embedding_engine() -> Optional[FaceEmbeddingEngine]:
     return _engine
 
 
-def compute_face_embedding(bgr: np.ndarray, landmarks: list) -> Optional[list[float]]:
+def compute_face_embedding(bgr: np.ndarray, landmarks: list) -> list[float] | None:
     eng = get_face_embedding_engine()
     if eng is None:
         return None

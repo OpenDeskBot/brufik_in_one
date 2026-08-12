@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
 from deskbot_server.infrastructure.llm.face_scene import _nose_xy
@@ -83,7 +83,7 @@ def _follow_mode_label(mode: str) -> str:
 
 
 def build_llm_user_message(
-    user_text: str, *, device_id: Optional[str] = None, device_context: Optional[str] = None
+    user_text: str, *, device_id: str | None = None, device_context: str | None = None
 ) -> str:
     """按约定格式组装 LLM ``user`` 消息正文。"""
     sx, sy = parse_servo_angles_from_pb_ack(device_context)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal, Optional, Sequence, Union
+from typing import Any, Literal, Sequence, Union
 
 logger = logging.getLogger("deskbot-server")
 
@@ -45,7 +45,7 @@ def pack_ws_downlink_frame(
     return len(raw).to_bytes(4, "big", signed=False) + raw + blob
 
 
-def parse_packed_frame(data: bytes) -> Optional[PackedFrame]:
+def parse_packed_frame(data: bytes) -> PackedFrame | None:
     """解析打包 BIN 为 PackedFrame；失败返回 None（不打日志，便于走旧路径）。"""
     if data is None or len(data) < 4:
         return None
@@ -84,7 +84,7 @@ def coerce_next_bin_len(data: dict[str, Any]) -> int:
     return n
 
 
-def coerce_opus_frames(data: dict[str, Any]) -> Optional[int]:
+def coerce_opus_frames(data: dict[str, Any]) -> int | None:
     """Opus batch 帧数；缺省或 1 表示单帧 binary。"""
     raw = data.get("frames")
     if raw is None:
@@ -111,8 +111,8 @@ def coerce_audio_flush(data: dict[str, Any]) -> bool:
 class PendingUplinkBinary:
     kind: PendingKind
     length: int
-    codec: Optional[str] = None
-    sample_rate: Optional[int] = None
-    channels: Optional[int] = None
-    opus_frames: Optional[int] = None
+    codec: str | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
+    opus_frames: int | None = None
     flush: bool = False

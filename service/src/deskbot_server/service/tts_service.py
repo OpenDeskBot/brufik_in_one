@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deskbot_server.core.ports.tts import TtsPort
+from deskbot_server.ports.tts import TtsPort
 from deskbot_server.utils.singleton import SingletonMeta
 
 

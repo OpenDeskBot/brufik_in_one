@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.vision.camera_face_tune import (
     get_eye_yaw_range_deg,
@@ -32,7 +32,7 @@ from deskbot_server.vision.geometry import (
 
 def _resolve_head_pose(
     landmarks: list, facial_transform: list | None
-) -> tuple[Optional[float], Optional[float], Optional[float], str]:
+) -> tuple[float | None, float | None, float | None, str]:
     """优先 MediaPipe 4×4 变换矩阵，否则回退 9 点 2D 几何。"""
     if facial_transform:
         pose = decompose_facial_transform_matrix(facial_transform)
@@ -114,7 +114,7 @@ def analyze_face_detection(detect: dict) -> dict[str, Any]:
 
 def pick_primary_face(
     analyses: list[dict[str, Any]], *, prefer_frontal_angle: bool = False, prefer_gazing: bool = False
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """多张脸时选主脸。
 
     - 默认：优先 ``is_frontal``（分数口径），否则 ``frontal_score`` 最高
@@ -229,7 +229,7 @@ def build_face_pos_payload(device_id: str, analysis: dict[str, Any]) -> dict[str
 
 def build_face_info_message(
     device_id: str, analysis: dict[str, Any], *, send_face_info: bool
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     if not send_face_info:
         return None
     yaw_deg = analysis.get("yaw_deg")

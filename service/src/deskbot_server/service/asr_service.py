@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deskbot_server.core.ports.asr import AsrPort
+from deskbot_server.ports.asr import AsrPort
 from deskbot_server.utils.singleton import SingletonMeta
 
 

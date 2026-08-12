@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.constants import FACE_PROFILES_FILE
 from deskbot_server.dao.face_profiles_store import best_profile_similarity, load_face_profiles, resolve_profile_match
@@ -19,7 +19,7 @@ from deskbot_server.vision.face_identity import (
 )
 
 
-def _nose_xy(face: dict[str, Any]) -> Optional[tuple[float, float]]:
+def _nose_xy(face: dict[str, Any]) -> tuple[float, float] | None:
     landmarks = face.get("landmarks") or []
     for p in landmarks:
         if isinstance(p, dict) and p.get("name") == "nose":
@@ -35,8 +35,8 @@ class _Track:
     face_id: int
     nose: tuple[float, float]
     descriptor: list[float]
-    person_id: Optional[int] = None
-    person_name: Optional[str] = None
+    person_id: int | None = None
+    person_name: str | None = None
     lost: int = 0
 
 
@@ -67,7 +67,7 @@ class FaceTracker:
     def __init__(
         self,
         *,
-        device_id: Optional[str] = None,
+        device_id: str | None = None,
         max_dist_px: float = 90.0,
         max_lost_frames: int = 18,
         max_ids: int = 32,
@@ -123,7 +123,7 @@ class FaceTracker:
     def get_last_faces(self) -> list[dict[str, Any]]:
         return list(self._last_faces)
 
-    def get_face_by_id(self, face_id: int) -> Optional[dict[str, Any]]:
+    def get_face_by_id(self, face_id: int) -> dict[str, Any] | None:
         for face in self._last_faces:
             if int(face.get("face_id") or 0) == int(face_id):
                 return face
@@ -151,8 +151,8 @@ class FaceTracker:
         return spatial * 0.35 + feat * 0.65
 
     def _resolve_person(
-        self, desc: list[float], *, locked_person_id: Optional[int]
-    ) -> tuple[Optional[dict[str, Any]], float]:
+        self, desc: list[float], *, locked_person_id: int | None
+    ) -> tuple[dict[str, Any] | None, float]:
         return resolve_profile_match(
             self._profiles,
             desc,
@@ -166,14 +166,14 @@ class FaceTracker:
         track.person_name = str(profile["name"])
         track.descriptor = ema_update_descriptor(track.descriptor, descriptor, alpha=self.descriptor_ema_alpha)
 
-    def _try_bind_profile(self, track: _Track, desc: list[float]) -> Optional[float]:
+    def _try_bind_profile(self, track: _Track, desc: list[float]) -> float | None:
         profile, sim = self._resolve_person(desc, locked_person_id=track.person_id)
         if profile is not None:
             self._bind_person(track, profile, desc)
             return sim
         return None
 
-    def _find_track_for_person(self, person_id: int) -> Optional[tuple[int, _Track]]:
+    def _find_track_for_person(self, person_id: int) -> tuple[int, _Track] | None:
         for tid, track in self._tracks.items():
             if track.person_id == person_id:
                 return tid, track
@@ -248,13 +248,13 @@ class FaceTracker:
                 tagged["face_id_source"] = "spatial_track"
             else:
                 profile, sim = self._resolve_person(desc, locked_person_id=None)
-                reused_person: Optional[tuple[int, _Track]] = None
+                reused_person: tuple[int, _Track] | None = None
                 if profile is not None:
                     reused_person = self._find_track_for_person(int(profile["person_id"]))
 
-                track_match: Optional[tuple[int, _Track, float]] = None
-                best_tid: Optional[int] = None
-                best_track: Optional[_Track] = None
+                track_match: tuple[int, _Track, float] | None = None
+                best_tid: int | None = None
+                best_track: _Track | None = None
                 best_sim = -1.0
                 desc_thr = max(0.28 if is_embedding_vector(desc) else 0.75, self._keep_threshold(desc) - 0.05)
                 for tid, tr in self._tracks.items():

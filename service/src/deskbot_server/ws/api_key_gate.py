@@ -166,7 +166,7 @@ def record_turn_usage(
     llm_bytes: int = 0,
     tts_bytes: int = 0,
 ) -> None:
-    from deskbot_server.dao.api_key_service import QuotaExceededError, record_usage_checked
+    from deskbot_server.model.exceptions import QuotaExceededError, record_usage_checked
 
     try:
         if asr_bytes:

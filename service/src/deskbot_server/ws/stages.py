@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from deskbot_server.service.application.asr_chat_uplink import pack_ws_downlink_frame
 from deskbot_server.utils.util import _format_ts, _json_msg
@@ -13,13 +13,13 @@ if TYPE_CHECKING:
 
 async def _emit_stage(
     websocket,
-    dp_broker: Optional["DevicePipelineBroker"],
-    device_id: Optional[str],
-    request_id: Optional[str],
+    dp_broker: "DevicePipelineBroker" | None,
+    device_id: str | None,
+    request_id: str | None,
     stage: str,
     *,
-    client_fields: Optional[dict] = None,
-    event_fields: Optional[dict] = None,
+    client_fields: dict | None = None,
+    event_fields: dict | None = None,
     send_client: bool = True,
 ) -> dict:
     """同时向设备 ws 发 ``{"type": <stage>, ...}`` 并把 ``pipeline_stage`` 推给页面订阅者。

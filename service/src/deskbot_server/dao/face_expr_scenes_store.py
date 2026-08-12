@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any, Optional
+from typing import Any
 
 from deskbot_server.pb.display import scale_primitives
 from deskbot_server.pb.shapes import PB_ACTION_REPLACE, PB_LEVEL_DEBUG, apply_pb_dispatch_fields
@@ -68,8 +68,8 @@ def _mk_frame(
     mouth: list[dict[str, Any]],
     eye_l: list[dict[str, Any]],
     eye_r: list[dict[str, Any]],
-    nose: Optional[list[dict[str, Any]]] = None,
-    extra: Optional[list[dict[str, Any]]] = None,
+    nose: list[dict[str, Any]] | None = None,
+    extra: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "ms": ms,
@@ -337,8 +337,8 @@ def normalize_face_expr_scenes(raw: object) -> list[dict[str, Any]]:
 
 
 def load_face_expr_scenes_file(
-    *, seed_if_missing: bool = True, device_id: Optional[str] = None
-) -> Optional[list[dict[str, Any]]]:
+    *, seed_if_missing: bool = True, device_id: str | None = None
+) -> list[dict[str, Any]] | None:
     from deskbot_server.dao.face_design_store import (
         _load_face_design_cached,
         emotions_as_scenes,
@@ -353,7 +353,7 @@ def load_face_expr_scenes_file(
     return emotions_as_scenes(design)
 
 
-def save_face_expr_scenes_file(rows: list[dict[str, Any]], *, device_id: Optional[str] = None) -> list[dict[str, Any]]:
+def save_face_expr_scenes_file(rows: list[dict[str, Any]], *, device_id: str | None = None) -> list[dict[str, Any]]:
     from deskbot_server.dao.face_design_store import (
         apply_emotion_scenes_to_design,
         emotions_as_scenes,
@@ -396,7 +396,7 @@ def design_frames_to_pb_chain(frames: list[dict[str, Any]], *, runtime_req: str)
     return pairs
 
 
-def find_design_scene_by_name(rows: list[dict[str, Any]], name: str) -> Optional[dict[str, Any]]:
+def find_design_scene_by_name(rows: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
     want = str(name or "").strip().lower()
     if not want:
         return None

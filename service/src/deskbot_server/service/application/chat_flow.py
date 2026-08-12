@@ -6,10 +6,10 @@ import logging
 import re
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
-from deskbot_server.core.ports.downlink import DownlinkPort, PipelineEventsPort
-from deskbot_server.core.types import ChatTurnResult
+from deskbot_server.ports.downlink import DownlinkPort, PipelineEventsPort
+from deskbot_server.model.chat import ChatTurnResult
 from deskbot_server.dao.device_volume_store import persist_device_volume
 from deskbot_server.infrastructure.tts.text_split import split_tts_by_punctuation
 from deskbot_server.pb.scenes import _pb_scene_entry_by_name, _prepare_pb_scene_chain_frames
@@ -66,8 +66,8 @@ async def _play_interim_tts(
     text: str,
     prefetch: _TtsPrefetch,
     *,
-    request_id: Optional[str],
-    device_id: Optional[str],
+    request_id: str | None,
+    device_id: str | None,
     round_idx: int,
 ) -> None:
     """工具轮过渡语：复用流式 prefetch 任务，与工具执行并行下发 pb。"""
@@ -115,11 +115,11 @@ async def _play_llm_error_fallback(
     downlink: DownlinkPort,
     chat: "ChatService",
     *,
-    request_id: Optional[str],
-    device_id: Optional[str],
+    request_id: str | None,
+    device_id: str | None,
     result: ChatTurnResult,
-    asr_chat_hub: Optional[Any],
-    t_asr_start: Optional[float],
+    asr_chat_hub: Any | None,
+    t_asr_start: float | None,
     llm_exc: Exception,
 ) -> None:
     """LLM 调用失败：口播道歉 + 连续 idle 舵机，避免点头停后长时间无反馈。"""
@@ -213,16 +213,16 @@ async def run_chat_turn(
     chat: ChatService,
     user_text: str,
     *,
-    request_id: Optional[str] = None,
-    device_id: Optional[str] = None,
-    registry: Optional[DeviceRegistry] = None,
-    t_asr_start: Optional[float] = None,
-    t_asr_text: Optional[float] = None,
+    request_id: str | None = None,
+    device_id: str | None = None,
+    registry: DeviceRegistry | None = None,
+    t_asr_start: float | None = None,
+    t_asr_text: float | None = None,
     force_voice: bool = False,
-    pipeline_broker: Optional["DevicePipelineBroker"] = None,
-    reuse_session_id: Optional[str] = None,
-    asr_chat_hub: Optional[Any] = None,
-    on_llm_error: Optional[Any] = None,
+    pipeline_broker: "DevicePipelineBroker" | None = None,
+    reuse_session_id: str | None = None,
+    asr_chat_hub: Any | None = None,
+    on_llm_error: Any | None = None,
 ) -> ChatTurnResult:
     """在已有用户侧文本后执行 LLM + TTS/pb 管道（应用层，不依赖 WebSocket 类型）。"""
     result = ChatTurnResult()
@@ -259,7 +259,7 @@ async def run_chat_turn(
         if registry is not None and device_id:
             ack_ctx = await registry.pb_ack_llm_context(device_id)
 
-        session_id: Optional[str] = None
+        session_id: str | None = None
         history_messages: list[dict[str, str]] | None = None
         if device_id:
             from deskbot_server.dao.session_dao import SessionDao
@@ -471,11 +471,11 @@ async def run_device_tts_only(
     chat: "ChatService",
     text: str,
     *,
-    request_id: Optional[str] = None,
-    device_id: Optional[str] = None,
-    scenes: Optional[list] = None,
-    moves: Optional[list] = None,
-    anims: Optional[list] = None,
+    request_id: str | None = None,
+    device_id: str | None = None,
+    scenes: list | None = None,
+    moves: list | None = None,
+    anims: list | None = None,
     leading_move_steps: int = 0,
 ) -> ChatTurnResult:
     """跳过 LLM，将给定文本走音素 TTS 并下发 pb；可选在同一条链锁内追加场景 pb 帧。"""
@@ -531,8 +531,8 @@ async def run_device_playbook(
     chat: "ChatService",
     playbook: dict,
     *,
-    request_id: Optional[str] = None,
-    device_id: Optional[str] = None,
+    request_id: str | None = None,
+    device_id: str | None = None,
 ) -> ChatTurnResult:
     """场景编排：按阶段串行下发（舵机 → 口播前表情 → 口播+并行轨）。"""
     from deskbot_server.service.scene_playbook_runner import playbook_to_phases
@@ -603,7 +603,7 @@ async def run_device_playbook(
 
 
 async def _send_pb_pairs(
-    downlink: DownlinkPort, *, pairs: list[tuple[dict, list[bytes]]], pb_req: str, device_id: Optional[str], n_pb: int
+    downlink: DownlinkPort, *, pairs: list[tuple[dict, list[bytes]]], pb_req: str, device_id: str | None, n_pb: int
 ) -> bool:
     """下发一组 pb wire 帧；返回是否因失败而中止。"""
     from deskbot_server.constants import PB_WAIT_ACK
@@ -669,10 +669,10 @@ async def _run_pb_playback(
     reply_text: str,
     parsed: dict,
     llm_scenes: list,
-    request_id: Optional[str],
-    device_id: Optional[str],
+    request_id: str | None,
+    device_id: str | None,
     result: ChatTurnResult,
-    t_asr_start: Optional[float],
+    t_asr_start: float | None,
     motion_only: bool = False,
     prefetch_tts: asyncio.Task | None = None,
 ) -> None:
@@ -811,14 +811,14 @@ async def _run_pb_playback(
 
 async def publish_chat_turn(
     events: PipelineEventsPort,
-    device_id: Optional[str],
+    device_id: str | None,
     *,
     source: str,
-    asr_text: Optional[str],
-    t_asr_start: Optional[float],
-    t_asr_text: Optional[float],
+    asr_text: str | None,
+    t_asr_start: float | None,
+    t_asr_text: float | None,
     turn: ChatTurnResult,
-    request_id: Optional[str] = None,
+    request_id: str | None = None,
 ) -> None:
     if not device_id:
         return
