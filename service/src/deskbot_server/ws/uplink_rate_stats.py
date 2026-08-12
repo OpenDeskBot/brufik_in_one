@@ -59,6 +59,13 @@ def note_uplink_camera(device_id: str | None) -> None:
     _counts[k].camera += 1
 
 
+def remove_device(device_id: str | None) -> None:
+    """设备断开时清理，停止为该设备打印心跳。"""
+    k = _key(device_id)
+    _known.discard(k)
+    _counts.pop(k, None)
+
+
 async def _ticker() -> None:
     global _counts
     while True:

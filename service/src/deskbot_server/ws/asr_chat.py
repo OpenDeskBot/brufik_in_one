@@ -48,6 +48,7 @@ from deskbot_server.ws.uplink_rate_stats import (
     note_uplink_ack,
     note_uplink_audio,
     note_uplink_camera,
+    remove_device,
 )
 
 logger = logging.getLogger("deskbot-server")
@@ -944,5 +945,6 @@ async def handle_asr_chat(
         logger.info("WebSocket 已关闭: %s", closed)
     finally:
         if device_id:
+            remove_device(device_id)
             await asr_chat_hub.detach(device_id, websocket)
             await registry.disconnect(websocket)
