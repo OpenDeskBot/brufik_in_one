@@ -10,7 +10,7 @@ from deskbot_server.config import load_config
 from deskbot_server.constants import CAMERA_VIEW_PATH, DEVICE_PIPELINE_PATH
 from deskbot_server.controller.app import create_fastapi_app
 from deskbot_server.controller.runtime import AppRuntime
-from deskbot_server.utils.concurrency import configure_concurrency
+from deskbot_server.utils.concurrency import configure_concurrency, resolve_face_pool_workers
 from deskbot_server.model.settings import AppSettings
 from deskbot_server.dao.debug_prefs_store import apply_debug_prefs_from_config
 from deskbot_server.infrastructure.bootstrap import build_chat_service
@@ -69,6 +69,11 @@ def build_runtime() -> AppRuntime:
         max_concurrent_asr=app_settings.server.max_concurrent_asr,
         max_concurrent_face_infer=app_settings.server.max_concurrent_face_infer,
     )
+    try:
+        face_pool_n = resolve_face_pool_workers(app_settings.server.max_concurrent_face_infer)
+        CameraFaceService.start_pool(max_workers=face_pool_n)
+    except Exception:
+        logger.exception("[concurrency] 人脸识别进程池初始化失败")
     pipeline = build_chat_service(config)
     VadService().configure(audio_cfg)
     device_pipeline_broker = DevicePipelineBroker()

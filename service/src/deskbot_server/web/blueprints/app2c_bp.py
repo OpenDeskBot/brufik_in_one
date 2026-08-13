@@ -9,15 +9,6 @@ from deskbot_server.web.urls import flash, url_for
 from deskbot_server.web.view_helpers import ViewAPIRoute, files_get, form_get, get_json, is_json_request, jsonify, redirect, render_template
 
 from deskbot_server.service.user_service import UserService
-from deskbot_server.dao.api_key_service import (
-    create_api_key,
-    get_api_key_usage_today,
-    get_user_device_usage_summary,
-    get_user_usage_summary,
-    get_user_usage_today,
-    list_api_keys_for_user,
-    revoke_api_key,
-)
 from deskbot_server.dao.emotion_expr_map_store import load_emotion_expr_map, save_emotion_expr_map
 from deskbot_server.dao.face_expr_scenes_store import load_face_expr_scenes_file, save_face_expr_scenes_file
 from deskbot_server.dao.face_mouth_config_store import load_face_mouth_cfg_file, save_face_mouth_cfg_file
@@ -257,23 +248,16 @@ def setup_llm_models(request: Request, user: RequireUser):
 
 @router.post("/api/debug/reset-account")
 def debug_reset_account(request: Request, user: RequireUser):
-    """调试用：把当前账号重置回新用户状态（解绑所有设备、吊销 API Key、清除本机大模型配置）。"""
-    from deskbot_server.dao.api_key_service import revoke_api_key
+    """调试用：把当前账号重置回新用户状态（解绑所有设备、清除本机大模型配置）。"""
     from deskbot_server.infrastructure.llm.env_store import clear_llm_env
     from deskbot_server.web.session_device import clear_current_device
 
     uid = user.id
-    cleared = {"devices": 0, "api_keys": 0}
+    cleared = {"devices": 0}
     for d in UserService().list_devices(uid):
         try:
             if UserService().unbind_device(uid, d.device_id):
                 cleared["devices"] += 1
-        except Exception:  # noqa: BLE001 - best effort
-            pass
-    for k in list_api_keys_for_user(uid):
-        try:
-            if revoke_api_key(uid, k.id):
-                cleared["api_keys"] += 1
         except Exception:  # noqa: BLE001 - best effort
             pass
     clear_current_device(request)
@@ -289,18 +273,6 @@ def _totals_payload(row: dict) -> dict:
         "tts_bytes": int(row.get("tts_bytes") or 0),
         "total_bytes": int(row.get("total_bytes") or 0),
         "quota_bytes": int(row.get("quota_bytes") or 0),
-    }
-
-
-def _api_key_payload(row) -> dict:
-    return {
-        "id": row.id,
-        "name": row.name,
-        "prefix": row.key_prefix,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-        "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
-        "daily_quota_bytes": int(row.daily_quota_bytes or 0),
-        "today": _totals_payload(get_api_key_usage_today(row.id)),
     }
 
 
@@ -330,16 +302,6 @@ def advanced_summary_get(request: Request, user: RequireUser):
     user = UserService().get_user(user.id)
     devices = UserService().list_devices(user.id)
     current_device_id = get_current_device_id(request)
-    keys = list_api_keys_for_user(user.id)
-    usage = get_user_usage_summary(user.id, days=14)
-    device_usage = get_user_device_usage_summary(user.id, days=14)
-    user_today = get_user_usage_today(user.id)
-    device_daily_rows = _flatten_usage_daily_rows(
-        device_usage.get("device_stats") or [], label_key="display_name", sub_id_key="device_id"
-    )
-    key_daily_rows = _flatten_usage_daily_rows(
-        usage.get("key_stats") or [], label_key="name", sub_id_key="api_key_id", sub_label_key="key_prefix"
-    )
 
     llm = {
         "device_id": current_device_id,
@@ -408,14 +370,6 @@ def advanced_summary_get(request: Request, user: RequireUser):
                 for d in devices
             ],
             "current_device_id": current_device_id,
-            "usage": {
-                "today": _totals_payload(user_today),
-                "fourteen_day": _totals_payload(usage.get("totals") or {}),
-                "today_by_device": device_usage.get("today_by_device") or [],
-                "device_daily_rows": device_daily_rows,
-                "key_daily_rows": key_daily_rows,
-            },
-            "api_keys": [_api_key_payload(k) for k in keys],
             "llm": llm,
         }
     )
@@ -449,24 +403,6 @@ def advanced_password_post(request: Request, user: RequireUser):
         UserService().change_password(user.id, old_password, new_password)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    return jsonify({"ok": True})
-
-
-@router.post("/api/advanced/api-keys")
-def advanced_api_key_post(request: Request, user: RequireUser):
-    payload = get_json(request, silent=True) or {}
-    name = str(payload.get("name") or "default").strip()
-    try:
-        raw, row = create_api_key(user.id, name=name)
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    return jsonify({"ok": True, "raw_key": raw, "api_key": _api_key_payload(row)})
-
-
-@router.delete("/api/advanced/api-keys/{key_id}")
-def advanced_api_key_delete(request: Request, user: RequireUser, key_id: str):
-    if not revoke_api_key(user.id, key_id):
-        return jsonify({"ok": False, "error": "API Key 不存在"}), 404
     return jsonify({"ok": True})
 
 
@@ -677,8 +613,6 @@ ENDPOINTS = {
     "app2c.advanced_summary_get": "/api/advanced",
     "app2c.advanced_profile_patch": "/api/advanced/profile",
     "app2c.advanced_password_post": "/api/advanced/password",
-    "app2c.advanced_api_key_post": "/api/advanced/api-keys",
-    "app2c.advanced_api_key_delete": "/api/advanced/api-keys/{key_id}",
     "app2c.emotion_expr_map_get": "/api/emotion_expr_map",
     "app2c.emotion_expr_map_post": "/api/emotion_expr_map",
     "app2c.face_expr_scenes_get": "/api/face_expr_scenes",

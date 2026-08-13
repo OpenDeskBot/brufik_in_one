@@ -22,6 +22,7 @@ from deskbot_server.controller.auth import (
     require_api_auth,
     require_web_ws_pipeline_auth,
     require_web_ws_subscriber_auth,
+    request_qargs as auth_request_qargs,
 )
 from deskbot_server.controller.runtime import get_runtime
 from deskbot_server.service.config_service import (
@@ -96,10 +97,10 @@ async def api_devices(request: Request) -> JSONResponse:
     registry = get_runtime().registry
     peer = _request_peer(request)
     snap = registry.snapshot()
-    if request.state.api_auth is not None and request.state.api_auth.user_id:
+    if request.state.user_id:
         from deskbot_server.service.user_service import UserService
 
-        allowed = UserService().device_ids_for_user(request.state.api_auth.user_id)
+        allowed = UserService().device_ids_for_user(request.state.user_id)
         snap = [d for d in snap if str(d.get("device_id") or "") in allowed]
     device_ids = [d.get("device_id") for d in snap]
     logger.info("[HTTP] GET /api/devices peer=%s -> %d 台设备 device_ids=%s", peer, len(snap), device_ids)
@@ -230,7 +231,7 @@ async def api_pipeline_recent(request: Request) -> JSONResponse:
     except RuntimeError:
         broker = get_runtime().device_pipeline_broker
     dev = _extract_device_id(qargs)
-    denied = device_access_denied(request.state.api_auth, dev)
+    denied = device_access_denied(request.state.user_id, dev)
     if denied is not None:
         return denied
     try:
@@ -257,7 +258,7 @@ async def api_device_servo(request: Request) -> JSONResponse:
     dev = (qargs.get("device_id") or "").strip()
     if not dev:
         return JSONResponse(status_code=400, content={"error": "missing device_id", "t": time.time()})
-    denied = device_access_denied(request.state.api_auth, dev)
+    denied = device_access_denied(request.state.user_id, dev)
     if denied is not None:
         return denied
     try:
@@ -448,7 +449,7 @@ async def api_device_face_play(request: Request) -> JSONResponse:
     name_q = (qargs.get("name") or qargs.get("scene") or "").strip()
     if not dev:
         return JSONResponse(status_code=400, content={"ok": False, "error": "missing device_id", "t": time.time()})
-    denied = device_access_denied(request.state.api_auth, dev)
+    denied = device_access_denied(request.state.user_id, dev)
     if denied is not None:
         return denied
     if kind_q not in ("phoneme", "emotion"):
@@ -564,7 +565,7 @@ async def api_device_tts(request: Request) -> JSONResponse:
         scene_q = (qargs.get("scene") or "").strip()
     if not dev:
         return JSONResponse(status_code=400, content={"ok": False, "error": "missing device_id", "t": time.time()})
-    denied = device_access_denied(request.state.api_auth, dev)
+    denied = device_access_denied(request.state.user_id, dev)
     if denied is not None:
         return denied
     if not text:
@@ -677,7 +678,7 @@ async def api_scene_playbook_run(request: Request) -> JSONResponse:
             playbook_raw = find_playbook_by_name(rows, name_q)
     if not dev:
         return JSONResponse(status_code=400, content={"ok": False, "error": "missing device_id", "t": time.time()})
-    denied = device_access_denied(request.state.api_auth, dev)
+    denied = device_access_denied(request.state.user_id, dev)
     if denied is not None:
         return denied
     if not playbook_raw:
@@ -756,7 +757,7 @@ async def api_device_pb_scene(request: Request) -> JSONResponse:
     scene_q = (qargs.get("scene") or "").strip()
     if not dev:
         return JSONResponse(status_code=400, content={"error": "missing device_id", "t": time.time()})
-    denied = device_access_denied(request.state.api_auth, dev)
+    denied = device_access_denied(request.state.user_id, dev)
     if denied is not None:
         return denied
     if not scene_q:
@@ -963,7 +964,7 @@ async def api_device_pb_anim(request: Request) -> JSONResponse:
 
     if not dev:
         return JSONResponse(status_code=400, content={"ok": False, "error": "missing device_id", "t": time.time()})
-    denied = device_access_denied(request.state.api_auth, dev)
+    denied = device_access_denied(request.state.user_id, dev)
     if denied is not None:
         return denied
     if not isinstance(anim, (dict, list)):
@@ -1067,7 +1068,7 @@ async def api_device_pb_expr_scene(request: Request) -> JSONResponse:
     scene_q = (qargs.get("scene") or qargs.get("name") or "").strip()
     if not dev:
         return JSONResponse(status_code=400, content={"ok": False, "error": "missing device_id", "t": time.time()})
-    denied = device_access_denied(request.state.api_auth, dev)
+    denied = device_access_denied(request.state.user_id, dev)
     if denied is not None:
         return denied
     if not scene_q:

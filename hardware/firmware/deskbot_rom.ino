@@ -43,12 +43,14 @@ void setup() {
   log_info("Initializing Deskbot...");
   log_info("[BOOT] device_id=%s", get_device_id());
 
+  /* 上电立即归中：MCPWM 独立于 LEDC，不需要等 camera init。 */
+  setup_head();
+
   /* ---- 阶段 A：先验证相机（RGB565），再释放 GDMA，避免 I2S/WiFi 期间卡死 ----
    * 本机 JPEG 硬件编码不可用；setup_camera 内用 RGB565 + frame2jpg。
    * ESP32-S3：相机 GDMA 在 WiFi STA 连接时若仍在跑，会整机挂死。 */
   static bool s_camera_ok = false;
   const bool camera_probed = setup_camera();
-  setup_head();  /* 仅 GPIO 预归中，不 attach */
   if (camera_probed) {
     camera_deinit();
     log_warn("[CAMERA] suspended for i2s/wifi (will reinit after STA)");
@@ -108,7 +110,6 @@ void setup() {
     log_error("[BOOT] mic PDM restart failed");
   }
   task_setup_mic();
-  head_servo_boot_attach();
 
   /* ---- 阶段 C：执行器就绪后再启动 pb 泵 / camera 上行 ---- */
   task_setup_display();

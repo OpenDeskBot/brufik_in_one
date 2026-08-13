@@ -7,7 +7,6 @@ from deskbot_server.web.urls import flash, url_for
 from deskbot_server.web.view_helpers import ViewAPIRoute, form_get, get_json, jsonify, redirect
 
 from deskbot_server.service.user_service import UserService
-from deskbot_server.dao.api_key_service import create_api_key, revoke_api_key
 from deskbot_server.dao.face_profiles_store import (
     delete_face_profile,
     list_face_profiles_summary,
@@ -27,7 +26,7 @@ from deskbot_server.dao.memory_store import (
     add_memory,
     delete_memory,
     get_memory,
-    list_memory_entries_for_device,
+    list_memory_for_device,
     update_memory,
 )
 from deskbot_server.infrastructure.llm.runtime import (
@@ -127,28 +126,6 @@ def change_password_post(request: Request, user: RequireUser):
         flash(request, str(exc), "error")
         return redirect(url_for("app2c.advanced"))
     flash(request, "密码已更新", "success")
-    return redirect(url_for("app2c.advanced"))
-
-
-@router.post("/settings/api-keys")
-def create_api_key_post(request: Request, user: RequireUser):
-    name = (form_get(request, "key_name") or "default").strip()
-    try:
-        raw, _row = create_api_key(user.id, name=name)
-    except ValueError as exc:
-        flash(request, str(exc), "error")
-        return redirect(url_for("app2c.advanced"))
-    request.session["new_api_key_raw"] = raw
-    flash(request, "API Key 已创建，请立即复制保存（仅显示一次）", "success")
-    return redirect(url_for("app2c.advanced"))
-
-
-@router.post("/settings/api-keys/{key_id}/revoke")
-def revoke_api_key_post(request: Request, user: RequireUser, key_id: str):
-    if not revoke_api_key(user.id, key_id):
-        flash(request, "API Key 不存在", "error")
-    else:
-        flash(request, "API Key 已吊销", "success")
     return redirect(url_for("app2c.advanced"))
 
 
@@ -332,7 +309,7 @@ def api_list_memories(request: Request, user: RequireUser):
     if err:
         return err
     assert device_id is not None
-    entries = list_memory_entries_for_device(device_id)
+    entries = list_memory_for_device(device_id)
     return jsonify({"ok": True, "device_id": device_id, "memories": entries, "count": len(entries)})
 
 
@@ -813,8 +790,6 @@ def api_miot_homes(request: Request, user: RequireUser):
 ENDPOINTS = {
     "app.update_profile_post": "/app/settings/profile",
     "app.change_password_post": "/app/settings/password",
-    "app.create_api_key_post": "/app/settings/api-keys",
-    "app.revoke_api_key_post": "/app/settings/api-keys/{key_id}/revoke",
     "app.api_list_devices": "/app/api/devices",
     "app.api_bind_device": "/app/api/devices",
     "app.api_select_device": "/app/api/devices/select",

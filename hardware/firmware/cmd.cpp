@@ -62,27 +62,7 @@ void handle_cmd(String cmd) {
  * - "delay" 命令保留为调试用，原地阻塞 1s。
  */
 void executeCommand(String cmd) {
-  if (cmd == "head_left") {
-    head_left(20);
-  } else if (cmd == "head_right") {
-    head_right(20);
-  } else if (cmd == "head_up") {
-    head_up(20);
-  } else if (cmd == "head_down") {
-    head_down(20);
-  } else if (cmd == "head_center") {
-    head_center();
-  } else if (cmd == "head_nod") {
-    head_nod();
-  } else if (cmd == "head_shake" || cmd == "shake" || cmd == "head_shake_3") {
-    head_shake_async();
-  } else if (cmd == "head_roll_left") {
-    head_roll_left();
-  } else if (cmd == "head_roll_right") {
-    head_roll_right();
-  } else if (cmd == "head_clear_pending") {
-    head_clear_motor_pending();
-  } else if (cmd == "delay") {
+  if (cmd == "delay") {
     delay(1000);
   } else {
     log_warn("[CMD] unknown action: %s", cmd.c_str());
@@ -95,31 +75,6 @@ void executeFactoryCommand(String cmd) {
   if (cmd == "reboot" || cmd == "restart") {
     log_info("[CMD] Rebooting device...");
     ESP.restart();
-  } else if (cmd == "head_clear_pending") {
-    head_clear_motor_pending();
-    log_info("[CMD] head_clear_pending");
-  } else if (cmd == "head_pos") {
-    head_log_position();
-  } else if (cmd.startsWith("head_move_abs_ex")) {
-    int v[5]; int n = parse_int_args(cmd, v, 5);
-    if (n < 3) { log_warn("[CMD] head_move_abs_ex x y step [hold_ms]"); }
-    else { head_move_abs_ex(v[0], v[1], (uint8_t)constrain(v[2], 0, 255),
-                           (n >= 4 && v[3] > 0) ? (uint16_t)v[3] : 0);
-           log_info("[CMD] head_move_abs_ex %d %d step=%d hold=%u", v[0], v[1], v[2],
-                    (n >= 4 && v[3] > 0) ? (unsigned)v[3] : 0u); }
-  } else if (cmd.startsWith("head_move_abs")) {
-    int v[2]; int n = parse_int_args(cmd, v, 2);
-    if (n >= 2) { head_move_abs(v[0], v[1]); log_info("[CMD] head_move_abs %d %d", v[0], v[1]); }
-  } else if (cmd.startsWith("head_move_ex")) {
-    int v[5]; int n = parse_int_args(cmd, v, 5);
-    if (n < 3) { log_warn("[CMD] head_move_ex dx dy step [hold_ms]"); }
-    else { head_move_ex(v[0], v[1], (uint8_t)constrain(v[2], 0, 255),
-                        (n >= 4 && v[3] > 0) ? (uint16_t)v[3] : 0);
-           log_info("[CMD] head_move_ex %d %d step=%d hold=%u", v[0], v[1], v[2],
-                    (n >= 4 && v[3] > 0) ? (unsigned)v[3] : 0u); }
-  } else if (cmd.startsWith("head_move")) {
-    int v[2]; int n = parse_int_args(cmd, v, 2);
-    if (n >= 2) { head_move(v[0], v[1]); }
   } else if (cmd == "reset_wifi") {
     wifi_provision_reset();
   } else if (cmd == "chat") {

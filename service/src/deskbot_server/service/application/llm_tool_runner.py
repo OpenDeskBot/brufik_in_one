@@ -6,11 +6,11 @@ import logging
 from typing import Any
 
 from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode, persist_camera_servo_auto_mode
-from deskbot_server.service.camera_face_service import capture_camera_for_device_async
 from deskbot_server.dao.device_tmp_store import read_device_tmp_file, write_device_tmp_file
-from deskbot_server.dao.memory_dao import MemoryDao
-from deskbot_server.dao.session_dao import SessionDao
+from deskbot_server.dao.memory_store import add_memory, delete_memory
+from deskbot_server.dao.session_store import execute_session_tool
 from deskbot_server.service.application.face_registration import register_face_for_device
+from deskbot_server.service.camera_face_service import capture_camera_for_device_async
 from deskbot_server.service.miot_tools import execute_miot_tool
 from deskbot_server.service.scheduled_task_service import execute_schedule_task_tool
 from deskbot_server.service.web_tools import webfetch, websearch
@@ -99,13 +99,13 @@ async def execute_llm_tools(
                 text = str(raw.get("text") or raw.get("value") or "").strip()
                 if not text:
                     raise ValueError("memory_add 需要 text")
-                entry = MemoryDao().add(text, device_id=dev or None)
+                entry = add_memory(text, device_id=dev or None)
                 results.append({"tool": tool, "ok": True, "id": entry["id"], "text": entry["text"]})
             elif tool == "memory_delete":
                 eid = str(raw.get("id") or "").strip()
                 if not eid:
                     raise ValueError("memory_delete 需要 id")
-                ok = MemoryDao().delete(eid, device_id=dev or None)
+                ok = delete_memory(eid, device_id=dev or None)
                 if not ok:
                     raise ValueError(f"未找到记忆 id={eid}")
                 results.append({"tool": tool, "ok": True, "id": eid})
@@ -113,7 +113,7 @@ async def execute_llm_tools(
                 out = execute_schedule_task_tool(raw, device_id=dev, default_session_id=session_id)
                 results.append(out)
             elif tool == "session":
-                out = SessionDao().execute_session_tool(raw, device_id=dev)
+                out = execute_session_tool(raw, device_id=dev)
                 results.append(out)
             elif tool in ("miot", "mihome", "mijia"):
                 if not dev:

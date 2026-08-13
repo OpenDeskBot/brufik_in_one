@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,21 +27,4 @@ class ChatTurnResult:
     scenes: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "llm_text": self.llm_text,
-            "llm_raw": self.llm_raw,
-            "moves": self.moves,
-            "anims": self.anims,
-            "tools": self.tools,
-            "tool_results": self.tool_results,
-            "servo": self.servo,
-            "need_reply": self.need_reply,
-            "json_ok": self.json_ok,
-            "t_llm_end": self.t_llm_end,
-            "t_tts_synth_end": self.t_tts_synth_end,
-            "t_tts_end": self.t_tts_end,
-            "status": self.status,
-            "error": self.error,
-            "voice_auto_reply_off": self.voice_auto_reply_off,
-            "scenes": self.scenes,
-        }
+        return dataclasses.asdict(self)

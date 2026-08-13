@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 import time
-import uuid
 from typing import Any
 
+from deskbot_server.dao._json_store import file_lock, load_json_file, new_short_id, save_json_file
 from deskbot_server.utils.device_data import device_data_dir
 
 SESSION_IDLE_SECONDS = 10 * 60
@@ -44,30 +43,12 @@ def _truncate_title(text: str) -> str:
     return raw[: _MAX_TITLE_LEN - 1] + "…"
 
 
-def _load_json(path: str) -> dict[str, Any] | None:
-    if not os.path.isfile(path):
-        return None
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
-    return raw if isinstance(raw, dict) else None
-
-
-def _save_json(path: str, data: dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-
-
 def _load_meta(device_id: str) -> dict[str, Any]:
-    raw = _load_json(_meta_path(device_id))
-    if not raw:
-        return {}
-    return raw
+    return load_json_file(_meta_path(device_id), default={}) or {}
 
 
 def _save_meta(device_id: str, *, session_id: str, updated_at: float) -> None:
-    _save_json(_meta_path(device_id), {"current_session_id": session_id, "current_updated_at": updated_at})
+    save_json_file(_meta_path(device_id), {"current_session_id": session_id, "current_updated_at": updated_at})
 
 
 def _normalize_message(raw: object) -> dict[str, Any] | None:
@@ -88,7 +69,7 @@ def _normalize_message(raw: object) -> dict[str, Any] | None:
 
 
 def load_session(device_id: str, session_id: str) -> dict[str, Any] | None:
-    raw = _load_json(_session_path(device_id, session_id))
+    raw = load_json_file(_session_path(device_id, session_id))
     if not raw:
         return None
     messages: list[dict[str, Any]] = []
@@ -119,14 +100,14 @@ def save_session(session: dict[str, Any]) -> None:
         "updated_at": float(session.get("updated_at") or _now_ts()),
         "messages": list(session.get("messages") or []),
     }
-    _save_json(_session_path(dev, sid), payload)
+    save_json_file(_session_path(dev, sid), payload)
     _save_meta(dev, session_id=sid, updated_at=payload["updated_at"])
 
 
 def create_session(device_id: str, *, title: str | None = None, now: float | None = None) -> dict[str, Any]:
     ts = float(now if now is not None else _now_ts())
     session = {
-        "session_id": uuid.uuid4().hex[:16],
+        "session_id": new_short_id(16),
         "device_id": str(device_id).strip(),
         "title": _truncate_title(title or ""),
         "created_at": ts,
@@ -189,22 +170,25 @@ def append_turn(
     sid = str(session_id or "").strip()
     if not dev or not sid:
         raise ValueError("device_id and session_id required")
-    session = load_session(dev, sid)
-    if session is None:
-        session = create_session(dev, title=_truncate_title(user_text), now=now)
-        sid = session["session_id"]
-    ts = float(now if now is not None else _now_ts())
-    user_msg = str(user_text or "").strip()
-    assistant_msg = str(assistant_text or "").strip()
-    if user_msg:
-        session["messages"].append({"role": "user", "message": user_msg, "ts": ts})
-    if assistant_msg:
-        session["messages"].append({"role": "assistant", "message": assistant_msg, "ts": ts})
-    session["updated_at"] = ts
-    if len(session.get("messages") or []) <= 2 and user_msg:
-        session["title"] = _truncate_title(user_msg)
-    save_session(session)
-    return session
+    path = _session_path(dev, sid)
+    with file_lock(path):
+        session = load_session(dev, sid)
+        if session is None:
+            session = create_session(dev, title=_truncate_title(user_text), now=now)
+            sid = session["session_id"]
+            path = _session_path(dev, sid)
+        ts = float(now if now is not None else _now_ts())
+        user_msg = str(user_text or "").strip()
+        assistant_msg = str(assistant_text or "").strip()
+        if user_msg:
+            session["messages"].append({"role": "user", "message": user_msg, "ts": ts})
+        if assistant_msg:
+            session["messages"].append({"role": "assistant", "message": assistant_msg, "ts": ts})
+        session["updated_at"] = ts
+        if len(session.get("messages") or []) <= 2 and user_msg:
+            session["title"] = _truncate_title(user_msg)
+        save_session(session)
+        return session
 
 
 def list_recent_sessions(device_id: str, *, limit: int = 10) -> list[dict[str, Any]]:

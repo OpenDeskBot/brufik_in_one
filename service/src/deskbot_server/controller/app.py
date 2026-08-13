@@ -46,7 +46,7 @@ def create_fastapi_app(runtime: AppRuntime | None = None, *, web_only: bool = Fa
         CORSMiddleware,
         allow_origins=["*"],
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "X-API-Key", "Authorization", "X-Deskbot-Web-Token", "X-Deskbot-Debug-Token"],
+        allow_headers=["Content-Type", "Authorization", "X-Deskbot-Web-Token", "X-Deskbot-Debug-Token"],
     )
 
     mount_web(app)

@@ -1,30 +1,24 @@
-"""设备 PIN 校验与在线 PIN 缓存（供 Web 绑定验证；设备 WS 可选上报）。"""
+"""设备在线 PIN 缓存（供 Web 绑定验证；设备 WS 可选上报）。"""
 
 from __future__ import annotations
 
-import re
 import threading
 
-_PIN_RE = re.compile(r"^[1-9]\d{3}$")
+from deskbot_server.utils.pin_code import device_storage_dirname, normalize_pin_code, validate_pin_code
+
+__all__ = [
+    "clear_online_pin",
+    "device_storage_dirname",
+    "get_online_pin",
+    "is_device_online",
+    "normalize_pin_code",
+    "resolve_pin_for_storage",
+    "set_online_pin",
+    "validate_pin_code",
+]
 
 _online_pins: dict[str, str] = {}
 _lock = threading.Lock()
-
-
-def normalize_pin_code(pin_code: str | None) -> str:
-    return str(pin_code or "").strip()
-
-
-def validate_pin_code(pin_code: str | None) -> bool:
-    return bool(_PIN_RE.match(normalize_pin_code(pin_code)))
-
-
-def device_storage_dirname(device_id: str, pin_code: str) -> str:
-    did = str(device_id or "").strip()
-    pin = normalize_pin_code(pin_code)
-    if not did or not validate_pin_code(pin):
-        raise ValueError("device_id and valid pin_code required")
-    return f"{did}_{pin}"
 
 
 def set_online_pin(device_id: str, pin_code: str) -> None:

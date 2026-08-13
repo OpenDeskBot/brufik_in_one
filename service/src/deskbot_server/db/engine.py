@@ -69,9 +69,3 @@ def get_session() -> Session:
 def remove_session() -> None:
     if _session_factory is not None:
         _session_factory.remove()
-
-
-def apply_wal_pragmas(conn) -> None:
-    conn.execute(text("PRAGMA journal_mode=WAL"))
-    conn.execute(text("PRAGMA busy_timeout=30000"))
-    conn.execute(text("PRAGMA synchronous=NORMAL"))

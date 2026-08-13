@@ -78,7 +78,6 @@ private:
   DisplayState display_state_ = DISPLAY_UNINIT;
   unsigned long last_should_wake_ms_ = 0;
   static constexpr unsigned long kIdleEnterDelayMs = 2000;
-  static constexpr int kSleepHeadDownDeg = -30;
 };
 
 /** 初始化 PbRuntime 单例（须在 setup_ws_transport 之前）。 */

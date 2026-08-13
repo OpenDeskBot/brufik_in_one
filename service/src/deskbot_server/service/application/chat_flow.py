@@ -262,19 +262,18 @@ async def run_chat_turn(
         session_id: str | None = None
         history_messages: list[dict[str, str]] | None = None
         if device_id:
-            from deskbot_server.dao.session_dao import SessionDao
+            from deskbot_server.dao.session_store import ensure_active_session, session_history_for_llm
             from deskbot_server.utils.async_helpers import run_blocking
 
-            session_dao = SessionDao()
             if reuse_session_id:
                 session_id = str(reuse_session_id).strip()
                 if session_id:
-                    history_messages = await run_blocking(session_dao.history_for_llm, device_id, session_id=session_id)
+                    history_messages = await run_blocking(session_history_for_llm, device_id, session_id)
             else:
-                active = await run_blocking(session_dao.ensure_active, device_id, user_text=user_text)
+                active = await run_blocking(ensure_active_session, device_id, user_text=user_text)
                 session_id = str(active.get("session_id") or "")
                 if session_id:
-                    history_messages = await run_blocking(session_dao.history_for_llm, device_id, session_id=session_id)
+                    history_messages = await run_blocking(session_history_for_llm, device_id, session_id)
 
         tts_prefetch = _TtsPrefetch(chat)
 
@@ -323,12 +322,12 @@ async def run_chat_turn(
         result.t_llm_end = time.monotonic()
 
         if device_id and session_id:
-            from deskbot_server.dao.session_dao import SessionDao
+            from deskbot_server.dao.session_store import append_turn
             from deskbot_server.utils.async_helpers import run_blocking
 
             assistant_text = (reply_text or "").strip() or (answer or "").strip()
             try:
-                await run_blocking(SessionDao().append_turn, device_id, session_id, user_text, assistant_text)
+                await run_blocking(append_turn, device_id, session_id, user_text, assistant_text)
             except Exception:
                 logger.exception(
                     "[session] 保存对话失败 device_id=%s session_id=%s req=%s", device_id, session_id, request_id

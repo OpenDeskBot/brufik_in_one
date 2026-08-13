@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from deskbot_server.constants import LOG_FILE
 from deskbot_server.main import main
 from deskbot_server.utils.logging_setup import setup_logging
 
@@ -12,7 +13,7 @@ logger = logging.getLogger("deskbot-server")
 
 
 def cli() -> None:
-    setup_logging()
+    setup_logging(LOG_FILE)
     try:
         asyncio.run(main())
     except Exception:

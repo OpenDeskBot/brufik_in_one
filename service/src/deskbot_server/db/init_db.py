@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import logging
-import threading
 
 from deskbot_server.db.engine import init_engine
 from deskbot_server.db.models import Base
 
 logger = logging.getLogger("deskbot-server")
-_seed_lock = threading.Lock()
 
 
 def _migrate_legacy_schema(engine) -> None:
@@ -164,20 +162,3 @@ def init_database() -> None:
     Base.metadata.create_all(bind=engine)
     _migrate_devices_schema(engine)
     _migrate_scheduled_tasks_schema(engine)
-    _seed_free_api_key()
-
-
-def _seed_free_api_key() -> None:
-    from deskbot_server.dao.api_key_service import (
-        ensure_free_usage_placeholder,
-        generate_raw_key,
-        read_free_api_key_config,
-        write_free_api_key_file,
-    )
-
-    with _seed_lock:
-        if read_free_api_key_config() is None:
-            raw = generate_raw_key(free=True)
-            write_free_api_key_file(raw)
-            logger.warning("已创建免费 API Key（每日 1GB 配额）prefix=%s —— 完整 Key 见 data/.free_api_key", raw[:12])
-        ensure_free_usage_placeholder()

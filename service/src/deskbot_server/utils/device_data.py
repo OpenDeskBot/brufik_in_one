@@ -9,7 +9,8 @@ from pathlib import Path
 
 
 from deskbot_server.utils.paths import DATA_DIR
-from deskbot_server.ws.device_pin import device_storage_dirname, resolve_pin_for_storage, validate_pin_code
+from deskbot_server.utils.pin_code import device_storage_dirname, validate_pin_code
+from deskbot_server.ws.device_pin import resolve_pin_for_storage
 
 logger = logging.getLogger("deskbot-server")
 

@@ -1,54 +1,45 @@
+"""杂项工具：异常格式化、时间戳、PB ACK 校验、请求 ID 生成。"""
+
 from __future__ import annotations
 
 import datetime as _dt
-import io
 import json
-import os
-import tempfile
 import time
 import traceback
 import uuid
-import wave
 from typing import Any
-from urllib.parse import unquote_plus
+
+# 向后兼容重导出：已迁移到 utils/audio.py
+from deskbot_server.utils.audio import pcm_to_wav_bytes, save_temp_wav  # noqa: F401
+
+# 向后兼容重导出：已迁移到 utils/ws_parse.py，保留旧名（下划线前缀）
+from deskbot_server.utils.ws_parse import (  # noqa: F401
+    extract_device_id as _extract_device_id,
+    extract_pin_code as _extract_pin_code,
+    parse_query as _parse_query,
+    split_path as _split_path,
+    ws_request_path as _ws_request_path,
+)
 
 __all__ = [
+    "_extract_device_id",
+    "_extract_pin_code",
+    "_format_ts",
+    "_json_msg",
+    "_ms_between",
+    "_new_request_id",
+    "_normalize_incoming_pb_ack",
+    "_parse_query",
+    "_split_path",
+    "_ws_request_path",
     "format_exc_detail",
     "pcm_to_wav_bytes",
     "save_temp_wav",
-    "_ms_between",
-    "_format_ts",
-    "_normalize_incoming_pb_ack",
-    "_ws_request_path",
-    "_split_path",
-    "_parse_query",
-    "_extract_device_id",
-    "_new_request_id",
-    "_json_msg",
 ]
 
 
 def format_exc_detail(exc: Exception) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-
-
-def pcm_to_wav_bytes(pcm_bytes: bytes, sample_rate: int, channels: int = 1) -> bytes:
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wav:
-        wav.setnchannels(channels)
-        wav.setsampwidth(2)
-        wav.setframerate(sample_rate)
-        wav.writeframes(pcm_bytes)
-    return buf.getvalue()
-
-
-def save_temp_wav(pcm_bytes: bytes, sample_rate: int) -> str:
-    wav_bytes = pcm_to_wav_bytes(pcm_bytes, sample_rate)
-    fd, path = tempfile.mkstemp(prefix="bot_", suffix=".wav")
-    os.close(fd)
-    with open(path, "wb") as f:
-        f.write(wav_bytes)
-    return path
 
 
 def _ms_between(a: float | None, b: float | None) -> float | None:
@@ -92,64 +83,6 @@ def _normalize_incoming_pb_ack(data: dict[str, Any]) -> dict[str, Any] | None:
         if servo_out:
             out["servo"] = servo_out
     return out
-
-
-def _ws_request_path(websocket) -> str:
-    req_path = getattr(websocket, "path", None)
-    if req_path is None:
-        req_path = getattr(getattr(websocket, "request", None), "path", None)
-    return req_path or ""
-
-
-def _split_path(raw_path: str) -> tuple:
-    """把 `/face_pos?role=subscriber` 拆成 (path, query)。"""
-    if not raw_path:
-        return "", ""
-    if "?" in raw_path:
-        path, _, query = raw_path.partition("?")
-        return path, query
-    return raw_path, ""
-
-
-def _parse_query(query: str) -> dict:
-    out: dict = {}
-    if not query:
-        return out
-    for part in query.split("&"):
-        if not part:
-            continue
-        if "=" in part:
-            k, v = part.split("=", 1)
-        else:
-            k, v = part, ""
-        out[k.strip().lower()] = unquote_plus(v.strip(), encoding="utf-8", errors="replace")
-    return out
-
-
-def _extract_device_id(qargs: dict) -> str | None:
-    """从 URL 查询参数里按兼容顺序取 device_id。
-
-    支持的别名：``device_id`` / ``deviceid`` / ``device`` / ``id``，均大小写不敏感。
-    返回已 strip 的字符串，若为空返回 None。
-    """
-    for key in ("device_id", "deviceid", "device", "id"):
-        v = qargs.get(key)
-        if v:
-            v = str(v).strip()
-            if v:
-                return v
-    return None
-
-
-def _extract_pin_code(qargs: dict) -> str | None:
-    """从 URL 查询参数取 pin_code（别名 ``pin`` / ``pincode``）。"""
-    for key in ("pin_code", "pincode", "pin"):
-        v = qargs.get(key)
-        if v:
-            v = str(v).strip()
-            if v:
-                return v
-    return None
 
 
 def _new_request_id() -> str:

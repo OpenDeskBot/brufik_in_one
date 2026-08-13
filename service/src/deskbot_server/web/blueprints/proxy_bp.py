@@ -10,7 +10,6 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
-from deskbot_server.dao.api_key_service import read_free_api_key_raw
 from deskbot_server.service.user_service import UserService
 from deskbot_server.web.deps import RequireUser
 from deskbot_server.web.helpers import deskbot_upstream_base
@@ -108,10 +107,6 @@ def _upstream_auth_headers(*, user_id: str | None = None) -> dict[str, str]:
     uid = str(user_id or "").strip()
     if uid:
         headers["X-Deskbot-Web-Token"] = issue_debug_ws_token(uid).token
-        return headers
-    upstream_key = read_free_api_key_raw()
-    if upstream_key:
-        headers["X-API-Key"] = upstream_key
     return headers
 
 

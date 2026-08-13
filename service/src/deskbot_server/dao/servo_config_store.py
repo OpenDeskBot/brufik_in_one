@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
 from deskbot_server.constants import SERVO_CFG_FILE
+from deskbot_server.dao._json_store import load_json_file, save_json_file
 from deskbot_server.utils.device_data import resolve_json_path
 
 DEFAULT_SERVO_LIMITS: dict[str, int] = {"xMin": 0, "xMax": 180, "yMin": 70, "yMax": 110, "xReverse": 0, "yReverse": 0}
@@ -195,17 +195,13 @@ def normalize_servo_document(raw: object, *, require_presets: bool = False) -> d
 
 def load_servo_cfg_file(*, device_id: str | None = None) -> dict[str, Any] | None:
     path = resolve_json_path(SERVO_CFG_FILE, device_id)
-    if not os.path.isfile(path):
+    raw = load_json_file(path, default=None)
+    if raw is None:
         return None
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
     return normalize_servo_document(raw)
 
 
 def save_servo_cfg_file(cfg: dict[str, Any], *, device_id: str | None = None) -> None:
     path = resolve_json_path(SERVO_CFG_FILE, device_id)
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     norm = normalize_servo_document(cfg, require_presets="presets" in cfg)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(norm, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    save_json_file(path, norm)

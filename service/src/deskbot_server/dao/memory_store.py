@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 import time
-import uuid
 from typing import Any
 
 from deskbot_server.constants import USER_MEMORY_FILE
+from deskbot_server.dao._json_store import file_lock, load_json_file, new_short_id, save_json_file
 from deskbot_server.utils.device_data import resolve_json_path
 
 _MAX_ENTRIES = 200
@@ -21,7 +20,7 @@ def _normalize_entry(raw: object, *, device_id: str = "") -> dict[str, Any]:
     text = str(raw.get("text") or raw.get("value") or "").strip()
     if not text:
         raise ValueError("text required")
-    entry_id = str(raw.get("id") or "").strip() or uuid.uuid4().hex[:12]
+    entry_id = str(raw.get("id") or "").strip() or new_short_id(12)
     dev = str(raw.get("device_id") if raw.get("device_id") is not None else device_id).strip()
     created = raw.get("created_at")
     try:
@@ -33,10 +32,9 @@ def _normalize_entry(raw: object, *, device_id: str = "") -> dict[str, Any]:
 
 def load_memory_entries(*, device_id: str | None = None) -> list[dict[str, Any]]:
     path = resolve_json_path(USER_MEMORY_FILE, device_id)
-    if not os.path.isfile(path):
+    raw = load_json_file(path, default=None)
+    if raw is None:
         return []
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
     items = raw.get("entries") if isinstance(raw, dict) else raw
     if not isinstance(items, list):
         return []
@@ -52,10 +50,7 @@ def load_memory_entries(*, device_id: str | None = None) -> list[dict[str, Any]]
 def save_memory_entries(entries: list[dict[str, Any]], *, device_id: str | None = None) -> None:
     norm = [_normalize_entry(e, device_id=str(device_id or "")) for e in entries]
     path = resolve_json_path(USER_MEMORY_FILE, device_id)
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"entries": norm}, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    save_json_file(path, {"entries": norm})
 
 
 def list_memory_for_device(
@@ -76,13 +71,15 @@ def list_memory_for_device(
 
 def add_memory(text: str, *, device_id: str | None = None) -> dict[str, Any]:
     dev = str(device_id or "").strip()
-    entries = load_memory_entries(device_id=dev or None)
-    entry = _normalize_entry({"text": text, "device_id": dev})
-    entries.append(entry)
-    if len(entries) > _MAX_ENTRIES:
-        entries = sorted(entries, key=lambda e: float(e.get("created_at") or 0))[-_MAX_ENTRIES:]
-    save_memory_entries(entries, device_id=dev or None)
-    return entry
+    path = resolve_json_path(USER_MEMORY_FILE, dev or None)
+    with file_lock(path):
+        entries = load_memory_entries(device_id=dev or None)
+        entry = _normalize_entry({"text": text, "device_id": dev})
+        entries.append(entry)
+        if len(entries) > _MAX_ENTRIES:
+            entries = sorted(entries, key=lambda e: float(e.get("created_at") or 0))[-_MAX_ENTRIES:]
+        save_memory_entries(entries, device_id=dev or None)
+        return entry
 
 
 def get_memory(entry_id: str, *, device_id: str | None = None) -> dict[str, Any] | None:
@@ -102,19 +99,21 @@ def update_memory(entry_id: str, text: str, *, device_id: str | None = None) -> 
     if not eid or not new_text:
         raise ValueError("id 与 text 不能为空")
     dev = str(device_id or "").strip()
-    entries = load_memory_entries(device_id=dev or None)
-    found = False
-    updated: dict[str, Any] | None = None
-    for entry in entries:
-        if str(entry.get("id") or "") == eid:
-            entry["text"] = new_text
-            updated = dict(entry)
-            found = True
-            break
-    if not found or updated is None:
-        return None
-    save_memory_entries(entries, device_id=dev or None)
-    return updated
+    path = resolve_json_path(USER_MEMORY_FILE, dev or None)
+    with file_lock(path):
+        entries = load_memory_entries(device_id=dev or None)
+        found = False
+        updated: dict[str, Any] | None = None
+        for entry in entries:
+            if str(entry.get("id") or "") == eid:
+                entry["text"] = new_text
+                updated = dict(entry)
+                found = True
+                break
+        if not found or updated is None:
+            return None
+        save_memory_entries(entries, device_id=dev or None)
+        return updated
 
 
 def delete_memory(entry_id: str, *, device_id: str | None = None) -> bool:
@@ -122,20 +121,11 @@ def delete_memory(entry_id: str, *, device_id: str | None = None) -> bool:
     if not eid:
         return False
     dev = str(device_id or "").strip()
-    entries = load_memory_entries(device_id=dev or None)
-    kept = [e for e in entries if str(e.get("id") or "") != eid]
-    if len(kept) == len(entries):
-        return False
-    save_memory_entries(kept, device_id=dev or None)
-    return True
-
-
-def list_memory_entries_for_device(device_id: str, *, limit: int = _MAX_ENTRIES) -> list[dict[str, Any]]:
-    """设备记忆列表（按创建时间倒序）。"""
-    dev = str(device_id or "").strip()
-    if not dev:
-        return []
-    rows = load_memory_entries(device_id=dev)
-    rows.sort(key=lambda e: float(e.get("created_at") or 0), reverse=True)
-    cap = max(1, min(int(limit), _MAX_ENTRIES))
-    return rows[:cap]
+    path = resolve_json_path(USER_MEMORY_FILE, dev or None)
+    with file_lock(path):
+        entries = load_memory_entries(device_id=dev or None)
+        kept = [e for e in entries if str(e.get("id") or "") != eid]
+        if len(kept) == len(entries):
+            return False
+        save_memory_entries(kept, device_id=dev or None)
+        return True

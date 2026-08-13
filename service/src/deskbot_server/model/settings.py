@@ -14,6 +14,22 @@ def _env_bool(name: str) -> bool | None:
     return None
 
 
+def _env_str(name: str, default: str = "") -> str:
+    """读取环境变量字符串，未设置返回 default。"""
+    return os.environ.get(name, default).strip() or default
+
+
+def _env_int(name: str, default: int = 0) -> int:
+    """读取环境变量整数，未设置或解析失败返回 default。"""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class ServerSettings:
     host: str = "0.0.0.0"
@@ -118,14 +134,14 @@ class AppSettings:
         face_info_env = _env_bool("DESKBOT_SEND_FACE_INFO")
         face_info = face_info_env if face_info_env is not None else bool(srv.get("send_face_info_to_asr_chat", False))
 
-        if os.environ.get("TTS_PROVIDER"):
-            tts["provider"] = os.environ["TTS_PROVIDER"]
-        if os.environ.get("TTS_WS_URL"):
-            tts["ws_url"] = os.environ["TTS_WS_URL"]
-        if os.environ.get("TTS_SPK_ID"):
-            tts["spk_id"] = int(os.environ["TTS_SPK_ID"])
-        if os.environ.get("TTS_SAMPLE_RATE"):
-            tts["sample_rate"] = int(os.environ["TTS_SAMPLE_RATE"])
+        if env := _env_str("TTS_PROVIDER"):
+            tts["provider"] = env
+        if env := _env_str("TTS_WS_URL"):
+            tts["ws_url"] = env
+        if env := _env_int("TTS_SPK_ID"):
+            tts["spk_id"] = env
+        if env := _env_int("TTS_SAMPLE_RATE"):
+            tts["sample_rate"] = env
 
         tts_extra = {
             k: v

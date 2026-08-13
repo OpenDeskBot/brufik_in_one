@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from deskbot_server.constants import LOG_FILE
 from deskbot_server.utils.env import load_dotenv
 from deskbot_server.utils.logging_setup import setup_logging
 from deskbot_server.web.app import app, web_debug_enabled
@@ -11,7 +12,7 @@ from deskbot_server.web.app import app, web_debug_enabled
 
 def main() -> None:
     load_dotenv()
-    setup_logging()
+    setup_logging(LOG_FILE)
     import uvicorn
 
     host = (os.environ.get("DESKBOT_WEB_HOST") or "0.0.0.0").strip()

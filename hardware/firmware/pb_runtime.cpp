@@ -85,7 +85,7 @@ void PbRuntime::enqueueAck(const char* req, uint32_t idx, int32_t audio_buf_ms, 
   if (include_servo) {
     JsonObject servo = ack["servo"].to<JsonObject>();
     servo["x"] = head_read_x();
-    servo["y"] = head_read_y_logic();
+    servo["y"] = head_read_y();
     servo["x_min"] = X_MIN_LIMIT;
     servo["x_max"] = X_MAX_LIMIT;
     servo["y_min"] = Y_MIN_LIMIT;
@@ -347,11 +347,6 @@ void PbRuntime::updateAttentionDisplay() {
     if (display_state_ != DISPLAY_WAKEUP) {
       log_info("[ATTENTION] -> WAKEUP (tts=%d)", (int)tts_active_);
       display_state_ = DISPLAY_WAKEUP;
-      const int y_now = head_read_y_logic();
-      if (y_now != Y_CENTER) {
-        head_servo_cmd_async(HEAD_SERVO_HOLD, HEAD_SERVO_ABS, 0, Y_CENTER, /*step=*/0, /*ms=*/200);
-        log_info("[ATTENTION] wake raise Y %d -> %d", y_now, Y_CENTER);
-      }
     }
     return;
   }
@@ -362,12 +357,6 @@ void PbRuntime::updateAttentionDisplay() {
   if (display_state_ != DISPLAY_SLEEP && (first_time || dwell_done)) {
     log_info("[ATTENTION] -> SLEEP (dwell=%lums first=%d)",
              last_should_wake_ms_ == 0 ? 0UL : (now - last_should_wake_ms_), (int)first_time);
-    const int idle_y_target = constrain(Y_CENTER + kSleepHeadDownDeg, Y_MIN_LIMIT, Y_MAX_LIMIT);
-    const int y_now = head_read_y_logic();
-    if (y_now != idle_y_target) {
-      head_servo_cmd_async(HEAD_SERVO_HOLD, HEAD_SERVO_ABS, 0, idle_y_target, /*step=*/0, /*ms=*/200);
-      log_info("[ATTENTION] sleep lower Y %d -> %d", y_now, idle_y_target);
-    }
     display_state_ = DISPLAY_SLEEP;
   }
 }

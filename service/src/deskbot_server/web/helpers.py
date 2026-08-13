@@ -111,12 +111,6 @@ def _fetch_upstream_devices(*, user_id: str | None = None, timeout: float = 1.5)
 
         tok = issue_debug_ws_token(uid).token
         query = urlparse.urlencode({"debug_token": tok})
-    else:
-        from deskbot_server.dao.api_key_service import read_free_api_key_raw
-
-        upstream_key = read_free_api_key_raw()
-        if upstream_key:
-            headers["X-API-Key"] = upstream_key
     if query:
         url = f"{url}?{query}"
     req = urlrequest.Request(url, headers=headers, method="GET")

@@ -3,8 +3,6 @@ import os
 import sys
 import time
 
-from deskbot_server.constants import LOG_FILE
-
 
 class _MillisecondFormatter(logging.Formatter):
     """日志时间戳精确到毫秒（3 位）。"""
@@ -15,7 +13,12 @@ class _MillisecondFormatter(logging.Formatter):
         return f"{base}.{int(record.msecs):03d}"
 
 
-def setup_logging() -> None:
+def setup_logging(log_file: str | None = None) -> None:
+    """初始化日志：控制台 + 可选文件。
+
+    Args:
+        log_file: 日志文件路径。传 None 时从环境变量 ``DESKBOT_SERVER_LOG_FILE`` 读取。
+    """
     level_name = (os.environ.get("DESKBOT_SERVER_LOG_LEVEL") or "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
     root = logging.getLogger()
@@ -27,9 +30,9 @@ def setup_logging() -> None:
     sh.setFormatter(fmt)
     root.addHandler(sh)
 
-    log_file = (os.environ.get("DESKBOT_SERVER_LOG_FILE") or LOG_FILE or "").strip()
-    if log_file:
-        fh = logging.FileHandler(log_file, encoding="utf-8")
+    resolved = (os.environ.get("DESKBOT_SERVER_LOG_FILE") or log_file or "").strip()
+    if resolved:
+        fh = logging.FileHandler(resolved, encoding="utf-8")
         fh.setFormatter(fmt)
         root.addHandler(fh)
 

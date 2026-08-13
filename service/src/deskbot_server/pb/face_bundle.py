@@ -55,9 +55,7 @@ def expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, An
         find_design_scene_by_name,
         load_face_expr_scenes_file,
     )
-    from deskbot_server.dao.face_mouth_dao import FaceMouthDao
-
-    mouth_dao = FaceMouthDao()
+    from deskbot_server.dao.face_mouth_config_store import groups_to_mouth_bundle, load_face_mouth_cfg_file
     rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id) or []
     ent = (
         find_design_scene_by_name(rows, "default")
@@ -101,8 +99,8 @@ def expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, An
         "metadata": {"blink": {"open_ms": open_ms, "close_ms": _DEFAULT_SPEECH_BLINK_CLOSE_MS}},
     }
 
-    groups = mouth_dao.load(seed_if_missing=True, device_id=device_id) or []
-    bundle.update(mouth_dao.groups_to_mouth_bundle(groups))
+    groups = load_face_mouth_cfg_file(seed_if_missing=True, device_id=device_id) or []
+    bundle.update(groups_to_mouth_bundle(groups))
     return ensure_pb_face_bundle_shape(bundle)
 
 

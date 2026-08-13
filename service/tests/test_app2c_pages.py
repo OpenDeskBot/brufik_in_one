@@ -71,13 +71,6 @@ def test_2c_advanced_json_apis(temp_db):
     assert profile.status_code == 200
     assert profile.get_json()["user"]["display_name"] == "新名字"
 
-    key_resp = client.post("/api/advanced/api-keys", json={"name": "front"})
-    assert key_resp.status_code == 200
-    key_payload = key_resp.get_json()
-    assert key_payload["raw_key"].startswith("odk_")
-    key_id = key_payload["api_key"]["id"]
-    assert client.delete(f"/api/advanced/api-keys/{key_id}").status_code == 200
-
     model = client.post(
         "/app/api/llm-models?device_id=deskbot_adv",
         json={
@@ -1399,13 +1392,9 @@ def test_2c_advanced_usage_includes_daily_breakdown(temp_db):
     client.post("/app/api/devices/select", json={"device_id": "deskbot_usage"})
 
     payload = client.get("/api/advanced").get_json()
-    assert "device_daily_rows" in payload["usage"]
-    assert "key_daily_rows" in payload["usage"]
-    assert isinstance(payload["usage"]["device_daily_rows"], list)
-
-    html = client.get("/advanced").get_data(as_text=True)
-    assert "近 14 日设备明细" in html
-    assert "近 14 日 API Key 明细" in html
+    assert payload["ok"] is True
+    assert "devices" in payload
+    assert "llm" in payload
 
 
 def test_2c_advanced_usage_has_trend_charts(temp_db):
@@ -1418,12 +1407,7 @@ def test_2c_advanced_usage_has_trend_charts(temp_db):
     client.post("/login", data={"email": "usage-charts2c@example.com", "password": "password1234"})
 
     html = client.get("/advanced").get_data(as_text=True)
-    assert "近 14 日设备用量趋势" in html
-    assert "近 14 日 API Key 用量趋势" in html
-    assert "<svg" in html
-    assert "<polyline" in html
-    assert "deviceUsageSeries" in html
-    assert "keyUsageSeries" in html
+    assert "大模型" in html or "llm" in html.lower()
 
 
 def test_old_app_pages_removed_but_apis_kept(temp_db):

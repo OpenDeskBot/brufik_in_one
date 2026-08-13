@@ -688,7 +688,7 @@ bool camera_try_capture_packed(uint8_t** packed, size_t* packed_len) {
   const uint32_t seq = s_seq;
   const size_t len = jpg_len;
   const int servo_x = head_read_x();
-  const int servo_y = head_read_y_logic();
+  const int servo_y = head_read_y();
   const int volume = speaker_get_volume();
 
   char header[256];
