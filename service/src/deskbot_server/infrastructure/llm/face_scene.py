@@ -91,11 +91,11 @@ def list_faces_for_prompt(device_id: str, *, limit: int = 5) -> list[dict[str, A
             conf = round(float(score), 3) if score is not None else None
         except (TypeError, ValueError):
             conf = None
-        pid = face.get("person_id")
+        pid = face.get("id")
         rows.append(
             {
                 "face_id": int(fid),
-                "person_id": int(pid) if pid is not None else None,
+                "profile_id": int(pid) if pid is not None else None,
                 "person_name": name or None,
                 "identity_score": conf,
                 **pos,
@@ -111,7 +111,7 @@ def llm_face_scene_prompt_appendix(device_id: str | None = None) -> str:
     if not device_id:
         return ""
     rows = list_faces_for_prompt(device_id, limit=5)
-    follow = _follow_mode_label(get_camera_servo_auto_mode())
+    follow = _follow_mode_label(get_camera_servo_auto_mode(device_id))
     header = f"摄像头人脸跟随模式：{follow}。"
     if not rows:
         return header + "\n当前摄像头画面中未检测到人脸。"
@@ -122,8 +122,8 @@ def llm_face_scene_prompt_appendix(device_id: str | None = None) -> str:
         conf = row.get("identity_score")
         conf_part = f"，匹配置信度 {conf:.3f}" if conf is not None else ""
         pid_part = ""
-        if row.get("person_id") is not None:
-            pid_part = f"，person_id={row['person_id']}"
+        if row.get("profile_id") is not None:
+            pid_part = f"，profile_id={row['profile_id']}"
         pos = row.get("label") or "位置未知"
         nx = row.get("nx_pct")
         ny = row.get("ny_pct")

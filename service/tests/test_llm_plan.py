@@ -168,7 +168,7 @@ def test_build_llm_user_message():
                 "person_name": "小明",
                 "identity_score": 0.82,
                 "face_score": 0.95,
-                "person_id": 1,
+                "id": 1,
                 "image_w": 320,
                 "image_h": 240,
                 "landmarks": [{"name": "nose", "x": 200, "y": 140}],

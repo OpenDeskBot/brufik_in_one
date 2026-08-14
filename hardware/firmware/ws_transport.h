@@ -21,7 +21,7 @@ enum class WsTxType : uint8_t {
 
 /** setup 时从 NVS 解析的服务器地址。 */
 extern WsProto server_ws_proto;
-/** setup 时拼好的 begin 路径：``[path_prefix]/asr_chat?device_id=&pin_code=``。 */
+/** setup 时拼好的 begin 路径：``[path_prefix]/asr_chat?device_id=&version=``。 */
 extern String server_ws_path;
 
 /** WS 链路状态：0=disconnected，1=connecting，2=connected。 */

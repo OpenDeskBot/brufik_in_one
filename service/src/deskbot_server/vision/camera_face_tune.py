@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import threading
 
-
 _lock = threading.Lock()
 _frontal_threshold: float | None = None
 _gaze_yaw_threshold_deg: float | None = None

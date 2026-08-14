@@ -5,15 +5,15 @@
 
 #include <Arduino.h>
 
-/** NVS 命名空间：deskbot_dev（pin / ap_offer / ws）、deskbot_wifi（凭证列表）。 */
+/** NVS 命名空间：deskbot_dev（dev_suffix / ap_offer / ws）、deskbot_wifi（凭证列表）。 */
 
-/* ========== PIN / 开机 AP 等待 ========== */
+/* ========== 设备后缀 / 开机 AP 等待 ========== */
 
-/** 4 位数字 PIN（1000–9999）；NVS 无则生成并持久化。 */
-const char* nvs_get_pin_code();
+/** 设备 ID 后缀（1000–9999）；NVS 无则生成并持久化。 */
+uint32_t nvs_get_device_suffix();
 
-/** 重新生成 PIN 并持久化，返回新 PIN。 */
-const char* nvs_reset_pin_code();
+/** 重新生成后缀并持久化，返回新后缀。 */
+uint32_t nvs_reset_device_suffix();
 
 /** 开机 AP 配网窗口（秒），默认 20，范围 5–60。 */
 unsigned nvs_get_ap_offer_timeout_sec();

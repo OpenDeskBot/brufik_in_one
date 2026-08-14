@@ -4,11 +4,6 @@ import mimetypes
 
 from fastapi import APIRouter, Request
 
-from deskbot_server.web.deps import RequireUser
-from deskbot_server.web.urls import flash, url_for
-from deskbot_server.web.view_helpers import ViewAPIRoute, files_get, form_get, get_json, is_json_request, jsonify, redirect, render_template
-
-from deskbot_server.service.user_service import UserService
 from deskbot_server.dao.emotion_expr_map_store import load_emotion_expr_map, save_emotion_expr_map
 from deskbot_server.dao.face_expr_scenes_store import load_face_expr_scenes_file, save_face_expr_scenes_file
 from deskbot_server.dao.face_mouth_config_store import load_face_mouth_cfg_file, save_face_mouth_cfg_file
@@ -21,9 +16,21 @@ from deskbot_server.infrastructure.llm.runtime import (
     resolve_llm_config,
     resolve_system_llm_config,
 )
-from deskbot_server.web.blueprints.app_bp import _flatten_usage_daily_rows
+from deskbot_server.service.user_service import UserService
+from deskbot_server.web.deps import RequireUser
 from deskbot_server.web.helpers import camera_view_ws_base, device_pipeline_ws_base
 from deskbot_server.web.session_device import get_current_device_id
+from deskbot_server.web.urls import url_for
+from deskbot_server.web.view_helpers import (
+    ViewAPIRoute,
+    files_get,
+    form_get,
+    get_json,
+    is_json_request,
+    jsonify,
+    redirect,
+    render_template,
+)
 
 # No url_prefix: 2C consumer routes live at root (/home, /voice, /my/*)
 router = APIRouter(route_class=ViewAPIRoute, tags=["app2c"])
@@ -51,8 +58,12 @@ def _default_robot_face_payload() -> dict:
 
 @router.get("/home")
 def home(request: Request, user: RequireUser):
-    return render_template(request, 
-        "app2c/home.html", active_nav="home", camera_view_ws_base=camera_view_ws_base(), **_default_robot_face_payload()
+    return render_template(
+        request,
+        "app2c/home.html",
+        active_nav="home",
+        camera_view_ws_base=camera_view_ws_base(),
+        **_default_robot_face_payload(),
     )
 
 
@@ -68,7 +79,8 @@ def expr(request: Request, user: RequireUser):
 
 @router.get("/lab")
 def lab(request: Request, user: RequireUser):
-    return render_template(request, 
+    return render_template(
+        request,
         "app2c/lab.html",
         active_nav="lab",
         camera_view_ws_base=camera_view_ws_base(),

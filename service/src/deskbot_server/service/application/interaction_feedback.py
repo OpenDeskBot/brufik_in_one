@@ -23,7 +23,7 @@ from deskbot_server.service.application.camera_servo_follower import (
     _clamp,
     _screen_angles_from_analysis,
 )
-from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled
+from deskbot_server.dao.debug_prefs_store import get_auto_reply
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
 
 logger = logging.getLogger("deskbot-server")
@@ -38,8 +38,8 @@ _listen_last_mono: dict[str, float] = {}
 _face_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
-def _face_follow_active() -> bool:
-    return get_camera_servo_auto_mode() in ("follow", "follow_frontal", "gaze")
+def _face_follow_active(device_id: str) -> bool:
+    return get_camera_servo_auto_mode(device_id) in ("follow", "follow_frontal", "gaze")
 
 
 def note_face_analysis(device_id: str, analysis: dict[str, Any]) -> None:
@@ -117,12 +117,7 @@ def _group_servo_steps_by_chunk_ms(
     cur_ms = 0
     for s in steps:
         ms = max(1, int(s.get("ms") or 0))
-        base = {
-            "xm": int(s["xm"]),
-            "ym": int(s["ym"]),
-            "x": int(s["x"]),
-            "y": int(s["y"]),
-        }
+        base = {"xm": int(s["xm"]), "ym": int(s["ym"]), "x": int(s["x"]), "y": int(s["y"])}
         while ms > 0:
             room = max_ms if not cur else max_ms - cur_ms
             if room <= 0:
@@ -195,9 +190,7 @@ def build_servo_only_pb_payload(
     if len(frames) != 1:
         # 多片时仍返回首片，避免静默丢动作；调用方应改用 frames API
         logger.warning(
-            "[interaction_feedback] build_servo_only_pb_payload 得到 %d 片，仅返回首片 req=%s",
-            len(frames),
-            req_id,
+            "[interaction_feedback] build_servo_only_pb_payload 得到 %d 片，仅返回首片 req=%s", len(frames), req_id
         )
     return frames[0], req_id
 
@@ -235,7 +228,7 @@ async def _send_servo_moves(
 
 async def maybe_send_listen_feedback(hub: AsrChatHub, device_id: str) -> None:
     """收音开始时：有效人脸则注视，否则左右巡查（2s）；同类动作间隔 ≥5s。"""
-    if not get_asr_voice_auto_reply_enabled() or _face_follow_active():
+    if not get_auto_reply(device_id) or _face_follow_active(device_id):
         return
     dev = str(device_id or "").strip()
     if not dev:
@@ -264,7 +257,7 @@ async def maybe_send_listen_feedback(hub: AsrChatHub, device_id: str) -> None:
 
 async def llm_wait_nod_feedback_loop(hub: AsrChatHub, device_id: str, done: asyncio.Event) -> None:
     """ASR 有效文本进入 LLM 后：每 2s 一次短点头，直至 ``done``。"""
-    if not get_asr_voice_auto_reply_enabled():
+    if not get_auto_reply(device_id):
         return
     dev = str(device_id or "").strip()
     if not dev:
@@ -272,7 +265,7 @@ async def llm_wait_nod_feedback_loop(hub: AsrChatHub, device_id: str, done: asyn
     moves = llm_wait_nod_moves(device_id=dev)
     try:
         while not done.is_set():
-            if not _face_follow_active() and await hub.first_ws(dev):
+            if not _face_follow_active(device_id) and await hub.first_ws(dev):
                 await _send_servo_moves(
                     hub, dev, moves, source="auto_llm_wait_nod", summary=f"等待 LLM 点头（{_LLM_WAIT_NOD_MS}ms）"
                 )

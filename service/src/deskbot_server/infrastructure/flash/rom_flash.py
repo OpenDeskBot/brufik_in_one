@@ -12,9 +12,10 @@ import subprocess
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger("deskbot-server")
 
@@ -96,13 +97,7 @@ def validate_rom_id(rom_id: str) -> str:
 
 
 def list_serial_ports() -> list[dict[str, Any]]:
-    patterns = (
-        "/dev/ttyACM*",
-        "/dev/ttyUSB*",
-        "/dev/tty.usbmodem*",
-        "/dev/cu.usbmodem*",
-        "/dev/cu.usbserial*",
-    )
+    patterns = ("/dev/ttyACM*", "/dev/ttyUSB*", "/dev/tty.usbmodem*", "/dev/cu.usbmodem*", "/dev/cu.usbserial*")
     seen: set[str] = set()
     ports: list[str] = []
     for pattern in patterns:
@@ -131,12 +126,7 @@ def _stat_file(path: Path) -> tuple[int | None, float | None]:
 
 def list_roms() -> list[RomEntry]:
     roms: list[RomEntry] = [
-        RomEntry(
-            id="source",
-            label="从源码编译并烧录（推荐）",
-            kind="source",
-            flash_mode="pio_upload",
-        )
+        RomEntry(id="source", label="从源码编译并烧录（推荐）", kind="source", flash_mode="pio_upload")
     ]
 
     build_files = (
@@ -359,10 +349,7 @@ class FlashManager:
     def free_serial_port(self, port: str) -> None:
         if not Path(port).exists():
             return
-        for cmd, args in (
-            ("lsof", ["-t", port]),
-            ("fuser", ["-k", "-TERM", port]),
-        ):
+        for cmd, args in (("lsof", ["-t", port]), ("fuser", ["-k", "-TERM", port])):
             if not shutil.which(cmd.split()[0]):
                 continue
             try:
@@ -445,12 +432,7 @@ class FlashManager:
             self.serial.stop()
 
         proc = subprocess.Popen(
-            cmd,
-            cwd=str(HARDWARE_DIR),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            cmd, cwd=str(HARDWARE_DIR), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
 
         def _pump() -> None:

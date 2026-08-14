@@ -16,12 +16,6 @@ public:
   /** 主循环泵 pb（ack / attention）。由 pb_runtime 任务调用。 */
   void serviceLoop();
 
-  /* 空闲时头部姿态：TTS 结束后延迟低头；TTS 期间不重复触发。 */
-  void updateAttentionDisplay();
-
-  /** 仅由 pb_runtime_task 消费断线控制事件后调用。 */
-  void onLinkDown();
-
   /** 处理 pb_cancel：中止当前播放并清空执行器队列。 */
   void handleCancel(const pb_model& model);
 
@@ -30,12 +24,6 @@ public:
    * 由 pb_runtime_task 环形缓存到期时调用。
    */
   void dispatchModel(pb_model& model);
-
-  /**
-   * 纯舵机叠层：只改 head，不碰 speaker/display，不改 playing_level / tts_active。
-   * 用于注视/跟随等低优先级舵机，避免取消更高优先级口播。
-   */
-  void dispatchServoOverlay(pb_model& model);
 
 private:
   void applySideEffects(const pb_model& model);
@@ -69,15 +57,6 @@ private:
   int32_t pb_ack_out_buf_ms_ = 0;
   unsigned long pb_last_pb_ack_sent_wall_ms_ = 0;
   bool pb_ack_bypass_throttle_ = false;
-
-  enum DisplayState : uint8_t {
-    DISPLAY_UNINIT = 0,
-    DISPLAY_WAKEUP = 1,
-    DISPLAY_SLEEP = 2,
-  };
-  DisplayState display_state_ = DISPLAY_UNINIT;
-  unsigned long last_should_wake_ms_ = 0;
-  static constexpr unsigned long kIdleEnterDelayMs = 2000;
 };
 
 /** 初始化 PbRuntime 单例（须在 setup_ws_transport 之前）。 */
@@ -95,10 +74,5 @@ PbRuntime* pb_runtime(void);
  */
 bool pb_runtime_enqueue_frame(uint8_t* data, size_t length);
 
-/**
- * ws_transport 通知 ASR 链路已断开。实际 PB 状态清理由 pb_runtime_task 串行执行。
- */
-void pb_runtime_notify_link_down(void);
-
-/** 清空待处理下行帧（断线 / new_session）。 */
+/** 清空待处理下行帧（new_session 等场景）。 */
 void pb_runtime_discard_rx_queue(void);

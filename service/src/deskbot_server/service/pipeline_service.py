@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-
 from deskbot_server.utils.singleton import SingletonMeta
 from deskbot_server.ws.device_pipeline import DevicePipelineBroker
 

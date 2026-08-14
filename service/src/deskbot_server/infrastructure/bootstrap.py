@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from deskbot_server.model.settings import AppSettings
 from deskbot_server.infrastructure.asr.funasr import FunAsrAdapter
 from deskbot_server.infrastructure.llm.openai_compat import OpenAiLlmAdapter
 from deskbot_server.infrastructure.tts.factory import build_tts_adapter
+from deskbot_server.model.settings import AppSettings
 from deskbot_server.service.application.chat_service import ChatService
 from deskbot_server.service.asr_service import AsrService
 from deskbot_server.service.llm_service import LlmService

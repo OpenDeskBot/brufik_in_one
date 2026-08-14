@@ -107,15 +107,11 @@
         <button type="button" class="device-modal-close" aria-label="关闭">&times;</button>
       </div>
       <div class="device-modal-body">
-        <p class="muted" style="margin-top:0;">输入设备屏幕上的 <code class="mono">device_id</code> 与 <code class="mono">Pin Code</code> 完成绑定（设备须在线）。</p>
+        <p class="muted" style="margin-top:0;">输入设备屏幕上的 <code class="mono">device_id</code> 完成绑定（设备须在线）。</p>
         <form id="deviceBindForm" class="form-row" style="margin-top:14px;flex-wrap:wrap;gap:10px;">
           <div style="flex:1;min-width:180px;">
             <label for="deviceBindInput">device_id</label>
-            <input id="deviceBindInput" class="agent-input" placeholder="例如 deskbot_abc123" required />
-          </div>
-          <div style="flex:0;min-width:120px;">
-            <label for="deviceBindPinInput">Pin Code</label>
-            <input id="deviceBindPinInput" class="agent-input" placeholder="例如 1234" inputmode="numeric" pattern="[1-9][0-9]{3}" maxlength="4" required />
+            <input id="deviceBindInput" class="agent-input" placeholder="例如 brfk_aabbccddeeff1234" required />
           </div>
           <div style="flex:0;">
             <label>&nbsp;</label>

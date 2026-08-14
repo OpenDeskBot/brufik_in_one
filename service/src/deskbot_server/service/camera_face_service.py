@@ -7,9 +7,10 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import numpy as np
 
@@ -190,10 +191,7 @@ def _ensure_worker_detector(opts: dict[str, Any]):
 
 def _mp_recognize(image: bytes, opts: dict[str, Any]) -> list[dict[str, Any]]:
     """进程池入口：JPEG → [{landmarks, embedding, ...}, ...]。"""
-    from deskbot_server.vision.face_identity import (
-        attach_descriptors_to_faces,
-        deduplicate_overlapping_faces,
-    )
+    from deskbot_server.vision.face_identity import attach_descriptors_to_faces, deduplicate_overlapping_faces
 
     detector = _ensure_worker_detector(opts)
     faces = detector.detect_faces(image)
@@ -303,11 +301,7 @@ class CameraFaceService(metaclass=SingletonMeta):
     # ----- 档案：embedding 查 / 写 -----
 
     def find_face_by_embedding(
-        self,
-        embedding: list[float],
-        *,
-        device_id: str | None = None,
-        threshold: float | None = None,
+        self, embedding: list[float], *, device_id: str | None = None, threshold: float | None = None
     ) -> dict[str, Any] | None:
         """用 embedding 在 ``face_profiles`` 中查找匹配人名。"""
         from deskbot_server.dao.camera_face_config_store import load_camera_face_cfg_file
@@ -334,7 +328,7 @@ class CameraFaceService(metaclass=SingletonMeta):
             return None
         return {
             "name": str(profile["name"]),
-            "person_id": int(profile["person_id"]),
+            "id": int(profile["id"]),
             "score": round(float(score), 3),
             "descriptor_kind": str(
                 profile.get("descriptor_kind") or ("embedding" if is_embedding_vector(vec) else "geometry")
@@ -342,15 +336,11 @@ class CameraFaceService(metaclass=SingletonMeta):
         }
 
     def register_face_embedding(
-        self,
-        name: str,
-        embedding: list[float],
-        *,
-        device_id: str | None = None,
+        self, name: str, embedding: list[float], *, device_id: str | None = None
     ) -> dict[str, Any]:
         """将 embedding 写入 ``face_profiles``，并刷新 tracker。"""
         from deskbot_server.dao.camera_face_config_store import load_camera_face_cfg_file
-        from deskbot_server.dao.face_profiles_store import load_face_profiles, save_face_profiles, upsert_profile
+        from deskbot_server.dao.face_profiles_store import upsert_profile
         from deskbot_server.service.application.face_tracker import reload_all_trackers
 
         name = str(name or "").strip()
@@ -365,12 +355,10 @@ class CameraFaceService(metaclass=SingletonMeta):
 
         cfg = load_camera_face_cfg_file(device_id=device_id) or {}
         merge_thr = float(cfg.get("identity_similarity_threshold", self.runtime.identity_similarity_threshold))
-        profiles = load_face_profiles(device_id=device_id)
-        profile = upsert_profile(profiles, name=name, descriptor=vec, merge_threshold=merge_thr)
-        save_face_profiles(profiles, device_id=device_id)
+        profile = upsert_profile(str(device_id or ""), name=name, descriptor=vec, merge_threshold=merge_thr)
         reload_all_trackers()
         return {
-            "person_id": int(profile["person_id"]),
+            "id": int(profile["id"]),
             "name": str(profile["name"]),
             "descriptor_kind": str(profile.get("descriptor_kind") or ""),
         }
@@ -417,10 +405,7 @@ class CameraFaceService(metaclass=SingletonMeta):
                 await callback(device_id, frame_bytes, payload)
             except Exception as exc:
                 logger.warning(
-                    "[CameraFaceService] 视频流回调失败 conn_id=%s device_id=%s: %s",
-                    conn_id,
-                    device_id,
-                    exc,
+                    "[CameraFaceService] 视频流回调失败 conn_id=%s device_id=%s: %s", conn_id, device_id, exc
                 )
 
     async def capture_frame_async(self, device_id: str, *, timeout_s: float = 4.0) -> dict[str, Any]:
@@ -450,12 +435,11 @@ class CameraFaceService(metaclass=SingletonMeta):
         await self.subscribe_video_stream(conn_id, _on_frame, device_id=dev)
         try:
             row = await asyncio.wait_for(fut, timeout=max(0.1, float(timeout_s)))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {
                 "ok": False,
                 "error": (
-                    f"等待相机帧超时（{timeout_s:.1f}s）；"
-                    "请确认设备已连接且相机上行已开启（收音/播报期间可能暂停上传）"
+                    f"等待相机帧超时（{timeout_s:.1f}s）；请确认设备已连接且相机上行已开启（收音/播报期间可能暂停上传）"
                 ),
             }
         finally:
@@ -496,12 +480,7 @@ class CameraFaceService(metaclass=SingletonMeta):
     # ----- 上行帧处理 -----
 
     async def process(
-        self,
-        device_id: str,
-        frame_bytes: bytes,
-        *,
-        frame_source: str = "asr_chat",
-        log_channel: str = "/asr_chat",
+        self, device_id: str, frame_bytes: bytes, *, frame_source: str = "asr_chat", log_channel: str = "/asr_chat"
     ) -> None:
         """读到一帧 JPEG：识别 → 跟踪 / 缓存 / 推流。"""
         self._note_loop()
@@ -518,31 +497,20 @@ class CameraFaceService(metaclass=SingletonMeta):
         prev = self._inflight.get(device_id)
         if prev is not None and not prev.done():
             logger.info(
-                "[camera] device_id=%s bytes=%d accepted=false reason=busy channel=%s",
-                device_id,
-                nbytes,
-                log_channel,
+                "[camera] device_id=%s bytes=%d accepted=false reason=busy channel=%s", device_id, nbytes, log_channel
             )
             return
 
         task = asyncio.create_task(
             self._detect_then_post(
-                device_id=device_id,
-                frame_bytes=frame_bytes,
-                frame_source=frame_source,
-                log_channel=log_channel,
+                device_id=device_id, frame_bytes=frame_bytes, frame_source=frame_source, log_channel=log_channel
             ),
             name=f"camera_face:{device_id}",
         )
         self._inflight[device_id] = task
 
     async def _detect_then_post(
-        self,
-        *,
-        device_id: str,
-        frame_bytes: bytes,
-        frame_source: str,
-        log_channel: str,
+        self, *, device_id: str, frame_bytes: bytes, frame_source: str, log_channel: str
     ) -> None:
         from deskbot_server.utils.concurrency import face_infer_slot
         from deskbot_server.vision.geometry import FACE_FRAME_HEIGHT, FACE_FRAME_WIDTH
@@ -580,8 +548,7 @@ class CameraFaceService(metaclass=SingletonMeta):
         n_faces = len(faces or [])
         self._frame_count[device_id] = self._frame_count.get(device_id, 0) + 1
         logger.info(
-            "[camera] device_id=%s bytes=%d accepted=true infer_ms=%.1f faces=%d "
-            "status=ok channel=%s source=%s",
+            "[camera] device_id=%s bytes=%d accepted=true infer_ms=%.1f faces=%d status=ok channel=%s source=%s",
             device_id,
             nbytes,
             infer_ms,
@@ -598,12 +565,7 @@ class CameraFaceService(metaclass=SingletonMeta):
             log_channel=log_channel,
         )
 
-    def _preview_meta(
-        self,
-        *,
-        frame_source: str,
-        detect: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    def _preview_meta(self, *, frame_source: str, detect: dict[str, Any] | None = None) -> dict[str, Any]:
         from deskbot_server.vision.geometry import FACE_FRAME_HEIGHT, FACE_FRAME_WIDTH
 
         runtime = self.runtime
@@ -633,21 +595,12 @@ class CameraFaceService(metaclass=SingletonMeta):
         }
 
     async def _after_recognize(
-        self,
-        *,
-        device_id: str,
-        frame_bytes: bytes,
-        faces: list[dict[str, Any]],
-        frame_source: str,
-        log_channel: str,
+        self, *, device_id: str, frame_bytes: bytes, faces: list[dict[str, Any]], frame_source: str, log_channel: str
     ) -> None:
         from deskbot_server.service.application.camera_frame import analyze_face_detections
-        from deskbot_server.service.application.face_snapshot_cache import update_device_faces
-        from deskbot_server.service.application.interaction_feedback import (
-            clear_face_analysis,
-            note_face_analysis,
-        )
         from deskbot_server.service.application.camera_servo_follower import camera_servo_follower_tick
+        from deskbot_server.service.application.face_snapshot_cache import update_device_faces
+        from deskbot_server.service.application.interaction_feedback import clear_face_analysis, note_face_analysis
 
         detect: dict[str, Any] | None = None
         try:
@@ -657,11 +610,7 @@ class CameraFaceService(metaclass=SingletonMeta):
             detect = analyze_face_detections(tagged)
         except Exception as exc:
             logger.warning("[%s] 人脸后处理失败 device_id=%s: %s", log_channel, device_id, exc)
-            await self.try_emit_video_frame(
-                device_id,
-                frame_bytes,
-                meta=self._preview_meta(frame_source=frame_source),
-            )
+            await self.try_emit_video_frame(device_id, frame_bytes, meta=self._preview_meta(frame_source=frame_source))
             return
 
         if not detect or not detect.get("landmarks"):
@@ -672,11 +621,7 @@ class CameraFaceService(metaclass=SingletonMeta):
                 LiveService().on_face_lost(device_id)
             except Exception:
                 pass
-            await self.try_emit_video_frame(
-                device_id,
-                frame_bytes,
-                meta=self._preview_meta(frame_source=frame_source),
-            )
+            await self.try_emit_video_frame(device_id, frame_bytes, meta=self._preview_meta(frame_source=frame_source))
             return
 
         note_face_analysis(device_id, detect)
@@ -696,9 +641,7 @@ class CameraFaceService(metaclass=SingletonMeta):
             logger.exception("[camera_face] 人脸跟随下发失败 device_id=%s", device_id)
         # 正脸 / landmarks 等信息随 JPEG 经 try_emit 推给 /camera_view，不再单独 broadcast face_pos
         await self.try_emit_video_frame(
-            device_id,
-            frame_bytes,
-            meta=self._preview_meta(frame_source=frame_source, detect=detect),
+            device_id, frame_bytes, meta=self._preview_meta(frame_source=frame_source, detect=detect)
         )
 
 

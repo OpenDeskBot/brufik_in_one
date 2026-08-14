@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+
 import numpy as np
 
 from deskbot_server.vision.geometry import kps5_from_landmarks
@@ -15,7 +16,7 @@ FACE_EMBEDDING_DIM = 512
 _LEGACY_GEOMETRIC_DIM = 9
 
 _engine_lock = threading.Lock()
-_engine: "FaceEmbeddingEngine" | None = None
+_engine: FaceEmbeddingEngine | None = None
 _engine_init_error: str | None = None
 
 

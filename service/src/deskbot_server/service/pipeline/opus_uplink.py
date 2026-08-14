@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import struct
 
-
 import opuslib_next
 
 _OPUS_LP_HDR = struct.Struct("!H")

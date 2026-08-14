@@ -21,19 +21,11 @@ async def asr_chat(websocket: WebSocket) -> None:
     st = websocket.state
     ws = st.ws
     device_id = st.device_id
-    pin_code = st.pin_code
     if device_id:
         await WsUtils.keep_only_one_link(device_id, ASR_CHAT_PATH, ws)
     try:
         await handle_asr_chat(
-            ws,
-            rt.chat,
-            rt.audio_cfg,
-            device_id,
-            rt.registry,
-            rt.device_pipeline_broker,
-            rt.asr_chat_hub,
-            pin_code=pin_code,
+            ws, rt.chat, rt.audio_cfg, device_id, rt.registry, rt.device_pipeline_broker, rt.asr_chat_hub
         )
     finally:
         if device_id:

@@ -12,8 +12,7 @@ from fastapi import APIRouter, Request
 
 from deskbot_server.auth.debug_ws_token import issue_debug_ws_token
 from deskbot_server.auth.permissions import RequireDeveloper, current_user_is_developer
-from deskbot_server.service.user_service import UserService
-from deskbot_server.constants import CAMERA_FACE_CFG_FILE, FACE_PROFILES_FILE, SCENE_PLAYBOOKS_FILE, USER_MEMORY_FILE
+from deskbot_server.constants import CAMERA_FACE_CFG_FILE, SCENE_PLAYBOOKS_FILE, USER_MEMORY_FILE
 from deskbot_server.dao.camera_face_config_store import (
     load_camera_face_cfg_file,
     normalize_camera_face_document,
@@ -31,9 +30,11 @@ from deskbot_server.dao.scene_playbooks_store import (
 )
 from deskbot_server.infrastructure.llm.utils import llm_pb_scenes_prompt_appendix, parse_llm_reply
 from deskbot_server.service.application.face_registration import register_face_for_device
+from deskbot_server.service.user_service import UserService
 from deskbot_server.utils.device_data import load_llm_system_prompt, resolve_json_path, save_llm_system_prompt
 from deskbot_server.utils.util import pcm_to_wav_bytes
 from deskbot_server.vision.camera_face_tune import apply_camera_face_tune
+from deskbot_server.web.deps import RequireUser, load_session_user
 from deskbot_server.web.helpers import (
     ALLOWED_LLM_ROLES,
     beijing_time_str,
@@ -45,14 +46,11 @@ from deskbot_server.web.helpers import (
 )
 from deskbot_server.web.session_device import get_current_device_id
 from deskbot_server.web.urls import flash, url_for
-from deskbot_server.web.deps import RequireUser, load_session_user
 from deskbot_server.web.view_helpers import (
     ViewAPIRoute,
     convert_view_result,
     files_get,
-    form_get,
     get_json,
-    is_json_request,
     jsonify,
     redirect,
     render_template,
@@ -210,7 +208,7 @@ def debug_devices(request: Request, user: RequireUser):
             "extra": [],
         }
     }
-    
+
     owned = UserService().list_devices(user.id)
     owned_device_rows = [{"device_id": d.device_id, "display_name": d.display_name or d.device_id} for d in owned]
     current = get_current_device_id(request)
@@ -220,7 +218,8 @@ def debug_devices(request: Request, user: RequireUser):
 
     debug_ws = issue_debug_ws_token(user.id)
 
-    return render_template(request, 
+    return render_template(
+        request,
         "debug_devices.html",
         active_nav="devices",
         device_pipeline_ws_base=device_pipeline_ws_base(),
@@ -251,8 +250,12 @@ def debug_tts(request: Request, user: RequireUser):
         "sample_rate": cfg.sample_rate,
         "audio_format": cfg.audio_format,
     }
-    return render_template(request, 
-        "debug_tts.html", active_nav="tts", initial_config=initial, speaker_presets=list_doubao_tts_speaker_presets()
+    return render_template(
+        request,
+        "debug_tts.html",
+        active_nav="tts",
+        initial_config=initial,
+        speaker_presets=list_doubao_tts_speaker_presets(),
     )
 
 
@@ -412,7 +415,6 @@ def api_doubao_tts_synthesize(request: Request, user: RequireUser):
 @router.post("/api/doubao_tts/voice-clone")
 def api_doubao_tts_voice_clone(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.voice_clone import clone_doubao_voice, custom_speaker_id_from_name
-
     from deskbot_server.web.view_helpers import read_upload_bytes
 
     upload = files_get(request, "audio") or files_get(request, "file")
@@ -492,7 +494,8 @@ def debug_llm(request: Request, user: RequireUser):
         current = owned[0].device_id if owned else None
     initial_prompt = load_llm_system_prompt(current) if current else load_llm_system_prompt()
 
-    return render_template(request, 
+    return render_template(
+        request,
         "debug_llm.html",
         active_nav="llm",
         llm_model=llm_cfg.get("model_name", ""),
@@ -511,7 +514,8 @@ def debug_simulation(request: Request, user: RequireUser):
 
     cfg = load_config()
     tts = cfg.get("tts") or {}
-    return render_template(request, 
+    return render_template(
+        request,
         "debug_simulation.html",
         active_nav="sim",
         default_spk=int(tts.get("spk_id", 0)),
@@ -525,8 +529,8 @@ def debug_simulation(request: Request, user: RequireUser):
 @router.post("/api/tts/phoneme_tts")
 def api_tts_phoneme_tts(request: Request, user: RequireUser):
     """豆包 TTS + 音素分片，供仿真调试等页面使用。"""
-    from deskbot_server.model.settings import AppSettings
     from deskbot_server.infrastructure.tts.factory import build_tts_adapter
+    from deskbot_server.model.settings import AppSettings
 
     payload = get_json(request, force=True, silent=True) or {}
     text = str(payload.get("text") or "").strip()
@@ -908,13 +912,12 @@ def api_face_profiles_get(request: Request, user: RequireUser):
     device_id, err = _require_device_id(request, user)
     if err:
         return err
-    cfg_path = resolve_json_path(FACE_PROFILES_FILE, device_id)
     try:
         profiles = load_face_profiles(device_id=device_id)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         return jsonify({"ok": False, "error": str(exc), "t": time.time()}), 500
     return jsonify(
-        {"ok": True, "profiles": profiles, "file": os.path.basename(cfg_path), "device_id": device_id, "t": time.time()}
+        {"ok": True, "profiles": profiles, "device_id": device_id, "t": time.time()}
     )
 
 
@@ -946,7 +949,6 @@ def api_face_profiles_register(request: Request, user: RequireUser):
         {
             "ok": True,
             "profile": profile,
-            "file": os.path.basename(resolve_json_path(FACE_PROFILES_FILE, device_id)),
             "device_id": device_id,
             "hint": (
                 "档案已写入（InsightFace 512 维）；请 ESP32 重连 /asr_chat 后正对镜头识别。旧几何档案需重新「保存人名」"

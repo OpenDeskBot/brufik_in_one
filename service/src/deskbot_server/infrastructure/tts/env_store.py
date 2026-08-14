@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 from deskbot_server.infrastructure.tts.doubao import _is_masked_secret
 from deskbot_server.utils.env import load_dotenv

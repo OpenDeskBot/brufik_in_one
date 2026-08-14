@@ -39,6 +39,9 @@ static QueueHandle_t s_tx_q = nullptr;
 static TaskHandle_t s_task = nullptr;
 static bool s_boot_connect_sent = false;
 static unsigned long s_connect_attempt_ms = 0;
+static uint8_t s_connect_fail_count = 0;
+static constexpr unsigned long RECONNECT_MIN_MS = 500;
+static constexpr unsigned long RECONNECT_MAX_MS = 60000;
 
 static constexpr UBaseType_t kTxDepth = 64;
 /* WebSockets 收发、ArduinoJson 解析都在 ws_transport 任务。 */
@@ -142,11 +145,10 @@ bool setup_ws_transport(void) {
   }
   if (base_url[0] != '\0' && parse_ws_proto(base_url, server_ws_proto)) {
     if (server_ws_proto.path[0] == '\0') {
-      server_ws_path = String("/asr_chat?device_id=") + get_device_id() + "&pin_code=" +
-                       nvs_get_pin_code();
+      server_ws_path = String("/asr_chat?device_id=") + get_device_id() + "&version=" + VERSION;
     } else {
       server_ws_path = String(server_ws_proto.path) + "/asr_chat?device_id=" + get_device_id() +
-                       "&pin_code=" + nvs_get_pin_code();
+                       "&version=" + VERSION;
     }
     log_info("[WS_TRANSPORT] server %s://%s:%u path=%s", server_ws_proto.is_wss ? "wss" : "ws",
              server_ws_proto.host, (unsigned)server_ws_proto.port, server_ws_path.c_str());
@@ -160,6 +162,7 @@ bool setup_ws_transport(void) {
   ws_client.onEvent([](WStype_t type, uint8_t* payload, size_t length) {
     if (type == WStype_CONNECTED) {
       ws_state.store(static_cast<int>(WsState::kConnected), std::memory_order_release);
+      s_connect_fail_count = 0;
       s_app_ready.store(true, std::memory_order_release);
       s_connect_attempt_ms = 0;
       mic_set_ws_state(kMicWsOk);
@@ -180,7 +183,6 @@ bool setup_ws_transport(void) {
       s_app_ready.store(false, std::memory_order_release);
       s_connect_attempt_ms = 0;
       mic_set_ws_state(kMicWsError);
-      pb_runtime_notify_link_down();
       log_warn("[WS_TRANSPORT] disconnected");
       return;
     }
@@ -277,16 +279,25 @@ void ws_transport_ensure_connected(void) {
 
   ws_client.disconnect();
   ws_transport_new_session();
-  log_warn("[WS_TRANSPORT] connect %s://%s:%u%s", server_ws_proto.is_wss ? "wss" : "ws",
-           server_ws_proto.host, (unsigned)server_ws_proto.port, server_ws_path.c_str());
+  /* 指数退避：500ms → 1s → 2s → 4s → 8s → 16s → 32s → 60s */
+  if (s_connect_fail_count < 8) {
+    s_connect_fail_count++;
+  }
+  unsigned long interval = RECONNECT_MIN_MS << (s_connect_fail_count - 1);
+  if (interval > RECONNECT_MAX_MS) {
+    interval = RECONNECT_MAX_MS;
+  }
+  log_warn("[WS_TRANSPORT] connect %s://%s:%u%s (retry #%u, backoff %lus)",
+           server_ws_proto.is_wss ? "wss" : "ws",
+           server_ws_proto.host, (unsigned)server_ws_proto.port, server_ws_path.c_str(),
+           (unsigned)s_connect_fail_count, (unsigned)(interval / 1000));
   /*
    * 必须在 begin 前设好 interval。库 loop() 里用
    * (millis() - _lastConnectionFail) < _reconnectInterval 抑制重连；
    * begin() 会把 _lastConnectionFail 置 0，若 interval 设成「几天」则
    * (millis()-0) 一直小于 interval，TCP 永远不会发起。
-   * 上层已用 Connecting 超时做重连节奏，这里用 500ms 与原先 deskbot_ws_client_begin 一致。
    */
-  ws_client.setReconnectInterval(500);
+  ws_client.setReconnectInterval(interval);
   if (server_ws_proto.is_wss) {
     ws_client.beginSSL(server_ws_proto.host, server_ws_proto.port, server_ws_path.c_str());
   } else {
@@ -318,7 +329,6 @@ void ws_transport_on_link_down(const char* why) {
   s_app_ready.store(false, std::memory_order_release);
   s_connect_attempt_ms = 0;
   mic_set_ws_state(kMicWsError);
-  pb_runtime_notify_link_down();
 }
 
 void ws_transport_on_link_up(void) {
@@ -331,8 +341,8 @@ void ws_transport_new_session(void) {
   s_ws_session++;
   s_app_ready.store(false, std::memory_order_release);
   mic_set_ws_state(kMicWsError);
-  pb_runtime_notify_link_down();
-  log_info("[WS_TRANSPORT] new session=%u (PB state will be dropped)", (unsigned)s_ws_session);
+  pb_runtime_discard_rx_queue();
+  log_info("[WS_TRANSPORT] new session=%u (PB rx queue cleared)", (unsigned)s_ws_session);
 }
 
 bool ws_transport_enqueue_state(const char* json) {

@@ -82,15 +82,13 @@ def _follow_mode_label(mode: str) -> str:
     return labels.get(mode, mode or "关闭")
 
 
-def build_llm_user_message(
-    user_text: str, *, device_id: str | None = None, device_context: str | None = None
-) -> str:
+def build_llm_user_message(user_text: str, *, device_id: str | None = None, device_context: str | None = None) -> str:
     """按约定格式组装 LLM ``user`` 消息正文。"""
     sx, sy = parse_servo_angles_from_pb_ack(device_context)
     lines: list[str] = [
         "[机器人传感器信息:",
         f"水平舵机角度: {sx}, 垂直舵机角度: {sy}",
-        f"摄像头跟随模式: {_follow_mode_label(get_camera_servo_auto_mode())}",
+        f"摄像头跟随模式: {_follow_mode_label(get_camera_servo_auto_mode(device_id or ''))}",
         "图像识别:",
     ]
     dev = str(device_id or "").strip()

@@ -1,4 +1,4 @@
-"""按设备隔离 ``data/{device_id}_{pin_code}/`` 下的配置与模板文件。"""
+"""按设备隔离 ``data/{device_id}/`` 下的配置与模板文件。"""
 
 from __future__ import annotations
 
@@ -7,16 +7,12 @@ import os
 import re
 from pathlib import Path
 
-
 from deskbot_server.utils.paths import DATA_DIR
-from deskbot_server.utils.pin_code import device_storage_dirname, validate_pin_code
-from deskbot_server.ws.device_pin import resolve_pin_for_storage
 
 logger = logging.getLogger("deskbot-server")
 
 LLM_SYSTEM_FILENAME = "llm_system.txt"
 _DEVICE_ID_SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
-_STORAGE_DIR_SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 # 所有设备共用 ``data/global/``，不再复制到设备目录。
 SHARED_CONFIG_NAMES = frozenset({"deskbot-face.json", "camera_face.json", LLM_SYSTEM_FILENAME})
@@ -34,19 +30,13 @@ def is_shared_config_basename(name: str) -> bool:
     return name in SHARED_CONFIG_NAMES
 
 
-def device_data_dir(device_id: str, pin_code: str | None = None) -> Path:
+def device_data_dir(device_id: str) -> Path:
     did = _normalize_device_id(device_id)
     if not did:
         raise ValueError("device_id required")
     if not _DEVICE_ID_SAFE.match(did):
         raise ValueError(f"invalid device_id: {did!r}")
-    pin = str(pin_code or "").strip() if pin_code is not None else (resolve_pin_for_storage(did) or "")
-    if not validate_pin_code(pin):
-        raise ValueError(f"pin_code required for device data dir device_id={did!r}")
-    dirname = device_storage_dirname(did, pin)
-    if not _STORAGE_DIR_SAFE.match(dirname):
-        raise ValueError(f"invalid device storage dirname: {dirname!r}")
-    return DATA_DIR / dirname
+    return DATA_DIR / did
 
 
 def global_llm_system_path() -> Path:
@@ -68,15 +58,15 @@ def list_data_seed_files() -> list[Path]:
     return list_data_json_files()
 
 
-def resolve_json_path(global_path: str, device_id: str | None = None, pin_code: str | None = None) -> str:
-    """共用配置解析到 ``data/global/``；其余有 ``device_id`` 时解析到 ``data/{id}_{pin}/``。"""
+def resolve_json_path(global_path: str, device_id: str | None = None) -> str:
+    """共用配置解析到 ``data/global/``；其余有 ``device_id`` 时解析到 ``data/{id}/``。"""
     base = os.path.basename(global_path)
     if is_shared_config_basename(base):
         return str(global_config_dir() / base)
     did = _normalize_device_id(device_id)
     if not did:
         return global_path
-    return str(device_data_dir(did, pin_code) / base)
+    return str(device_data_dir(did) / base)
 
 
 def load_llm_system_prompt(device_id: str | None = None) -> str:
@@ -102,13 +92,12 @@ def save_llm_system_prompt(content: str, *, device_id: str = "") -> Path:
     return path
 
 
-def ensure_device_data_initialized(device_id: str, pin_code: str) -> bool:
+def ensure_device_data_initialized(device_id: str) -> bool:
     """创建设备目录并从 ``data/`` 复制缺失模板；返回是否新复制了文件。"""
     did = _normalize_device_id(device_id)
-    pin = str(pin_code or "").strip()
-    if not did or not validate_pin_code(pin):
+    if not did:
         return False
-    ddir = device_data_dir(did, pin)
+    ddir = device_data_dir(did)
     ddir.mkdir(parents=True, exist_ok=True)
     copied = 0
     for src in list_data_seed_files():
@@ -120,5 +109,5 @@ def ensure_device_data_initialized(device_id: str, pin_code: str) -> bool:
         shutil.copy2(src, dst)
         copied += 1
     if copied:
-        logger.info("[device_data] 初始化 device_id=%s pin=%s dir=%s copied=%d", did, pin, ddir, copied)
+        logger.info("[device_data] 初始化 device_id=%s dir=%s copied=%d", did, ddir, copied)
     return copied > 0

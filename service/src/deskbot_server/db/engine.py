@@ -4,8 +4,9 @@ import os
 import threading
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from deskbot_server.utils.paths import DATA_DIR
 
@@ -40,9 +41,7 @@ def init_engine(db_path: Path | None = None):
         _engine = create_engine(
             url,
             connect_args={"check_same_thread": False, "timeout": 30},
-            pool_pre_ping=True,
-            pool_size=5,
-            max_overflow=10,
+            poolclass=NullPool,
         )
 
         @event.listens_for(_engine, "connect")

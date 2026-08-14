@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request
 
 from deskbot_server.auth.session_user import SessionUser
-from deskbot_server.dao.user_dao import UserDao
+from deskbot_server.service.user_service import UserService
 
 
 def load_session_user(request: Request) -> SessionUser | None:
@@ -20,7 +20,7 @@ def load_session_user(request: Request) -> SessionUser | None:
     if not uid:
         request.state.current_user = False
         return None
-    db_user = UserDao().get_by_id(str(uid))
+    db_user = UserService().get_user(str(uid))
     if db_user is None or not db_user.is_active:
         request.session.pop("user_id", None)
         request.state.current_user = False

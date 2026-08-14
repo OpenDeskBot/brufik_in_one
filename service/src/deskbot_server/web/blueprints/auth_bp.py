@@ -29,11 +29,7 @@ def _safe_next_url(raw: str | None) -> str:
 def login(request: Request):
     if load_session_user(request) is not None:
         return redirect(url_for("app2c.home"))
-    return render_template(
-        request,
-        "auth/login.html",
-        next_url=_safe_next_url(request.query_params.get("next")),
-    )
+    return render_template(request, "auth/login.html", next_url=_safe_next_url(request.query_params.get("next")))
 
 
 @router.post("/login")

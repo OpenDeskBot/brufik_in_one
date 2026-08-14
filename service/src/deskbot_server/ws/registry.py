@@ -7,26 +7,20 @@ import time
 from typing import Any
 
 from deskbot_server.utils.util import _format_ts
-from deskbot_server.ws.device_pin import clear_online_pin, set_online_pin
+from deskbot_server.ws.device_pin import clear_device_online, set_device_online
 
 logger = logging.getLogger("deskbot-server")
 
 
 class DeviceRegistry:
-    """维护当前通过 WebSocket 接入的设备会话，是 `/api/devices` 的唯一真源。
-
-    - 每个设备一条记录：device_id + 在线状态 + 各通道（asr_chat / face_pos / device_pipeline）
-      当前的活跃连接数 + 最近一次事件时间。
-    - 生产者握手时调用 ``connect``，断开时调用 ``disconnect``；订阅者不入库。
-    - 仅保留内存态，没有持久化（重启 deskbot-server 即清空）。
-    """
+    """维护当前通过 WebSocket 接入的设备会话，是 `/api/devices` 的唯一真源。"""
 
     def __init__(self) -> None:
         self._devices: dict = {}
         self._ws_to_key: dict = {}
         self._lock = asyncio.Lock()
 
-    async def connect(self, device_id: str, channel: str, ws, *, pin_code: str | None = None) -> dict:
+    async def connect(self, device_id: str, channel: str, ws) -> dict:
         if not device_id:
             return {}
         async with self._lock:
@@ -42,8 +36,6 @@ class DeviceRegistry:
                     "total_connections": 0,
                 }
                 self._devices[device_id] = dev
-            if pin_code:
-                dev["pin_code"] = pin_code
             chs = dev.setdefault("channels", {})
             chs[channel] = int(chs.get(channel) or 0) + 1
             dev["last_seen_ts"] = now
@@ -53,10 +45,8 @@ class DeviceRegistry:
             self._ws_to_key[id(ws)] = (device_id, channel)
             snapshot_ch = dict(chs)
             total_devices = len(self._devices)
-            stored_pin = str(dev.get("pin_code") or pin_code or "").strip() or None
             dev_snapshot = dict(dev)
-        if stored_pin:
-            set_online_pin(device_id, stored_pin)
+        set_device_online(device_id)
         logger.info(
             "[DeviceRegistry] %s device_id=%s channel=%s channels=%s 设备表容量=%d",
             "注册新设备" if is_new else "复用已注册设备",
@@ -65,24 +55,14 @@ class DeviceRegistry:
             snapshot_ch,
             total_devices,
         )
-        from deskbot_server.service.user_service import UserService
         from deskbot_server.utils.device_data import ensure_device_data_initialized
 
         try:
-            if stored_pin:
-                await asyncio.to_thread(UserService().sync_device_pin_if_missing, device_id, stored_pin)
-                initialized = await asyncio.to_thread(ensure_device_data_initialized, device_id, stored_pin)
-            else:
-                initialized = False
+            initialized = await asyncio.to_thread(ensure_device_data_initialized, device_id)
             if initialized:
-                logger.info("[DeviceRegistry] 已初始化设备数据目录 device_id=%s pin=%s", device_id, stored_pin)
+                logger.info("[DeviceRegistry] 已初始化设备数据目录 device_id=%s", device_id)
         except Exception as exc:
-            logger.warning(
-                "[DeviceRegistry] 初始化设备数据目录失败 device_id=%s pin=%s err=%s",
-                device_id,
-                stored_pin,
-                exc,
-            )
+            logger.warning("[DeviceRegistry] 初始化设备数据目录失败 device_id=%s err=%s", device_id, exc)
         return dev_snapshot
 
     async def disconnect(self, ws) -> dict | None:
@@ -107,7 +87,7 @@ class DeviceRegistry:
             snapshot_ch = dict(chs)
             still_online = dev["online"]
         if not still_online:
-            clear_online_pin(device_id)
+            clear_device_online(device_id)
         logger.info(
             "[DeviceRegistry] 注销 device_id=%s channel=%s 剩余通道=%s online=%s",
             device_id,
@@ -118,7 +98,6 @@ class DeviceRegistry:
         return dict(dev)
 
     async def touch(self, device_id: str, status: str | None = None) -> None:
-        """`/asr_chat` 每完成一轮流水线时调用，刷新最后状态与时间。"""
         if not device_id:
             return
         async with self._lock:
@@ -133,7 +112,6 @@ class DeviceRegistry:
             dev["event_count"] = int(dev.get("event_count") or 0) + 1
 
     async def record_pb_ack(self, device_id: str, ack: dict[str, Any]) -> None:
-        """保存该设备最近一次上行的 ``pb_ack``（内存态，供 LLM 与调试页使用）。"""
         if not device_id or not isinstance(ack, dict):
             return
         from deskbot_server.ws.pb_ack_waiter import pb_ack_gate
@@ -150,7 +128,6 @@ class DeviceRegistry:
             dev["last_pb_ack_mono"] = time.monotonic()
 
     async def pb_ack_llm_context(self, device_id: str | None) -> str | None:
-        """返回该设备最近一次 ``pb_ack`` 的紧凑 JSON 字符串；无则 ``None``。"""
         if not device_id:
             return None
         async with self._lock:

@@ -44,7 +44,7 @@ const char* get_device_id();
 String json_escape(const String& raw);
 
 /**
- * 当前云服务器完整 WS URL（NVS active / builtin + ``/asr_chat?device_id=&pin_code=``）。
+ * 当前云服务器完整 WS URL（NVS active / builtin + ``/asr_chat?device_id=&version=``）。
  * 未配置时返回空串。返回值指向静态缓冲，下次调用会覆盖。
  */
 const char* get_server_ws_url();

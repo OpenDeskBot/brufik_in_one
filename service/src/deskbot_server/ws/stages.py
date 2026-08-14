@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 async def _emit_stage(
     websocket,
-    dp_broker: "DevicePipelineBroker" | None,
+    dp_broker: DevicePipelineBroker | None,
     device_id: str | None,
     request_id: str | None,
     stage: str,

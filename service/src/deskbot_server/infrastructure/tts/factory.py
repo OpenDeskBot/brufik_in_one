@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from deskbot_server.ports.tts import TtsPort
-from deskbot_server.model.settings import AppSettings
 from deskbot_server.infrastructure.tts.doubao_phoneme import DoubaoPhonemeTtsAdapter
+from deskbot_server.model.settings import AppSettings
+from deskbot_server.ports.tts import TtsPort
 
 logger = logging.getLogger("deskbot-server")
 

@@ -90,7 +90,7 @@ class PbAckGate:
                     return False
                 try:
                     await asyncio.wait_for(st.cond.wait(), timeout=remaining)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(
                         "[pb_ack] 等待超时 device_id=%s req=%s need_idx>=%s last_idx=%s",
                         device_id,

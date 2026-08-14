@@ -78,7 +78,7 @@ class CameraUndistorter:
 
 
 def _load_calibration_json(path: str) -> dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
         raise ValueError("标定 JSON 根必须是对象")

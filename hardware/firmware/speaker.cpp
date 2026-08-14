@@ -1,6 +1,5 @@
 #include "speaker.h"
 
-#include "display.h"
 #include "mic.h"
 #include "pb_model.h"
 #include "utils/opus_codec.h"
@@ -51,23 +50,6 @@ static void speaker_set_clk(uint32_t rate, uint8_t channels) {
   s_i2s_rate = r;
 }
 
-/**
- * 音频不得明显领先嘴形：当前 job 已出队，若 display 仍积压更多任务，说明扬声器跑快了。
- * 最多等 ~250ms，避免卡死。
- */
-static void speaker_wait_mouth_catchup(void) {
-  for (int i = 0; i < 50; ++i) {
-    if (s_need_cancel.load(std::memory_order_acquire)) {
-      return;
-    }
-    const unsigned disp = display_render_input_queue_depth();
-    const unsigned spk = speaker_input_queue_depth();
-    if (disp <= spk + 1u) {
-      return;
-    }
-    vTaskDelay(pdMS_TO_TICKS(5));
-  }
-}
 
 enum class HeapFree : uint8_t { kMalloc = 0, kHeapCaps = 1 };
 
@@ -372,7 +354,6 @@ static bool play_pb_audio_owned(pb_audio* audio) {
     s_stream_active.store(true, std::memory_order_release);
   }
 
-  speaker_wait_mouth_catchup();
   const bool ok = play(pcm_owned, samples);
   free_ptr(pcm_owned, free_mode);
   return ok;

@@ -7,7 +7,6 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
-
 import numpy as np
 import onnxruntime
 

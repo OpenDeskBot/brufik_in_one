@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import struct
 
-
 import opuslib_next
 
 from deskbot_server.service.pipeline.opus_uplink import opus_frame_samples

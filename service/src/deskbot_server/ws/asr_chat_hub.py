@@ -74,7 +74,7 @@ class AsrChatHub:
             stale = [old for old in conns if old is not ws]
             self._by_device.setdefault(device_id, set()).add(ws)
             self._asr_ws_dev[ws] = device_id
-        setattr(ws, "_asr_chat_pb_serial_queue", self._device_pb_only)
+        ws._asr_chat_pb_serial_queue = self._device_pb_only
         for old in stale:
             await self._close_superseded_connection(device_id, old)
         from deskbot_server.service.live_service import LiveService

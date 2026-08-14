@@ -13,17 +13,13 @@ from typing import Any
 from deskbot_server.utils.audio import pcm_to_wav_bytes, save_temp_wav  # noqa: F401
 
 # 向后兼容重导出：已迁移到 utils/ws_parse.py，保留旧名（下划线前缀）
-from deskbot_server.utils.ws_parse import (  # noqa: F401
-    extract_device_id as _extract_device_id,
-    extract_pin_code as _extract_pin_code,
-    parse_query as _parse_query,
-    split_path as _split_path,
-    ws_request_path as _ws_request_path,
-)
+from deskbot_server.utils.ws_parse import extract_device_id as _extract_device_id  # noqa: F401
+from deskbot_server.utils.ws_parse import parse_query as _parse_query
+from deskbot_server.utils.ws_parse import split_path as _split_path
+from deskbot_server.utils.ws_parse import ws_request_path as _ws_request_path
 
 __all__ = [
     "_extract_device_id",
-    "_extract_pin_code",
     "_format_ts",
     "_json_msg",
     "_ms_between",

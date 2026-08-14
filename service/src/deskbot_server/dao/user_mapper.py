@@ -76,11 +76,6 @@ def update_password(uid: str, pw_hash: str) -> int:
     """更新密码哈希。"""
 
 
-@execute("UPDATE users SET is_active = 0 WHERE id = :uid")
-def soft_delete(uid: str) -> int:
-    """软删除用户。"""
-
-
 # ────────────────────────── 复杂查询示例 ──────────────────────────
 
 

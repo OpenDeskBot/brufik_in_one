@@ -84,9 +84,9 @@ def analyze_face_detection(detect: dict) -> dict[str, Any]:
     face_id = detect.get("face_id")
     if face_id is not None:
         out["face_id"] = int(face_id)
-    person_id = detect.get("person_id")
-    if person_id is not None:
-        out["person_id"] = int(person_id)
+    profile_id = detect.get("id")
+    if profile_id is not None:
+        out["id"] = int(profile_id)
     person_name = detect.get("person_name")
     if person_name:
         out["person_name"] = str(person_name)
@@ -203,7 +203,7 @@ def build_face_pos_payload(device_id: str, analysis: dict[str, Any]) -> dict[str
                 "is_frontal": f.get("is_frontal"),
                 "frontal_angle_deg": f.get("frontal_angle_deg"),
                 "is_frontal_angle": f.get("is_frontal_angle"),
-                "person_id": f.get("person_id"),
+                "id": f.get("id"),
                 "person_name": f.get("person_name"),
                 "identity_score": f.get("identity_score"),
                 "match_source": f.get("match_source") or f.get("face_id_source"),
@@ -227,9 +227,7 @@ def build_face_pos_payload(device_id: str, analysis: dict[str, Any]) -> dict[str
     return payload
 
 
-def build_face_info_message(
-    device_id: str, analysis: dict[str, Any], *, send_face_info: bool
-) -> dict[str, Any] | None:
+def build_face_info_message(device_id: str, analysis: dict[str, Any], *, send_face_info: bool) -> dict[str, Any] | None:
     if not send_face_info:
         return None
     yaw_deg = analysis.get("yaw_deg")

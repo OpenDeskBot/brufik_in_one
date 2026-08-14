@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import time
+
 from websockets.exceptions import ConnectionClosed
 
 from deskbot_server.infrastructure.ws.downlink_adapter import WsDownlinkAdapter
@@ -23,10 +24,10 @@ from deskbot_server.service.application.interaction_feedback import (
     start_llm_wait_nod_feedback,
     stop_llm_wait_nod_feedback,
 )
-from deskbot_server.service.live_service import LiveService
 from deskbot_server.service.application.ws_chat_turn import publish_ws_chat_turn, run_ws_chat_turn
 from deskbot_server.service.asr_service import AsrService
 from deskbot_server.service.camera_face_service import CameraFaceService
+from deskbot_server.service.live_service import LiveService
 from deskbot_server.service.pipeline.audio import AudioConfig, ConnectionSession
 from deskbot_server.service.vad_service import VadService
 from deskbot_server.utils.async_helpers import spawn
@@ -151,11 +152,7 @@ async def _schedule_asr_turn(
 
 
 async def _ingest_asr_chat_camera_frame(
-    *,
-    payload: bytes,
-    device_id: str | None,
-    camera_face_enabled: bool,
-    enc: str = "binary",
+    *, payload: bytes, device_id: str | None, camera_face_enabled: bool, enc: str = "binary"
 ) -> None:
     """读循环外异步处理：交给 CameraFaceService，不阻塞 WS 继续收帧。"""
     note_uplink_camera(device_id)
@@ -522,8 +519,6 @@ async def handle_asr_chat(
     registry: DeviceRegistry,
     dp_broker: DevicePipelineBroker,
     asr_chat_hub: AsrChatHub,
-    *,
-    pin_code: str | None = None,
 ) -> None:
     """/asr_chat WS：音频/文本上行；可选 ``camera_frame`` + JPEG（``next_bin_len``）。
 
@@ -541,9 +536,9 @@ async def handle_asr_chat(
 
     ensure_uplink_rate_stats_started()
     if device_id:
-        await registry.connect(device_id, "asr_chat", websocket, pin_code=pin_code)
+        await registry.connect(device_id, "asr_chat", websocket)
         await asr_chat_hub.attach(device_id, websocket)
-        logger.info("[/asr_chat] 接入 device_id=%s pin=%s peer=%s (已登记到 DeviceRegistry)", device_id, pin_code, peer)
+        logger.info("[/asr_chat] 接入 device_id=%s peer=%s (已登记到 DeviceRegistry)", device_id, peer)
     else:
         logger.warning(
             "[/asr_chat] 接入缺失 device_id peer=%s —— 不会出现在 /api/devices 设备列表，"
@@ -554,12 +549,7 @@ async def handle_asr_chat(
         ready_ok = await WsUtils.safe_send(
             websocket, pack_ws_downlink_frame(_json_msg({"type": "ready", "device_id": device_id}))
         )
-        logger.info(
-            "[/asr_chat] ready device_id=%s peer=%s sent=%s",
-            device_id,
-            peer,
-            ready_ok,
-        )
+        logger.info("[/asr_chat] ready device_id=%s peer=%s sent=%s", device_id, peer, ready_ok)
         if not ready_ok:
             return
         if device_id:

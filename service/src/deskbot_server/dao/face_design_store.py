@@ -54,9 +54,7 @@ def normalize_face_design_doc(raw: object) -> dict[str, Any]:
     }
 
 
-def load_face_design_file(
-    *, seed_if_missing: bool = False, device_id: str | None = None
-) -> dict[str, Any] | None:
+def load_face_design_file(*, seed_if_missing: bool = False, device_id: str | None = None) -> dict[str, Any] | None:
     del seed_if_missing
     path = resolve_face_design_path(device_id=device_id)
     if not os.path.isfile(path):

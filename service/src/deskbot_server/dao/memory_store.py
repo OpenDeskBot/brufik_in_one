@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
@@ -53,9 +52,7 @@ def save_memory_entries(entries: list[dict[str, Any]], *, device_id: str | None 
     save_json_file(path, {"entries": norm})
 
 
-def list_memory_for_device(
-    device_id: str | None = None, *, limit: int = _MAX_PROMPT_ENTRIES
-) -> list[dict[str, Any]]:
+def list_memory_for_device(device_id: str | None = None, *, limit: int = _MAX_PROMPT_ENTRIES) -> list[dict[str, Any]]:
     """设备专属记忆；有 ``device_id`` 时读设备目录文件，否则读全局并含无 device 标记项。"""
     dev = str(device_id or "").strip()
     cap = max(1, min(int(limit), _MAX_ENTRIES))

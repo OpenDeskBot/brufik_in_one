@@ -16,13 +16,13 @@ if TYPE_CHECKING:
 
 @dataclass
 class AppRuntime:
-    settings: "AppSettings"
-    chat: "ChatService"
-    audio_cfg: "AudioConfig"
+    settings: AppSettings
+    chat: ChatService
+    audio_cfg: AudioConfig
     ws_path: str
-    device_pipeline_broker: "DevicePipelineBroker"
-    registry: "DeviceRegistry"
-    asr_chat_hub: "AsrChatHub"
+    device_pipeline_broker: DevicePipelineBroker
+    registry: DeviceRegistry
+    asr_chat_hub: AsrChatHub
     scheduler: object | None = None
 
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from deskbot_server.model.chat import ChatTurnResult
 from deskbot_server.infrastructure.ws.downlink_adapter import WsDownlinkAdapter, WsPipelineEventsAdapter
+from deskbot_server.model.chat import ChatTurnResult
 from deskbot_server.service.application.chat_flow import publish_chat_turn, run_chat_turn
 
 if TYPE_CHECKING:

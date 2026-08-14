@@ -54,7 +54,7 @@ class StarletteWsCompat:
             return message["bytes"]
         raise ConnectionClosedError(None, None)
 
-    def __aiter__(self) -> "StarletteWsCompat":
+    def __aiter__(self) -> StarletteWsCompat:
         return self
 
     async def __anext__(self) -> str | bytes:

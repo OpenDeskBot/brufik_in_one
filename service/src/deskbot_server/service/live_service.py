@@ -10,15 +10,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from deskbot_server.dao.debug_prefs_store import get_live_service_enabled
 from deskbot_server.dao.face_expr_scenes_store import design_frames_to_pb_chain
 from deskbot_server.pb.llm_plan import _resolve_servo_preset_steps, expand_llm_anims, expand_llm_moves
 from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_LEVEL_IDLE, apply_pb_dispatch_fields
-from deskbot_server.service.application.interaction_feedback import (
-    build_servo_only_pb_frames,
-    get_valid_face_analysis,
-)
-from deskbot_server.dao.debug_prefs_store import get_live_service_enabled
-from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled
+from deskbot_server.service.application.interaction_feedback import build_servo_only_pb_frames, get_valid_face_analysis
 from deskbot_server.utils.singleton import SingletonMeta
 from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event
 
@@ -58,7 +54,14 @@ def _hold(preset: str, hold_ms: int, *, device_id: str) -> dict[str, Any]:
     if not steps:
         return {"move": preset, "ms": hold_ms}
     last = steps[-1]
-    return {"move": "__custom__", "ms": hold_ms, "x": int(last.get("x", 90)), "y": int(last.get("y", 90)), "xm": 0, "ym": 0}
+    return {
+        "move": "__custom__",
+        "ms": hold_ms,
+        "x": int(last.get("x", 90)),
+        "y": int(last.get("y", 90)),
+        "xm": 0,
+        "ym": 0,
+    }
 
 
 def wander_moves(device_id: str) -> list[dict[str, Any]]:
@@ -120,7 +123,7 @@ class LiveService(metaclass=SingletonMeta):
 
     @staticmethod
     def active() -> bool:
-        return get_live_service_enabled() and get_asr_voice_auto_reply_enabled()
+        return get_live_service_enabled()
 
     def _ensure(self, device_id: str) -> _Dev:
         st = self._devs.get(device_id)
@@ -284,7 +287,15 @@ class LiveService(metaclass=SingletonMeta):
 
     async def _run_wander(self, device_id: str, st: _Dev) -> None:
         moves = wander_moves(device_id)
-        await self._timed(device_id, st, moves, "listening", _moves_ms(moves, device_id=device_id) / 1000.0, "auto_live_look_around", "live 东张西望")
+        await self._timed(
+            device_id,
+            st,
+            moves,
+            "listening",
+            _moves_ms(moves, device_id=device_id) / 1000.0,
+            "auto_live_look_around",
+            "live 东张西望",
+        )
 
     async def _run_sleep(self, device_id: str, st: _Dev) -> None:
         dur = random.uniform(SLEEP_MIN_SEC, SLEEP_MAX_SEC)
@@ -309,12 +320,7 @@ class LiveService(metaclass=SingletonMeta):
             await self._wait(st, min(0.25, deadline - time.monotonic()))
 
     async def _send(
-        self,
-        device_id: str,
-        moves: list[dict[str, Any]],
-        scene: str | None,
-        source: str,
-        summary: str,
+        self, device_id: str, moves: list[dict[str, Any]], scene: str | None, source: str, summary: str
     ) -> int:
         built = build_servo_only_pb_frames(moves, device_id=device_id)
         if built is None:
@@ -338,7 +344,13 @@ class LiveService(metaclass=SingletonMeta):
         if n > 0:
             logger.info(
                 "[live] %s device_id=%s req=%s delivered=%d frames=%d summary=%s scene=%s",
-                source, device_id, req_id, n, len(frames), summary, scene,
+                source,
+                device_id,
+                req_id,
+                n,
+                len(frames),
+                summary,
+                scene,
             )
             await publish_auto_dispatch_event(
                 hub.pipeline_broker, device_id=device_id, request_id=req_id, source=source, summary=summary, status="ok"

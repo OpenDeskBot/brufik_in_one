@@ -8,11 +8,11 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from deskbot_server.service.camera_face_service import request_camera_fps_boost
 from deskbot_server.infrastructure.llm.utils import parse_llm_reply
 from deskbot_server.pb.servo_pcm import parse_pb_cam_fps
 from deskbot_server.service.application.llm_tool_runner import execute_llm_tools
 from deskbot_server.service.application.tool_interim_tts import build_tool_interim_tts
+from deskbot_server.service.camera_face_service import request_camera_fps_boost
 
 if TYPE_CHECKING:
     from deskbot_server.service.application.chat_flow import _TtsPrefetch
@@ -73,22 +73,19 @@ async def _execute_tools_round(
     *,
     device_id: str,
     session_id: str | None,
-    asr_chat_hub: "AsrChatHub" | None,
+    asr_chat_hub: AsrChatHub | None,
     cam_fps: int | None,
 ) -> list[dict[str, Any]]:
     if cam_fps and asr_chat_hub:
         await request_camera_fps_boost(device_id, asr_chat_hub, cam_fps=cam_fps)
 
     return await execute_llm_tools(
-        tools,
-        device_id=device_id,
-        session_id=session_id,
-        asr_chat_hub=asr_chat_hub,
-        cam_fps=cam_fps,
+        tools, device_id=device_id, session_id=session_id, asr_chat_hub=asr_chat_hub, cam_fps=cam_fps
     )
 
+
 async def complete_llm_with_tool_loop(
-    chat: "ChatService",
+    chat: ChatService,
     user_text: str,
     *,
     device_id: str | None = None,
@@ -98,9 +95,9 @@ async def complete_llm_with_tool_loop(
     request_id: str | None = None,
     dp_broker: Any | None = None,
     pipeline_source: str | None = None,
-    asr_chat_hub: "AsrChatHub" | None = None,
+    asr_chat_hub: AsrChatHub | None = None,
     on_tts_ready: Callable[[str], Awaitable[None]] | None = None,
-    tts_prefetch: "_TtsPrefetch" | None = None,
+    tts_prefetch: _TtsPrefetch | None = None,
     on_interim_tts_play: Callable[[str, int], Awaitable[None]] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str]:
     """多轮 LLM：有 tools 则执行并继续，无 tools 则返回最终 parsed。

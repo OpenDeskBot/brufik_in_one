@@ -33,9 +33,17 @@ def _migrate_devices_schema(engine) -> None:
     if "devices" not in insp.get_table_names():
         return
     cols = {c["name"] for c in insp.get_columns("devices")}
-    if "pin_code" not in cols:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE devices ADD COLUMN pin_code VARCHAR(4)"))
+    with engine.begin() as conn:
+        if "volume" not in cols:
+            conn.execute(text("ALTER TABLE devices ADD COLUMN volume INTEGER NOT NULL DEFAULT 80"))
+        if "fps" not in cols:
+            conn.execute(text("ALTER TABLE devices ADD COLUMN fps INTEGER NOT NULL DEFAULT 10"))
+        if "version" not in cols:
+            conn.execute(text("ALTER TABLE devices ADD COLUMN version VARCHAR(16)"))
+        if "auto_reply" not in cols:
+            conn.execute(text("ALTER TABLE devices ADD COLUMN auto_reply BOOLEAN NOT NULL DEFAULT 1"))
+        if "servo_mode" not in cols:
+            conn.execute(text("ALTER TABLE devices ADD COLUMN servo_mode VARCHAR(16) NOT NULL DEFAULT ''"))
 
 
 def _migrate_scheduled_tasks_schema(engine) -> None:
@@ -156,9 +164,72 @@ def _migrate_scheduled_tasks_drop_legacy_run_at(engine) -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_next_run_at ON scheduled_tasks (next_run_at)"))
 
 
+def _migrate_face_profiles_to_db(engine) -> None:
+    """将旧 JSON 人脸档案（data/{device_id}/face_profiles.json）导入 device_profile_face 表。"""
+    import json
+
+    from sqlalchemy import inspect, text
+
+    from deskbot_server.utils.paths import DATA_DIR
+
+    insp = inspect(engine)
+    if "device_profile_face" not in insp.get_table_names():
+        return
+
+    # 表中已有数据则跳过迁移
+    with engine.begin() as conn:
+        count = conn.execute(text("SELECT COUNT(*) FROM device_profile_face")).scalar()
+    if count and count > 0:
+        return
+
+    # 扫描 data/*/face_profiles.json（排除 global/）
+    json_files = list(DATA_DIR.glob("*/face_profiles.json"))
+    if not json_files:
+        return
+
+    migrated = 0
+    for jf in json_files:
+        device_id = jf.parent.name
+        if device_id == "global":
+            continue
+        try:
+            raw = json.loads(jf.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        items = raw.get("profiles") if isinstance(raw, dict) else raw
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            desc_raw = item.get("descriptor")
+            if not name or not isinstance(desc_raw, list) or len(desc_raw) < 4:
+                continue
+            descriptor = json.dumps([float(x) for x in desc_raw], ensure_ascii=False)
+            kind = str(item.get("descriptor_kind") or "embedding").strip()
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "INSERT INTO device_profile_face "
+                            "(device_id, name, descriptor, descriptor_kind, created_at, updated_at) "
+                            "VALUES (:did, :name, :desc, :kind, datetime('now'), datetime('now'))"
+                        ),
+                        {"did": device_id, "name": name, "desc": descriptor, "kind": kind},
+                    )
+                migrated += 1
+            except Exception:
+                logger.warning("迁移 face_profiles 失败: device_id=%s name=%s", device_id, name, exc_info=True)
+
+    if migrated:
+        logger.info("已迁移 %d 条人脸档案到 device_profile_face 表", migrated)
+
+
 def init_database() -> None:
     engine = init_engine()
     _migrate_legacy_schema(engine)
     Base.metadata.create_all(bind=engine)
     _migrate_devices_schema(engine)
     _migrate_scheduled_tasks_schema(engine)
+    _migrate_face_profiles_to_db(engine)

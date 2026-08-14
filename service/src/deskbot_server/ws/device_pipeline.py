@@ -5,12 +5,12 @@ import json
 import logging
 import time
 from collections import deque
+
 from websockets.exceptions import ConnectionClosed
 
 from deskbot_server.constants import DEVICE_PIPELINE_MAX_EVENTS
 from deskbot_server.utils.util import (
     _extract_device_id,
-    _extract_pin_code,
     _format_ts,
     _json_msg,
     _parse_query,
@@ -194,7 +194,7 @@ class DevicePipelineBroker:
 
 
 async def publish_auto_dispatch_event(
-    broker: "DevicePipelineBroker" | None,
+    broker: DevicePipelineBroker | None,
     *,
     device_id: str,
     request_id: str,
@@ -218,18 +218,11 @@ async def publish_auto_dispatch_event(
     await broker.publish(evt)
 
 
-async def handle_device_pipeline(
-    websocket,
-    broker: DevicePipelineBroker,
-    registry: DeviceRegistry,
-    *,
-    pin_code: str | None = None,
-) -> None:
+async def handle_device_pipeline(websocket, broker: DevicePipelineBroker, registry: DeviceRegistry) -> None:
     """/device_pipeline WS 入口。
 
     协议：
-      - 生产者连接 URL 形如 ``ws://host:9000/device_pipeline?device_id=xxx``，device_id 必填；
-        同一连接上报的事件都会绑定到该 device_id；合法 pin_code 写入 online pin。
+      - 生产者连接 URL 形如 ``ws://host:9000/device_pipeline?device_id=xxx``，device_id 必填。
       - 订阅者连接 URL 形如 ``ws://host:9000/device_pipeline?role=subscriber&device_id=xxx``，
         device_id 可选，作为过滤条件；不传则收到全部设备事件。
     """
@@ -238,8 +231,6 @@ async def handle_device_pipeline(
     qargs = _parse_query(query)
     role = (qargs.get("role") or "").lower() or None
     url_device = _extract_device_id(qargs)
-    if pin_code is None:
-        pin_code = _extract_pin_code(qargs)
     is_subscriber = role in ("subscriber", "sub", "viewer", "consumer")
     peer = WsUtils.peer_str(websocket)
 
@@ -288,7 +279,7 @@ async def handle_device_pipeline(
             return
 
         logger.info("[/device_pipeline] 生产者接入 device_id=%s peer=%s", url_device, peer)
-        await registry.connect(url_device, "device_pipeline", websocket, pin_code=pin_code)
+        await registry.connect(url_device, "device_pipeline", websocket)
         try:
             async for message in websocket:
                 if isinstance(message, (bytes, bytearray)):

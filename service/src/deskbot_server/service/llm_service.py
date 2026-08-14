@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+
 from deskbot_server.ports.llm import LlmPort
 from deskbot_server.utils.singleton import SingletonMeta
 

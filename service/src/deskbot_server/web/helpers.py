@@ -5,10 +5,11 @@ import json
 import os
 import socket
 
+from fastapi import Request
+
 from deskbot_server.config import load_config as _load_config_yaml
 from deskbot_server.config import save_config as _save_config_yaml
 from deskbot_server.utils.paths import DEFAULT_CONFIG_PATH
-from fastapi import Request
 
 try:
     from zoneinfo import ZoneInfo
@@ -83,8 +84,8 @@ def deskbot_http_base() -> str:
 def _fetch_registry_devices(*, user_id: str | None = None) -> list[dict] | None:
     """同进程内直接读 DeviceRegistry；无 runtime（如 web_only）时返回 None。"""
     try:
-        from deskbot_server.service.user_service import UserService
         from deskbot_server.controller.runtime import get_runtime
+        from deskbot_server.service.user_service import UserService
 
         snap = get_runtime().registry.snapshot()
         uid = str(user_id or "").strip()

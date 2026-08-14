@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+
+from deskbot_server.model.settings import AppSettings
 from deskbot_server.ports.asr import AsrPort
 from deskbot_server.ports.llm import LlmPort
 from deskbot_server.ports.tts import TtsPort
-from deskbot_server.model.settings import AppSettings
 from deskbot_server.service.asr_service import AsrService
 from deskbot_server.service.llm_service import LlmService
 from deskbot_server.service.tts_service import TtsService

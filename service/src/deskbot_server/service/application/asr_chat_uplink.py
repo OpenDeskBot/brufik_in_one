@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Sequence, Union
+from typing import Any, Literal
 
 logger = logging.getLogger("deskbot-server")
 
@@ -29,9 +30,7 @@ class PackedFrame:
     bin: bytes = b""
 
 
-def pack_ws_downlink_frame(
-    text: str, media: Union[bytes, Sequence[bytes], None] = None
-) -> bytes:
+def pack_ws_downlink_frame(text: str, media: bytes | Sequence[bytes] | None = None) -> bytes:
     """下行单帧：``u32be(json_len) + json_utf8 + concat(media)``。"""
     raw = text.encode("utf-8")
     if not raw or len(raw) > _MAX_PACKED_JSON_LEN:

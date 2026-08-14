@@ -116,7 +116,7 @@ class WsUtils:
                     "[ws] 1009 message too big：单帧过大（TEXT 常见为 anim JSON 超 ESP32 上限，binary 约 %d bytes）", n
                 )
             return False
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 await websocket.close(code=1011, reason="send timeout")
             except Exception:

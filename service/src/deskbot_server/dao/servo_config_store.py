@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from deskbot_server.constants import SERVO_CFG_FILE
@@ -41,9 +40,7 @@ def servo_perspective(*, device_id: str | None = None) -> str:
     return DEFAULT_SERVO_PERSPECTIVE
 
 
-def resolve_move_for_perspective(
-    move_id: str, *, device_id: str | None = None, perspective: str | None = None
-) -> str:
+def resolve_move_for_perspective(move_id: str, *, device_id: str | None = None, perspective: str | None = None) -> str:
     """按视角解析 move/preset id（``viewer`` 时对调 left/right 类预设）。"""
     pid = str(move_id or "").strip()
     if not pid:

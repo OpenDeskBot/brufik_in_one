@@ -148,7 +148,7 @@ void wifi_portal_setup_http(void) {
     String json = "{";
     json += "\"ok\":true,";
     json += "\"device_id\":\"" + json_escape(String(get_device_id())) + "\",";
-    json += "\"pin_code\":\"" + json_escape(String(nvs_get_pin_code())) + "\",";
+    json += "\"version\":\"" VERSION "\",";
     json += "\"ap_offer_sec\":" + String(nvs_get_ap_offer_timeout_sec()) + ",";
     json += "\"ap_offer_min\":" + String(nvs_get_ap_offer_timeout_min_sec()) + ",";
     json += "\"ap_offer_max\":" + String(nvs_get_ap_offer_timeout_max_sec()) + ",";
@@ -187,8 +187,9 @@ void wifi_portal_setup_http(void) {
     send_ok_body("\"ap_offer_sec\":" + String(nvs_get_ap_offer_timeout_sec()));
   });
 
-  g_wifi_server.on("/device-config/reset-pin", HTTP_POST, []() {
-    send_ok_body("\"pin_code\":\"" + json_escape(String(nvs_reset_pin_code())) + "\"");
+  g_wifi_server.on("/device-config/reset-device-id", HTTP_POST, []() {
+    nvs_reset_device_suffix();
+    send_ok_body("\"device_id\":\"" + json_escape(String(get_device_id())) + "\"");
   });
 
   g_wifi_server.on("/device-config/delete-wifi", HTTP_POST, []() {

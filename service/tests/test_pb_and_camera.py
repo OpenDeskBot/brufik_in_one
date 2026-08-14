@@ -159,7 +159,6 @@ def test_face_tracker_profile_hysteresis():
     import numpy as np
     import pytest
 
-    from deskbot_server.dao.face_profiles_store import upsert_profile
     from deskbot_server.vision.face_embedding import is_embedding_vector
     from deskbot_server.vision.face_identity import attach_descriptor, compute_face_descriptor
 
@@ -175,12 +174,11 @@ def test_face_tracker_profile_hysteresis():
     if not is_embedding_vector(desc):
         pytest.skip("embedding 未启用，跳过")
     thr = 0.40 if is_embedding_vector(desc) else 0.82
-    profiles: list = []
-    upsert_profile(profiles, name="小明", descriptor=desc, merge_threshold=thr)
+    profiles: list = [{"id": 1, "name": "小明", "descriptor": list(desc), "descriptor_kind": "embedding"}]
     tracker = FaceTracker(identity_similarity_threshold=thr, max_dist_px=90.0)
     tracker._profiles = profiles
     tagged = tracker.assign_ids([dict(face)])
-    assert tagged[0].get("person_id") == 1
+    assert tagged[0].get("id") == 1
     assert tagged[0].get("person_name") == "小明"
     # 鼻尖大幅移动仍应同一 face_id
     moved_face = {"landmarks": _sample_landmarks(nose=(80.0, 108.0)), "image_w": 320, "image_h": 240}
@@ -188,7 +186,7 @@ def test_face_tracker_profile_hysteresis():
     id1 = tagged[0]["face_id"]
     tagged2 = tracker.assign_ids([moved_face])
     assert tagged2[0]["face_id"] == id1
-    assert tagged2[0].get("person_id") == 1
+    assert tagged2[0].get("id") == 1
 
 
 def test_face_tracker_assigns_stable_ids():

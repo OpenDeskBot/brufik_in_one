@@ -10,17 +10,16 @@ from deskbot_server.config import load_config
 from deskbot_server.constants import CAMERA_VIEW_PATH, DEVICE_PIPELINE_PATH
 from deskbot_server.controller.app import create_fastapi_app
 from deskbot_server.controller.runtime import AppRuntime
-from deskbot_server.utils.concurrency import configure_concurrency, resolve_face_pool_workers
-from deskbot_server.model.settings import AppSettings
-from deskbot_server.dao.debug_prefs_store import apply_debug_prefs_from_config
 from deskbot_server.infrastructure.bootstrap import build_chat_service
+from deskbot_server.model.settings import AppSettings
 from deskbot_server.service.application.scheduled_task_scheduler import ScheduledTaskScheduler
 from deskbot_server.service.camera_face_service import CameraFaceService, build_camera_face_runtime
+from deskbot_server.service.live_service import ENTER_SEC, SLEEP_MAX_SEC, SLEEP_MIN_SEC, WANDER_MAX_CYCLES, LiveService
 from deskbot_server.service.pipeline.audio import AudioConfig
 from deskbot_server.service.pipeline_service import PipelineService
 from deskbot_server.service.vad_service import VadService
+from deskbot_server.utils.concurrency import configure_concurrency, resolve_face_pool_workers
 from deskbot_server.utils.env import load_dotenv
-from deskbot_server.service.live_service import ENTER_SEC, SLEEP_MAX_SEC, SLEEP_MIN_SEC, WANDER_MAX_CYCLES, LiveService
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
 from deskbot_server.ws.device_pipeline import DevicePipelineBroker
 from deskbot_server.ws.registry import DeviceRegistry
@@ -36,7 +35,6 @@ def build_runtime() -> AppRuntime:
     init_database()
     logger.info("[server] auth DB ready path=%s", default_db_path())
     config = load_config(os.environ.get("DESKBOT_SERVER_CONFIG", "config.yaml"))
-    apply_debug_prefs_from_config(config)
     app_settings = AppSettings.from_config(config)
     audio_cfg = AudioConfig(
         input_codec=app_settings.audio.input_codec,

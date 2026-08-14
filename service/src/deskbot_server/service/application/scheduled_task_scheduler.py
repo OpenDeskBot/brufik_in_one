@@ -28,10 +28,10 @@ class ScheduledTaskScheduler:
     def __init__(
         self,
         *,
-        chat: "ChatService",
-        asr_chat_hub: "AsrChatHub",
-        registry: "DeviceRegistry",
-        dp_broker: "DevicePipelineBroker",
+        chat: ChatService,
+        asr_chat_hub: AsrChatHub,
+        registry: DeviceRegistry,
+        dp_broker: DevicePipelineBroker,
         poll_interval_sec: float = 60.0,
         lookback_minutes: float = 5.0,
     ) -> None:

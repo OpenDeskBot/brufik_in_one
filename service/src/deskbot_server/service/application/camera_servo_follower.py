@@ -11,13 +11,13 @@ from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
 from deskbot_server.dao.servo_config_store import clamp_servo_step, servo_limits
 from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
 from deskbot_server.pb.shapes import PB_ACTION_REPLACE, PB_LEVEL_IDLE
-from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled
+from deskbot_server.dao.debug_prefs_store import get_auto_reply
 from deskbot_server.vision.camera_face_tune import (
     get_frontal_angle_threshold_deg,
     get_gaze_pitch_threshold_deg,
     get_gaze_yaw_threshold_deg,
+    get_horizontal_fov_deg,
 )
-from deskbot_server.vision.camera_face_tune import get_horizontal_fov_deg
 from deskbot_server.vision.geometry import FRONTAL_YAW_THRESHOLD_DEG
 
 if TYPE_CHECKING:
@@ -73,7 +73,9 @@ def _mode_accepts_face(mode: str, analysis: dict[str, Any]) -> bool:
         if isinstance(frontal, bool):
             return frontal
         try:
-            return float(analysis.get("frontal_angle_deg")) <= get_frontal_angle_threshold_deg(FRONTAL_YAW_THRESHOLD_DEG)
+            return float(analysis.get("frontal_angle_deg")) <= get_frontal_angle_threshold_deg(
+                FRONTAL_YAW_THRESHOLD_DEG
+            )
         except (TypeError, ValueError):
             return False
     if mode == "gaze":
@@ -81,21 +83,20 @@ def _mode_accepts_face(mode: str, analysis: dict[str, Any]) -> bool:
         if isinstance(looking, bool):
             return looking
         try:
-            return (
-                abs(float(analysis.get("gaze_yaw_deg"))) < get_gaze_yaw_threshold_deg(FRONTAL_YAW_THRESHOLD_DEG)
-                and abs(float(analysis.get("gaze_pitch_deg"))) < get_gaze_pitch_threshold_deg(FRONTAL_YAW_THRESHOLD_DEG)
-            )
+            return abs(float(analysis.get("gaze_yaw_deg"))) < get_gaze_yaw_threshold_deg(
+                FRONTAL_YAW_THRESHOLD_DEG
+            ) and abs(float(analysis.get("gaze_pitch_deg"))) < get_gaze_pitch_threshold_deg(FRONTAL_YAW_THRESHOLD_DEG)
         except (TypeError, ValueError):
             return False
     return False
 
 
-async def camera_servo_follower_tick(hub: "AsrChatHub", device_id: str, analysis: dict[str, Any]) -> None:
+async def camera_servo_follower_tick(hub: AsrChatHub, device_id: str, analysis: dict[str, Any]) -> None:
     """按当前跟随模式下发最新的人脸绝对位置，避免重复或过密的舵机命令。"""
-    if not get_asr_voice_auto_reply_enabled():
+    if not get_auto_reply(device_id):
         return
     dev = str(device_id or "").strip()
-    mode = get_camera_servo_auto_mode()
+    mode = get_camera_servo_auto_mode(device_id)
     if not dev or mode not in ("follow", "follow_frontal", "gaze") or not _mode_accepts_face(mode, analysis):
         return
 
@@ -109,18 +110,10 @@ async def camera_servo_follower_tick(hub: "AsrChatHub", device_id: str, analysis
     limits = servo_limits(device_id=dev)
     target_x = int(round(_clamp(_SERVO_CENTER_X + _MAP_YAW_SIGN * yaw, limits["xMin"], limits["xMax"])))
     target_y = int(
-        round(
-            _clamp(
-                _SERVO_CENTER_Y + _MAP_PITCH_SIGN * pitch + _FOLLOW_PITCH_OFFSET,
-                limits["yMin"],
-                limits["yMax"],
-            )
-        )
+        round(_clamp(_SERVO_CENTER_Y + _MAP_PITCH_SIGN * pitch + _FOLLOW_PITCH_OFFSET, limits["yMin"], limits["yMax"]))
     )
     step = clamp_servo_step(
-        {"xm": 0, "ym": 0, "x": target_x, "y": target_y, "ms": _SERVO_MS},
-        device_id=dev,
-        limits=limits,
+        {"xm": 0, "ym": 0, "x": target_x, "y": target_y, "ms": _SERVO_MS}, device_id=dev, limits=limits
     )
 
     now_ms = time.monotonic() * 1000

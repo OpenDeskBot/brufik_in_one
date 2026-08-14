@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+
 FACE_FRAME_WIDTH = 320
 FACE_FRAME_HEIGHT = 240
 FACE_KEYPOINT_NAMES = ("left_eye", "right_eye", "nose", "mouth_left", "mouth_right")
@@ -68,9 +69,7 @@ MP_FACE_DETAIL_NAMES: tuple = (
 
 def landmarks_by_name(landmarks: list) -> dict[str, dict]:
     return {
-        str(p["name"]): p
-        for p in (landmarks or [])
-        if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p
+        str(p["name"]): p for p in (landmarks or []) if isinstance(p, dict) and p.get("name") and "x" in p and "y" in p
     }
 
 
@@ -168,7 +167,6 @@ def compute_frontal_score(landmarks: list) -> float:
     mouth_cx = (mlx + mrx) / 2.0
     mouth_off = abs(mouth_cx - eye_cx) / eye_dist
     s_mouth_align = max(0.0, 1.0 - mouth_off * 2.5)
-
 
     # 4) 嘴部水平（roll 的辅助信号）
     mouth_dx = mrx - mlx
@@ -416,9 +414,7 @@ def compute_eye_iris_offsets(landmarks: list) -> dict:
     return out
 
 
-def compute_face_score(
-    landmarks: list, *, image_w: int = FACE_FRAME_WIDTH, image_h: int = FACE_FRAME_HEIGHT
-) -> float:
+def compute_face_score(landmarks: list, *, image_w: int = FACE_FRAME_WIDTH, image_h: int = FACE_FRAME_HEIGHT) -> float:
     """人脸检测质量分 [0, 1]：9 点 landmark 完整度 + 脸在画面中的尺寸。
 
     MediaPipe FaceLandmarker 不对外暴露逐脸 detection confidence；此处用

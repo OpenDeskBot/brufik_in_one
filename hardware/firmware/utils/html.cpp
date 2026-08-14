@@ -76,12 +76,12 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       <p class="hint" id="ap-offer-hint">范围 5–60 秒，默认 20 秒；下次开机生效。</p>
 
-      <label>PIN Code（绑定设备）</label>
+      <label>设备信息</label>
       <div class="status" style="margin-bottom:8px">
-        <div class="pill"><span>当前 PIN</span><b id="pin-code">----</b></div>
         <div class="pill"><span>设备 ID</span><b id="config-device-id">----</b></div>
+        <div class="pill"><span>固件版本</span><b id="firmware-version">----</b></div>
       </div>
-      <button type="button" onclick="resetPin()">重置 PIN</button>
+      <button type="button" onclick="resetDeviceId()">重置设备 ID</button>
 
       <label style="margin-top:16px">已保存 Wi‑Fi</label>
       <div id="saved-wifi-list" class="list"></div>
@@ -264,8 +264,8 @@ const char index_html[] PROGMEM = R"rawliteral(
           if (c.device_id) {
             document.getElementById('config-device-id').textContent = c.device_id;
           }
-          if (c.pin_code) {
-            document.getElementById('pin-code').textContent = c.pin_code;
+          if (c.version) {
+            document.getElementById('firmware-version').textContent = c.version;
           }
           const apInput = document.getElementById('ap-offer-input');
           if (typeof c.ap_offer_sec !== 'undefined') {
@@ -448,14 +448,14 @@ const char index_html[] PROGMEM = R"rawliteral(
         });
     }
 
-    function resetPin() {
-      if (!confirm('确定重置 PIN？旧 PIN 将无法再用于绑定。')) return;
-      fetch('/device-config/reset-pin', { method: 'POST' })
+    function resetDeviceId() {
+      if (!confirm('确定重置设备 ID？将重新生成随机后缀。')) return;
+      fetch('/device-config/reset-device-id', { method: 'POST' })
         .then(r => r.json())
         .then(data => {
-          if (data.success && data.pin_code) {
-            document.getElementById('pin-code').textContent = data.pin_code;
-            setConfigMessage('PIN 已重置为 ' + data.pin_code, 'ok');
+          if (data.success && data.device_id) {
+            document.getElementById('config-device-id').textContent = data.device_id;
+            setConfigMessage('设备 ID 已重置为 ' + data.device_id, 'ok');
           } else {
             setConfigMessage('重置失败: ' + (data.message || '未知错误'), 'err');
           }

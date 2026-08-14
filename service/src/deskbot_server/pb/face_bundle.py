@@ -56,6 +56,7 @@ def expr_default_pb_face_bundle(*, device_id: str | None = None) -> dict[str, An
         load_face_expr_scenes_file,
     )
     from deskbot_server.dao.face_mouth_config_store import groups_to_mouth_bundle, load_face_mouth_cfg_file
+
     rows = load_face_expr_scenes_file(seed_if_missing=True, device_id=device_id) or []
     ent = (
         find_design_scene_by_name(rows, "default")

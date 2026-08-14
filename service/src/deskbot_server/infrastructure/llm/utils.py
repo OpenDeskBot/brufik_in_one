@@ -154,10 +154,14 @@ def llm_memory_prompt_appendix(device_id: str | None = None) -> str:
 
 def llm_device_screen_appendix(device_id: str | None = None) -> str:
     """屏幕分辨率与当前音量，注入 system prompt。"""
-    from deskbot_server.dao.device_volume_store import get_device_volume
+    from deskbot_server.dao import device_mapper
     from deskbot_server.pb.display import FACE_LCD_HEIGHT, FACE_LCD_WIDTH
 
-    vol = get_device_volume(device_id)
+    vol = 80
+    if device_id:
+        dev = device_mapper.get_by_device_id(device_id)
+        if dev is not None:
+            vol = int(dev.volume or 80)
     return (
         "设备屏幕与音量：\n"
         f"  - 逻辑分辨率：**{FACE_LCD_WIDTH}×{FACE_LCD_HEIGHT}** 像素，原点左上角 (0,0)。\n"
@@ -392,17 +396,7 @@ def _coerce_llm_reply_object(obj: Any) -> dict[str, Any] | None:
         tools = _parse_llm_tool_items([obj])
         if tools:
             out: dict[str, Any] = {"tools": tools}
-            for key in (
-                "need_reply",
-                "tts",
-                "reply",
-                "moves",
-                "anims",
-                "volume",
-                "cam_fps",
-                "scenes",
-                "servo",
-            ):
+            for key in ("need_reply", "tts", "reply", "moves", "anims", "volume", "cam_fps", "scenes", "servo"):
                 if key in obj:
                     out[key] = obj[key]
             out.setdefault("tts", "")

@@ -53,7 +53,6 @@
     const bindModal = document.getElementById("deviceBindModal");
     const bindForm = bindModal ? $("#deviceBindForm", bindModal) : null;
     const bindInput = bindModal ? $("#deviceBindInput", bindModal) : null;
-    const bindPinInput = bindModal ? $("#deviceBindPinInput", bindModal) : null;
     const bindMsg = bindModal ? $("#deviceBindMsg", bindModal) : null;
     const bindClose = bindModal ? $(".device-modal-close", bindModal) : null;
 
@@ -186,11 +185,11 @@
       setOpen(false);
     }
 
-    async function bindDevice(deviceId, pinCode) {
+    async function bindDevice(deviceId) {
       const data = await apiJson(API_BIND, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device_id: deviceId, pin_code: pinCode }),
+        body: JSON.stringify({ device_id: deviceId }),
       });
       await refresh();
       if (deviceId) await selectDevice(deviceId);
@@ -231,7 +230,6 @@
       e.preventDefault();
       setOpen(false);
       if (bindInput) bindInput.value = "";
-      if (bindPinInput) bindPinInput.value = "";
       setBindMsg("");
       openModal(bindModal);
       bindInput?.focus();
@@ -272,18 +270,13 @@
     bindForm?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const deviceId = (bindInput?.value || "").trim();
-      const pinCode = (bindPinInput?.value || "").trim();
       if (!deviceId) {
         setBindMsg("绑定失败：请输入 device_id", "error");
         return;
       }
-      if (!pinCode) {
-        setBindMsg("绑定失败：请输入 Pin Code", "error");
-        return;
-      }
       setBindMsg("绑定中…");
       try {
-        const data = await bindDevice(deviceId, pinCode);
+        const data = await bindDevice(deviceId);
         setBindMsg(data.message || "绑定成功", "success");
         window.setTimeout(() => closeModal(bindModal), 900);
       } catch (err) {

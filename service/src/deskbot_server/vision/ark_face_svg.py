@@ -11,7 +11,8 @@ import os
 import re
 import urllib.error
 import urllib.request
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from xml.etree import ElementTree as ET
 
 from deskbot_server.dao.face_expr_scenes_store import normalize_face_expr_scenes

@@ -5,12 +5,12 @@ import datetime as dt
 import json
 import logging
 from collections.abc import Awaitable, Callable
+
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
     ZoneInfo = None  # type: ignore[misc, assignment]
 
-from deskbot_server.model.settings import AppSettings
 from deskbot_server.infrastructure.llm.runtime import chat_acompletion, resolve_llm_config
 from deskbot_server.infrastructure.llm.user_message import build_llm_user_message
 from deskbot_server.infrastructure.llm.utils import (
@@ -19,6 +19,7 @@ from deskbot_server.infrastructure.llm.utils import (
     llm_static_context_prompt_appendix,
     parse_llm_reply,
 )
+from deskbot_server.model.settings import AppSettings
 
 logger = logging.getLogger("deskbot-server")
 

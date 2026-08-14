@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import inspect
 import secrets
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import Request
@@ -169,7 +170,9 @@ def render_template(request: Request, name: str, **context: Any) -> HTMLResponse
     context.setdefault("nav_current_device_id", current_device_id)
     context.setdefault("nav_is_developer", is_developer)
     context.setdefault("url_for", url_for)
-    context.setdefault("get_flashed_messages", lambda with_categories=False: get_flashed_messages(request, with_categories))
+    context.setdefault(
+        "get_flashed_messages", lambda with_categories=False: get_flashed_messages(request, with_categories)
+    )
     return _templates.TemplateResponse(request, name, context)
 
 

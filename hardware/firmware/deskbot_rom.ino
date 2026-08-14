@@ -65,7 +65,7 @@ void setup() {
   setup_mic();
   setup_speaker();
 
-  log_info("[BOOT] pin=%s hotspot=%s", nvs_get_pin_code(), get_device_id());
+  log_info("[BOOT] device_id=%s version=%s", get_device_id(), VERSION);
 
   (void)wifi_provision_ap_offer(nvs_get_ap_offer_timeout_ms());
   if (!wifi_provision_connect_sta()) {
@@ -127,7 +127,7 @@ void setup() {
   log_info("[BOOT] firmware=%s %s %s", VERSION, __DATE__, __TIME__);
   char ws_url[128];
   deskbot_ws_format_active_url(ws_url, sizeof(ws_url));
-  log_info("[BOOT] device_id=%s ws=%s pin=%s", get_device_id(), ws_url, nvs_get_pin_code());
+  log_info("[BOOT] device_id=%s ws=%s version=%s", get_device_id(), ws_url, VERSION);
   log_info("PSRAM size=%u free=%u", (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFreePsram());
 
   boot_guide_show_ready();

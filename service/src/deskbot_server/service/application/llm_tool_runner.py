@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode, persist_camera_servo_auto_mode
+from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode, set_camera_servo_auto_mode
 from deskbot_server.dao.device_tmp_store import read_device_tmp_file, write_device_tmp_file
 from deskbot_server.dao.memory_store import add_memory, delete_memory
 from deskbot_server.dao.session_store import execute_session_tool
@@ -70,7 +70,7 @@ async def execute_llm_tools(
                     {
                         "tool": tool,
                         "ok": True,
-                        "person_id": out["profile"].get("person_id"),
+                        "profile_id": out["profile"].get("id"),
                         "name": out["profile"].get("name"),
                         "face_id": out.get("face_id"),
                     }
@@ -85,8 +85,8 @@ async def execute_llm_tools(
                 mode = _normalize_follow_mode(raw.get("mode") or raw.get("value"))
                 if mode not in ("", "follow", "follow_frontal", "gaze"):
                     raise ValueError(f"未知跟随模式: {mode!r}")
-                before = get_camera_servo_auto_mode()
-                norm = persist_camera_servo_auto_mode(mode)
+                before = get_camera_servo_auto_mode(device_id)
+                norm = set_camera_servo_auto_mode(device_id, mode)
                 already = before == norm
                 row: dict[str, Any] = {"tool": tool, "ok": True, "mode": norm}
                 if already:

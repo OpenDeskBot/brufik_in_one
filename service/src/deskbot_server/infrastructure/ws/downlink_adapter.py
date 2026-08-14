@@ -40,9 +40,7 @@ class WsDownlinkAdapter:
             send_client=send_client,
         )
 
-    async def send_pb_wire(
-        self, wire_text: str, binaries: list[bytes] | None = None, pcm: bytes | None = None
-    ) -> bool:
+    async def send_pb_wire(self, wire_text: str, binaries: list[bytes] | None = None, pcm: bytes | None = None) -> bool:
         return await _send_pb_wire_to_asr_device(self._ws, wire_text, binaries=binaries, pcm=pcm)
 
     @asynccontextmanager

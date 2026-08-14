@@ -8,9 +8,9 @@ from __future__ import annotations
 import io
 import logging
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Callable
 from uuid import uuid4
 
 import websockets

@@ -386,10 +386,7 @@ def _add_offset_to_primitive_inplace(q: dict[str, Any], dx: int, dy: int) -> Non
     if dx == 0 and dy == 0:
         return
     sh = normalize_primitive_shape(str(q.get("shape") or ""))
-    if sh in ("rect", "rect_outline", "round_rect", "round_rect_outline"):
-        q["x"] = int(q.get("x", 0)) + dx
-        q["y"] = int(q.get("y", 0)) + dy
-    elif sh in ("circle", "circle_outline"):
+    if sh in ("rect", "rect_outline", "round_rect", "round_rect_outline") or sh in ("circle", "circle_outline"):
         q["x"] = int(q.get("x", 0)) + dx
         q["y"] = int(q.get("y", 0)) + dy
     elif sh == "line":
@@ -397,13 +394,7 @@ def _add_offset_to_primitive_inplace(q: dict[str, Any], dx: int, dy: int) -> Non
         q["y1"] = int(q.get("y1", 0)) + dy
         q["x2"] = int(q.get("x2", 0)) + dx
         q["y2"] = int(q.get("y2", 0)) + dy
-    elif sh == "pixel":
-        q["x"] = int(q.get("x", 0)) + dx
-        q["y"] = int(q.get("y", 0)) + dy
-    elif sh in ("hline", "vline"):
-        q["x"] = int(q.get("x", 0)) + dx
-        q["y"] = int(q.get("y", 0)) + dy
-    elif sh in ("ellipse", "ellipse_fill"):
+    elif sh == "pixel" or sh in ("hline", "vline") or sh in ("ellipse", "ellipse_fill"):
         q["x"] = int(q.get("x", 0)) + dx
         q["y"] = int(q.get("y", 0)) + dy
     elif sh in ("triangle", "triangle_fill"):

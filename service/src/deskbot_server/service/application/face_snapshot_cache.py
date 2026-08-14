@@ -60,17 +60,17 @@ def list_recognized_faces(device_id: str, *, limit: int = 5) -> list[dict[str, A
         name = str(face.get("person_name") or "").strip()
         if not name:
             continue
-        person_id = face.get("person_id")
-        dedupe_key = f"p:{int(person_id)}" if person_id is not None else f"n:{name}"
+        profile_id = face.get("id")
+        dedupe_key = f"p:{int(profile_id)}" if profile_id is not None else f"n:{name}"
         score_raw = face.get("identity_score")
         try:
             score = round(float(score_raw), 3) if score_raw is not None else None
         except (TypeError, ValueError):
             score = None
         row = {"person_name": name, "identity_score": score, "face_id": int(fid)}
-        if person_id is not None:
+        if profile_id is not None:
             try:
-                row["person_id"] = int(person_id)
+                row["id"] = int(profile_id)
             except (TypeError, ValueError):
                 pass
         prev = best_by_key.get(dedupe_key)

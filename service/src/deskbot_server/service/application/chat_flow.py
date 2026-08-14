@@ -8,20 +8,20 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from deskbot_server.ports.downlink import DownlinkPort, PipelineEventsPort
-from deskbot_server.model.chat import ChatTurnResult
-from deskbot_server.dao.device_volume_store import persist_device_volume
+from deskbot_server.dao import device_mapper
 from deskbot_server.infrastructure.tts.text_split import split_tts_by_punctuation
+from deskbot_server.model.chat import ChatTurnResult
 from deskbot_server.pb.scenes import _pb_scene_entry_by_name, _prepare_pb_scene_chain_frames
 from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_ACTION_REPLACE
 from deskbot_server.pb.wire import build_pb_wire_pairs, device_pb_json_msg, pb_wire_json_bytes
+from deskbot_server.ports.downlink import DownlinkPort, PipelineEventsPort
 from deskbot_server.service.application.llm_error_fallback import (
     build_llm_error_fallback_plan,
     start_llm_error_motion_feedback,
     stop_llm_error_motion_feedback,
 )
 from deskbot_server.service.application.llm_tool_loop import complete_llm_with_tool_loop
-from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled
+from deskbot_server.dao.debug_prefs_store import get_auto_reply
 from deskbot_server.utils.util import _ms_between
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ _SCHEDULED_TASK_PREFIX = "[系统定时任务]"
 class _TtsPrefetch:
     """LLM 流式输出中 ``tts`` 字段闭合后提前启动豆包 TTS 合成。"""
 
-    def __init__(self, chat: "ChatService") -> None:
+    def __init__(self, chat: ChatService) -> None:
         self._chat = chat
         self.task: asyncio.Task | None = None
 
@@ -113,7 +113,7 @@ async def _play_interim_tts(
 
 async def _play_llm_error_fallback(
     downlink: DownlinkPort,
-    chat: "ChatService",
+    chat: ChatService,
     *,
     request_id: str | None,
     device_id: str | None,
@@ -123,7 +123,7 @@ async def _play_llm_error_fallback(
     llm_exc: Exception,
 ) -> None:
     """LLM 调用失败：口播道歉 + 连续 idle 舵机，避免点头停后长时间无反馈。"""
-    if not get_asr_voice_auto_reply_enabled():
+    if not get_auto_reply(device_id):
         return
     plan = build_llm_error_fallback_plan()
     playback = plan["tts"]
@@ -219,7 +219,7 @@ async def run_chat_turn(
     t_asr_start: float | None = None,
     t_asr_text: float | None = None,
     force_voice: bool = False,
-    pipeline_broker: "DevicePipelineBroker" | None = None,
+    pipeline_broker: DevicePipelineBroker | None = None,
     reuse_session_id: str | None = None,
     asr_chat_hub: Any | None = None,
     on_llm_error: Any | None = None,
@@ -230,7 +230,7 @@ async def run_chat_turn(
     sched_desc = _scheduled_task_description(user_text) if is_scheduled else ""
 
     try:
-        if not force_voice and not get_asr_voice_auto_reply_enabled():
+        if not force_voice and not get_auto_reply(device_id):
             now_m = time.monotonic()
             result.t_llm_end = now_m
             result.t_tts_synth_end = now_m
@@ -307,7 +307,11 @@ async def run_chat_turn(
             need_reply = True
 
         if parsed.get("volume") is not None and device_id:
-            persist_device_volume(parsed["volume"], device_id=device_id)
+            from deskbot_server.pb.servo_pcm import parse_pb_volume
+
+            vol = parse_pb_volume(parsed["volume"])
+            if vol is not None:
+                device_mapper.update_volume(device_id, vol)
 
         result.llm_text = reply_text
         result.llm_raw = answer or parsed.get("raw") or ""
@@ -467,7 +471,7 @@ async def run_chat_turn(
 
 async def run_device_tts_only(
     downlink: DownlinkPort,
-    chat: "ChatService",
+    chat: ChatService,
     text: str,
     *,
     request_id: str | None = None,
@@ -527,7 +531,7 @@ async def run_device_tts_only(
 
 async def run_device_playbook(
     downlink: DownlinkPort,
-    chat: "ChatService",
+    chat: ChatService,
     playbook: dict,
     *,
     request_id: str | None = None,

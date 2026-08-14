@@ -36,9 +36,7 @@ def _pb_scenes_root(doc: dict) -> dict:
     return sc if isinstance(sc, dict) else {}
 
 
-def _pb_scene_entry_by_name(
-    doc: dict, scene_lower: str, *, device_id: str | None = None
-) -> dict[str, Any] | None:
+def _pb_scene_entry_by_name(doc: dict, scene_lower: str, *, device_id: str | None = None) -> dict[str, Any] | None:
     """按 **不区分大小写** 匹配 ``deskbot-face.json`` 中的表情场景。"""
     _ = doc
     return find_design_scene_by_name(_load_design_scenes_rows(device_id=device_id), scene_lower)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -40,10 +40,14 @@ class Device(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     device_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    pin_code: Mapped[str | None] = mapped_column(String(4), nullable=True)
     owner_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     access_token_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    volume: Mapped[int] = mapped_column(Integer, default=80, nullable=False)
+    fps: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    auto_reply: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    servo_mode: Mapped[str] = mapped_column(String(16), default="", nullable=False)
     claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -70,14 +74,33 @@ class ScheduledTask(Base):
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class SettingsTestDaily(Base):
-    """设置页 LLM/TTS 测试每日配额（按用户与 IP 分别计数）。"""
+class DeviceUsage(Base):
+    """设备每日用量统计。"""
 
-    __tablename__ = "settings_test_daily"
-    __table_args__ = (UniqueConstraint("scope", "scope_key", "usage_date", name="uq_settings_test_daily"),)
+    __tablename__ = "device_usage"
+    __table_args__ = (UniqueConstraint("date", "device_id", name="uq_device_usage_date_device"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
-    scope: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
-    scope_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    usage_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    device_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    asr: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    llm: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    cv: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    tts: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    total: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class DeviceProfileFace(Base):
+    """设备已注册人脸档案（原 face_profiles.json 迁入）。"""
+
+    __tablename__ = "device_profile_face"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor: Mapped[str] = mapped_column(Text, nullable=False)
+    descriptor_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="embedding")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

@@ -5,7 +5,6 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
-
 from deskbot_server.constants import PB_CHUNK_GAP_SEC, PB_MAX_PCM_BIN_BYTES, SAFE_SEND_TIMEOUT
 from deskbot_server.service.application.asr_chat_uplink import pack_ws_downlink_frame
 from deskbot_server.utils.ws_utils import WsUtils
@@ -78,9 +77,7 @@ async def _safe_send_pb_json_then_pcm(
     websocket, text_msg: str, pcm: bytes, *, timeout: float = SAFE_SEND_TIMEOUT
 ) -> tuple[bool, bool]:
     """打包为单帧 BIN 下发（json + 可选 PCM）。返回 ``(ok, ok)``。"""
-    return await _safe_send_pb_json_then_binaries(
-        websocket, text_msg, [pcm] if pcm else [], timeout=timeout
-    )
+    return await _safe_send_pb_json_then_binaries(websocket, text_msg, [pcm] if pcm else [], timeout=timeout)
 
 
 _PB_DEVICE_QUEUE_ATTR = "_bot_pb_device_downlink_queue"
@@ -253,7 +250,7 @@ async def _stop_pb_device_downlink_worker(ws) -> None:
         pass
     try:
         await asyncio.wait_for(task, timeout=5.0)
-    except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+    except (TimeoutError, asyncio.CancelledError, Exception):
         if not task.done():
             task.cancel()
             try:

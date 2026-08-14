@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 
-from deskbot_server.ports.tts import PhonemeSegment
-from deskbot_server.model.settings import AppSettings
 from deskbot_server.infrastructure.tts.doubao import load_doubao_tts_config, synthesize_doubao_tts
 from deskbot_server.infrastructure.tts.doubao_phoneme_align import build_phoneme_segments
+from deskbot_server.model.settings import AppSettings
+from deskbot_server.ports.tts import PhonemeSegment
 
 logger = logging.getLogger("deskbot-server")
 

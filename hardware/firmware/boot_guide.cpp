@@ -206,9 +206,9 @@ void boot_guide_wifi_on_connected(const char* ssid, const char* ip) {
   char id_line[48];
   snprintf(id_line, sizeof(id_line), "DeviceID:%s", get_device_id());
   phase_append_line(target, id_line);
-  char pin_line[28];
-  snprintf(pin_line, sizeof(pin_line), "Pin Code:%s", nvs_get_pin_code());
-  phase_append_line(target, pin_line, DESKBOT_DISPLAY_COLOR_YELLOW);
+  char ver_line[28];
+  snprintf(ver_line, sizeof(ver_line), "Version:%s", VERSION);
+  phase_append_line(target, ver_line, DESKBOT_DISPLAY_COLOR_YELLOW);
   display_guide_target_end();
 }
 

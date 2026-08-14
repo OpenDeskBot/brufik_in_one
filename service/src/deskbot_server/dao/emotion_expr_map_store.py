@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 
-
 from deskbot_server.constants import EMOTION_EXPR_MAP_FILE
 from deskbot_server.utils.device_data import resolve_json_path
 

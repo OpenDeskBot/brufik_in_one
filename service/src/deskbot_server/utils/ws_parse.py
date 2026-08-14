@@ -51,14 +51,3 @@ def extract_device_id(qargs: dict) -> str | None:
             if v:
                 return v
     return None
-
-
-def extract_pin_code(qargs: dict) -> str | None:
-    """从 URL 查询参数取 pin_code（别名 ``pin`` / ``pincode``）。"""
-    for key in ("pin_code", "pincode", "pin"):
-        v = qargs.get(key)
-        if v:
-            v = str(v).strip()
-            if v:
-                return v
-    return None

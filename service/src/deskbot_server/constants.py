@@ -35,7 +35,6 @@ CAMERA_FACE_CFG_FILE = str(GLOBAL_DATA_DIR / "camera_face.json")
 FACE_PROFILES_FILE = str(DATA_DIR / "face_profiles.json")
 FACE_DESIGN_FILE = str(GLOBAL_DATA_DIR / "deskbot-face.json")
 USER_MEMORY_FILE = str(DATA_DIR / "user_memory.json")
-DEVICE_VOLUME_FILE = str(DATA_DIR / "device_volume.json")
 EMOTION_EXPR_MAP_FILE = str(DATA_DIR / "emotion_expr_map.json")
 SCENE_PLAYBOOKS_FILE = str(DATA_DIR / "scene_playbooks.json")
 

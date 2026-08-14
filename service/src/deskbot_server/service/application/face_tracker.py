@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass
 from typing import Any
 
-from deskbot_server.constants import FACE_PROFILES_FILE
-from deskbot_server.dao.face_profiles_store import best_profile_similarity, load_face_profiles, resolve_profile_match
-from deskbot_server.utils.device_data import resolve_json_path
+from deskbot_server.dao.face_profiles_store import (
+    best_profile_similarity,
+    get_version,
+    load_face_profiles,
+    resolve_profile_match,
+)
 from deskbot_server.vision.face_identity import (
     attach_descriptor,
     descriptor_cosine_similarity,
@@ -35,15 +37,15 @@ class _Track:
     face_id: int
     nose: tuple[float, float]
     descriptor: list[float]
-    person_id: int | None = None
+    profile_id: int | None = None
     person_name: str | None = None
     lost: int = 0
 
 
-_active_trackers: list["FaceTracker"] = []
+_active_trackers: list[FaceTracker] = []
 
 
-def _register_tracker(tracker: "FaceTracker") -> None:
+def _register_tracker(tracker: FaceTracker) -> None:
     _active_trackers.append(tracker)
 
 
@@ -58,9 +60,9 @@ class FaceTracker:
     改进点（相对纯鼻尖跟踪）：
 
     - 鼻尖距离 + 特征相似度**联合**关联 track，转头/抖动时不易丢号
-    - ``person_id`` 绑定后使用**滞回阈值**（保持阈值 < 匹配阈值），减少闪烁
+    - ``profile_id`` 绑定后使用**滞回阈值**（保持阈值 < 匹配阈值），减少闪烁
     - ``face_id`` 单调递增、不在 1–32 间循环复用
-    - 档案向量仅在注册时写入文件；运行时**不** EMA 污染 ``face_profiles.json``
+    - 档案向量仅在注册时写入 DB；运行时**不** EMA 污染持久化数据
     - 人名匹配走 ``face_profiles_store``（与 ``CameraFaceService.find_face_by_embedding`` 同源）
     """
 
@@ -84,12 +86,11 @@ class FaceTracker:
         self.descriptor_ema_alpha = max(0.05, min(0.35, float(descriptor_ema_alpha)))
         self.identity_keep_margin = max(0.05, min(0.25, float(identity_keep_margin)))
         self._device_id = str(device_id or "").strip() or None
-        self._profiles_path = resolve_json_path(FACE_PROFILES_FILE, self._device_id)
         self._next_face_id = 1
         self._tracks: dict[int, _Track] = {}
-        self._profiles_mtime: float = 0.0
+        self._profiles_version: int = 0
         self._profiles: list[dict[str, Any]] = load_face_profiles(device_id=self._device_id)
-        self._profiles_mtime = self._profiles_file_mtime()
+        self._profiles_version = get_version()
         self._last_faces: list[dict[str, Any]] = []
         _register_tracker(self)
 
@@ -103,21 +104,15 @@ class FaceTracker:
     def _keep_threshold(self, desc: list[float]) -> float:
         return max(0.25 if is_embedding_vector(desc) else 0.70, self._match_threshold(desc) - self.identity_keep_margin)
 
-    def _profiles_file_mtime(self) -> float:
-        try:
-            return os.path.getmtime(self._profiles_path)
-        except OSError:
-            return 0.0
-
     def _maybe_reload_profiles(self) -> None:
-        mtime = self._profiles_file_mtime()
-        if mtime == self._profiles_mtime:
+        ver = get_version()
+        if ver == self._profiles_version:
             return
-        self._profiles_mtime = mtime
+        self._profiles_version = ver
         self._profiles = load_face_profiles(device_id=self._device_id)
 
     def reload_profiles(self) -> None:
-        self._profiles_mtime = self._profiles_file_mtime()
+        self._profiles_version = get_version()
         self._profiles = load_face_profiles(device_id=self._device_id)
 
     def get_last_faces(self) -> list[dict[str, Any]]:
@@ -151,31 +146,31 @@ class FaceTracker:
         return spatial * 0.35 + feat * 0.65
 
     def _resolve_person(
-        self, desc: list[float], *, locked_person_id: int | None
+        self, desc: list[float], *, locked_profile_id: int | None
     ) -> tuple[dict[str, Any] | None, float]:
         return resolve_profile_match(
             self._profiles,
             desc,
             match_threshold=self._match_threshold(desc),
             keep_threshold=self._keep_threshold(desc),
-            locked_person_id=locked_person_id,
+            locked_profile_id=locked_profile_id,
         )
 
     def _bind_person(self, track: _Track, profile: dict[str, Any], descriptor: list[float]) -> None:
-        track.person_id = int(profile["person_id"])
+        track.profile_id = int(profile["id"])
         track.person_name = str(profile["name"])
         track.descriptor = ema_update_descriptor(track.descriptor, descriptor, alpha=self.descriptor_ema_alpha)
 
     def _try_bind_profile(self, track: _Track, desc: list[float]) -> float | None:
-        profile, sim = self._resolve_person(desc, locked_person_id=track.person_id)
+        profile, sim = self._resolve_person(desc, locked_profile_id=track.profile_id)
         if profile is not None:
             self._bind_person(track, profile, desc)
             return sim
         return None
 
-    def _find_track_for_person(self, person_id: int) -> tuple[int, _Track] | None:
+    def _find_track_for_profile(self, profile_id: int) -> tuple[int, _Track] | None:
         for tid, track in self._tracks.items():
-            if track.person_id == person_id:
+            if track.profile_id == profile_id:
                 return tid, track
         return None
 
@@ -235,7 +230,7 @@ class FaceTracker:
                 track.nose = nose
                 track.lost = 0
                 track.descriptor = ema_update_descriptor(track.descriptor, desc, alpha=self.descriptor_ema_alpha)
-                if track.person_id is None:
+                if track.profile_id is None:
                     sim = self._try_bind_profile(track, desc)
                     if sim is not None:
                         tagged["identity_score"] = round(sim, 3)
@@ -247,10 +242,10 @@ class FaceTracker:
                 tagged["face_id"] = tid
                 tagged["face_id_source"] = "spatial_track"
             else:
-                profile, sim = self._resolve_person(desc, locked_person_id=None)
+                profile, sim = self._resolve_person(desc, locked_profile_id=None)
                 reused_person: tuple[int, _Track] | None = None
                 if profile is not None:
-                    reused_person = self._find_track_for_person(int(profile["person_id"]))
+                    reused_person = self._find_track_for_profile(int(profile["id"]))
 
                 track_match: tuple[int, _Track, float] | None = None
                 best_tid: int | None = None
@@ -282,7 +277,7 @@ class FaceTracker:
                     track.nose = nose
                     track.lost = 0
                     track.descriptor = ema_update_descriptor(track.descriptor, desc, alpha=self.descriptor_ema_alpha)
-                    if track.person_id is None and profile is not None:
+                    if track.profile_id is None and profile is not None:
                         self._bind_person(track, profile, desc)
                         tagged["identity_score"] = round(sim, 3)
                         tagged["match_source"] = "person_profile"
@@ -305,8 +300,8 @@ class FaceTracker:
                     tagged["match_source"] = "new"
                 tagged["face_id"] = tid
 
-            if track.person_id is not None:
-                tagged["person_id"] = track.person_id
+            if track.profile_id is not None:
+                tagged["id"] = track.profile_id
                 tagged["person_name"] = track.person_name
             elif self._profiles:
                 _best, best_sim = best_profile_similarity(self._profiles, desc)

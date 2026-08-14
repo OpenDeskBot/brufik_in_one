@@ -93,9 +93,7 @@ def lite_iid_to_api(iid: str) -> str:
 def api_iid_to_parts(iid: str) -> tuple[str, int, int]:
     parts = iid.split(".")
     if len(parts) != 3 or parts[0] not in {"prop", "action"}:
-        raise ValueError(
-            f"无效 iid: {iid}，期望 prop.{{siid}}.{{piid}} 或 action.{{siid}}.{{aiid}}"
-        )
+        raise ValueError(f"无效 iid: {iid}，期望 prop.{{siid}}.{{piid}} 或 action.{{siid}}.{{aiid}}")
     return parts[0], int(parts[1]), int(parts[2])
 
 
@@ -138,9 +136,7 @@ def resolve_spec_key(
         raise ValueError(f"设备 spec 中未找到 iid: {key}")
 
     matches = [
-        item
-        for item in spec.values()
-        if item.type_name == key and (writable is None or item.writeable == writable)
+        item for item in spec.values() if item.type_name == key and (writable is None or item.writeable == writable)
     ]
     if len(matches) == 1:
         return matches[0]

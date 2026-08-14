@@ -95,10 +95,11 @@ const char* get_device_id() {
   static bool initialized = false;
   if (!initialized) {
     uint8_t mac[6] = {0};
-    /* Arduino 3.x：WiFi.macAddress() 在 STA 未 start 时返回全 0；efuse STA MAC 不依赖联网。 */
     (void)esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(id, sizeof(id), "deskbot_%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3],
-             mac[4], mac[5]);
+    /* 格式：brfk_ + mac(12位hex) + 随机4位数字，后缀存 NVS 保持重启不变 */
+    uint32_t suffix = nvs_get_device_suffix();
+    snprintf(id, sizeof(id), "brfk_%02x%02x%02x%02x%02x%02x%04u", mac[0], mac[1], mac[2], mac[3],
+             mac[4], mac[5], suffix);
     initialized = true;
   }
   return id;
@@ -166,8 +167,7 @@ const char* get_server_ws_url() {
   while (base_len > 0 && base[base_len - 1] == '/') {
     base[--base_len] = '\0';
   }
-  snprintf(url, sizeof(url), "%s/asr_chat?device_id=%s&pin_code=%s", base, get_device_id(),
-           nvs_get_pin_code());
+  snprintf(url, sizeof(url), "%s/asr_chat?device_id=%s&version=%s", base, get_device_id(), VERSION);
   return url;
 }
 

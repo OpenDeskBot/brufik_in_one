@@ -2,11 +2,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from deskbot_server.web.deps import RequireUser
-from deskbot_server.web.urls import flash, url_for
-from deskbot_server.web.view_helpers import ViewAPIRoute, form_get, get_json, jsonify, redirect
-
-from deskbot_server.service.user_service import UserService
 from deskbot_server.dao.face_profiles_store import (
     delete_face_profile,
     list_face_profiles_summary,
@@ -22,13 +17,7 @@ from deskbot_server.dao.llm_config_store import (
     set_active_llm_model,
     update_llm_model,
 )
-from deskbot_server.dao.memory_store import (
-    add_memory,
-    delete_memory,
-    get_memory,
-    list_memory_for_device,
-    update_memory,
-)
+from deskbot_server.dao.memory_store import add_memory, delete_memory, get_memory, list_memory_for_device, update_memory
 from deskbot_server.infrastructure.llm.runtime import (
     ResolvedLlmConfig,
     build_chat_model,
@@ -52,8 +41,12 @@ from deskbot_server.service.scheduled_task_service import (
     delete_scheduled_task,
     list_scheduled_tasks_for_device,
 )
+from deskbot_server.service.user_service import UserService
+from deskbot_server.web.deps import RequireUser
 from deskbot_server.web.helpers import fetch_live_device_details
 from deskbot_server.web.session_device import clear_current_device, get_current_device_id, set_current_device_id
+from deskbot_server.web.urls import flash, url_for
+from deskbot_server.web.view_helpers import ViewAPIRoute, form_get, get_json, jsonify, redirect
 
 router = APIRouter(route_class=ViewAPIRoute, prefix="/app", tags=["app"])
 
@@ -158,14 +151,11 @@ def api_list_devices(request: Request, user: RequireUser):
 def api_bind_device(request: Request, user: RequireUser):
     payload = get_json(request, silent=True) or {}
     device_id = str(payload.get("device_id") or form_get(request, "device_id") or "").strip()
-    pin_code = str(payload.get("pin_code") or form_get(request, "pin_code") or "").strip()
     display_name = str(payload.get("display_name") or "").strip() or None
     if not device_id:
         return jsonify({"ok": False, "error": "绑定失败：请输入 device_id"}), 400
-    if not pin_code:
-        return jsonify({"ok": False, "error": "绑定失败：请输入 Pin Code"}), 400
     try:
-        device = UserService().bind_device(user.id, device_id, pin_code, display_name=display_name)
+        device = UserService().bind_device(user.id, device_id, display_name=display_name)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     set_current_device_id(request, device.device_id)
@@ -173,7 +163,7 @@ def api_bind_device(request: Request, user: RequireUser):
         {
             "ok": True,
             "message": "绑定成功",
-            "device": {"device_id": device.device_id, "pin_code": device.pin_code},
+            "device": {"device_id": device.device_id},
             "current_device_id": device.device_id,
         }
     )
@@ -199,6 +189,20 @@ def api_unbind_device(request: Request, user: RequireUser, device_id: str):
     if get_current_device_id(request) == device_id:
         clear_current_device(request)
     return jsonify({"ok": True})
+
+
+@router.post("/api/devices/{device_id}/reset-id")
+def api_reset_device_id(request: Request, user: RequireUser, device_id: str):
+    if not UserService().user_owns_device(user.id, device_id):
+        return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
+    try:
+        new_device_id = UserService().reset_device_id(device_id)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    # 同步更新 session 中的当前设备
+    if get_current_device_id(request) == device_id:
+        set_current_device_id(request, new_device_id)
+    return jsonify({"ok": True, "device_id": new_device_id})
 
 
 @router.get("/api/scheduled-tasks")
@@ -242,21 +246,21 @@ def api_list_face_profiles(request: Request, user: RequireUser):
     return jsonify({"ok": True, "device_id": device_id, "profiles": profiles})
 
 
-@router.delete("/api/face-profiles/{person_id}")
-def api_delete_face_profile(request: Request, user: RequireUser, person_id: int):
+@router.delete("/api/face-profiles/{profile_id}")
+def api_delete_face_profile(request: Request, user: RequireUser, profile_id: int):
     device_id = str(request.query_params.get("device_id") or get_current_device_id(request) or "").strip()
     if not device_id:
         return jsonify({"ok": False, "error": "请先选择设备"}), 400
     if not UserService().user_owns_device(user.id, device_id):
         return jsonify({"ok": False, "error": "设备不属于当前账号"}), 403
-    if not delete_face_profile(person_id, device_id=device_id):
+    if not delete_face_profile(profile_id, device_id=device_id):
         return jsonify({"ok": False, "error": "人脸档案不存在"}), 404
     return jsonify({"ok": True})
 
 
-@router.put("/api/face-profiles/{person_id}")
-@router.patch("/api/face-profiles/{person_id}")
-def api_update_face_profile(request: Request, user: RequireUser, person_id: int):
+@router.put("/api/face-profiles/{profile_id}")
+@router.patch("/api/face-profiles/{profile_id}")
+def api_update_face_profile(request: Request, user: RequireUser, profile_id: int):
     device_id = str(request.query_params.get("device_id") or get_current_device_id(request) or "").strip()
     if not device_id:
         return jsonify({"ok": False, "error": "请先选择设备"}), 400
@@ -267,7 +271,7 @@ def api_update_face_profile(request: Request, user: RequireUser, person_id: int)
     if not name:
         return jsonify({"ok": False, "error": "name 不能为空"}), 400
     try:
-        profile = update_face_profile_name(person_id, name, device_id=device_id)
+        profile = update_face_profile_name(profile_id, name, device_id=device_id)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     if profile is None:
@@ -284,23 +288,18 @@ def _require_owned_device_id(request: Request, user) -> tuple[str | None, tuple 
     return device_id, None
 
 
-def _consume_settings_test_quota(request: Request, user):
+def _consume_settings_test_quota(device_id: str):
     from deskbot_server.service.application.settings_test_limit import (
         SETTINGS_TEST_DAILY_LIMIT,
         SettingsTestLimitExceeded,
         check_and_consume_settings_test,
-        client_ip_from_request,
     )
 
     try:
-        snap = check_and_consume_settings_test(user_id=user.id, client_ip=client_ip_from_request(request))
+        snap = check_and_consume_settings_test(device_id=device_id)
     except SettingsTestLimitExceeded as exc:
         return None, (jsonify({"ok": False, "error": str(exc), "daily_limit": SETTINGS_TEST_DAILY_LIMIT}), 429)
-    return {
-        "daily_limit": SETTINGS_TEST_DAILY_LIMIT,
-        "user_remaining": snap.user_remaining,
-        "ip_remaining": snap.ip_remaining,
-    }, None
+    return {"daily_limit": SETTINGS_TEST_DAILY_LIMIT, "remaining": snap.remaining}, None
 
 
 @router.get("/api/memories")
@@ -436,7 +435,7 @@ def api_test_llm_model(request: Request, user: RequireUser):
     if err:
         return err
     assert device_id is not None
-    quota, limit_err = _consume_settings_test_quota(request, user)
+    quota, limit_err = _consume_settings_test_quota(device_id)
     if limit_err:
         return limit_err
     payload = get_json(request, silent=True) or {}
@@ -618,7 +617,11 @@ def api_tts_preview(request: Request, user: RequireUser):
     from deskbot_server.infrastructure.tts.doubao import synthesize_doubao_tts
     from deskbot_server.utils.util import pcm_to_wav_bytes
 
-    quota, limit_err = _consume_settings_test_quota(request, user)
+    device_id, err = _require_owned_device_id(request, user)
+    if err:
+        return err
+    assert device_id is not None
+    quota, limit_err = _consume_settings_test_quota(device_id)
     if limit_err:
         return limit_err
     payload = get_json(request, silent=True) or {}
@@ -796,8 +799,8 @@ ENDPOINTS = {
     "app.api_unbind_device": "/app/api/devices/{device_id}",
     "app.api_list_scheduled_tasks": "/app/api/scheduled-tasks",
     "app.api_list_face_profiles": "/app/api/face-profiles",
-    "app.api_delete_face_profile": "/app/api/face-profiles/{person_id}",
-    "app.api_update_face_profile": "/app/api/face-profiles/{person_id}",
+    "app.api_delete_face_profile": "/app/api/face-profiles/{profile_id}",
+    "app.api_update_face_profile": "/app/api/face-profiles/{profile_id}",
     "app.api_list_memories": "/app/api/memories",
     "app.api_create_memory": "/app/api/memories",
     "app.api_get_memory": "/app/api/memories/{entry_id}",

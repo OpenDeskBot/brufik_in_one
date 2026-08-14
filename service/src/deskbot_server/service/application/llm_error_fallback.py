@@ -9,7 +9,7 @@ from contextlib import suppress
 from typing import Any
 
 from deskbot_server.service.application.interaction_feedback import _send_servo_moves
-from deskbot_server.service.auto_reply import get_asr_voice_auto_reply_enabled
+from deskbot_server.dao.debug_prefs_store import get_auto_reply
 
 logger = logging.getLogger("deskbot-server")
 
@@ -66,7 +66,7 @@ def build_llm_error_fallback_plan(*, tts: str | None = None) -> dict[str, Any]:
 
 async def llm_error_motion_loop(hub: Any, device_id: str, done: asyncio.Event) -> None:
     """LLM 失败恢复期间：每 2s 一轮 idle 舵机，直至 ``done``。"""
-    if not get_asr_voice_auto_reply_enabled():
+    if not get_auto_reply(device_id):
         return
     dev = str(device_id or "").strip()
     if not dev:
@@ -91,7 +91,7 @@ def start_llm_error_motion_feedback(
     hub: Any, device_id: str | None
 ) -> tuple[asyncio.Event | None, asyncio.Task | None]:
     dev = str(device_id or "").strip()
-    if not dev or hub is None or not get_asr_voice_auto_reply_enabled():
+    if not dev or hub is None or not get_auto_reply(device_id):
         return None, None
     done = asyncio.Event()
     task = asyncio.create_task(llm_error_motion_loop(hub, dev, done))

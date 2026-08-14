@@ -1,66 +1,34 @@
-"""设备在线 PIN 缓存（供 Web 绑定验证；设备 WS 可选上报）。"""
+"""设备在线状态缓存（供 Web 绑定验证）。"""
 
 from __future__ import annotations
 
 import threading
 
-from deskbot_server.utils.pin_code import device_storage_dirname, normalize_pin_code, validate_pin_code
+__all__ = ["clear_device_online", "is_device_online", "set_device_online"]
 
-__all__ = [
-    "clear_online_pin",
-    "device_storage_dirname",
-    "get_online_pin",
-    "is_device_online",
-    "normalize_pin_code",
-    "resolve_pin_for_storage",
-    "set_online_pin",
-    "validate_pin_code",
-]
-
-_online_pins: dict[str, str] = {}
+_online_devices: set[str] = set()
 _lock = threading.Lock()
 
 
-def set_online_pin(device_id: str, pin_code: str) -> None:
-    did = str(device_id or "").strip()
-    pin = normalize_pin_code(pin_code)
-    if not did or not validate_pin_code(pin):
-        return
-    with _lock:
-        _online_pins[did] = pin
-
-
-def get_online_pin(device_id: str) -> str | None:
-    did = str(device_id or "").strip()
-    if not did:
-        return None
-    with _lock:
-        pin = _online_pins.get(did)
-        return pin if pin else None
-
-
-def clear_online_pin(device_id: str) -> None:
+def set_device_online(device_id: str) -> None:
     did = str(device_id or "").strip()
     if not did:
         return
     with _lock:
-        _online_pins.pop(did, None)
+        _online_devices.add(did)
+
+
+def clear_device_online(device_id: str) -> None:
+    did = str(device_id or "").strip()
+    if not did:
+        return
+    with _lock:
+        _online_devices.discard(did)
 
 
 def is_device_online(device_id: str) -> bool:
-    return get_online_pin(device_id) is not None
-
-
-def resolve_pin_for_storage(device_id: str) -> str | None:
-    """WS 运行时优先在线 PIN，否则回退 DB 绑定记录。"""
-    pin = get_online_pin(device_id)
-    if pin:
-        return pin
-    from deskbot_server.service.user_service import UserService
-
-    dev = UserService().get_device(device_id)
-    if dev is not None:
-        stored = normalize_pin_code(getattr(dev, "pin_code", None))
-        if validate_pin_code(stored):
-            return stored
-    return None
+    did = str(device_id or "").strip()
+    if not did:
+        return False
+    with _lock:
+        return did in _online_devices

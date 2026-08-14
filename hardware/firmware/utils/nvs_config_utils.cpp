@@ -9,7 +9,7 @@ namespace {
 constexpr char kDevPrefsNs[] = "deskbot_dev";
 constexpr char kWifiPrefsNs[] = "deskbot_wifi";
 
-constexpr char kPinKey[] = "pin";
+constexpr char kDeviceSuffixKey[] = "dev_suffix";
 constexpr char kApOfferSecKey[] = "ap_offer_sec";
 constexpr unsigned kApOfferSecDefault = 20;
 constexpr unsigned kApOfferSecMin = 5;
@@ -22,33 +22,20 @@ constexpr char kWifiCountKey[] = "cnt";
 constexpr char kLegacySsidKey[] = "ssid";
 constexpr char kLegacyPassKey[] = "pass";
 
-char s_pin[5] = {};
-bool s_pin_ready = false;
+uint32_t s_device_suffix = 0;
+bool s_suffix_ready = false;
 
 char s_ws_active_id[8] = "builtin";
 bool s_ws_active_cached = false;
 
-bool pin_digits_valid(const char* p) {
-  if (p == nullptr || strlen(p) != 4) {
-    return false;
-  }
-  for (int i = 0; i < 4; ++i) {
-    if (p[i] < '0' || p[i] > '9') {
-      return false;
-    }
-  }
-  return p[0] != '0';
-}
-
-void pin_generate_and_persist() {
-  const unsigned value = (unsigned)(esp_random() % 9000u + 1000u);
-  snprintf(s_pin, sizeof(s_pin), "%04u", value);
+void device_suffix_generate_and_persist() {
+  s_device_suffix = (uint32_t)(esp_random() % 9000u + 1000u);
   Preferences prefs;
   if (prefs.begin(kDevPrefsNs, false)) {
-    prefs.putString(kPinKey, s_pin);
+    prefs.putUInt(kDeviceSuffixKey, s_device_suffix);
     prefs.end();
   }
-  s_pin_ready = true;
+  s_suffix_ready = true;
 }
 
 void ws_id_for_index(int index, char* out, size_t out_sz) {
@@ -168,37 +155,33 @@ bool persist_wifi_list(const NvsWifiCredential* list, int count) {
 
 }  // namespace
 
-const char* nvs_get_pin_code() {
-  if (s_pin_ready) {
-    return s_pin;
+uint32_t nvs_get_device_suffix() {
+  if (s_suffix_ready) {
+    return s_device_suffix;
   }
 
   Preferences prefs;
   if (prefs.begin(kDevPrefsNs, true)) {
-    String stored = prefs.getString(kPinKey, "");
-    stored.trim();
-    if (pin_digits_valid(stored.c_str())) {
-      memcpy(s_pin, stored.c_str(), 4);
-      s_pin[4] = '\0';
-      prefs.end();
-      s_pin_ready = true;
-      return s_pin;
-    }
+    s_device_suffix = prefs.getUInt(kDeviceSuffixKey, 0);
     prefs.end();
+    if (s_device_suffix >= 1000 && s_device_suffix <= 9999) {
+      s_suffix_ready = true;
+      return s_device_suffix;
+    }
   }
 
-  pin_generate_and_persist();
-  return s_pin;
+  device_suffix_generate_and_persist();
+  return s_device_suffix;
 }
 
-const char* nvs_reset_pin_code() {
-  s_pin_ready = false;
+uint32_t nvs_reset_device_suffix() {
+  s_suffix_ready = false;
   Preferences prefs;
   if (prefs.begin(kDevPrefsNs, false)) {
-    prefs.remove(kPinKey);
+    prefs.remove(kDeviceSuffixKey);
     prefs.end();
   }
-  return nvs_get_pin_code();
+  return nvs_get_device_suffix();
 }
 
 unsigned nvs_get_ap_offer_timeout_min_sec() { return kApOfferSecMin; }
@@ -235,12 +218,12 @@ bool nvs_set_ap_offer_timeout_sec(unsigned sec) {
 void nvs_device_factory_reset() {
   Preferences prefs;
   if (prefs.begin(kDevPrefsNs, false)) {
-    prefs.remove(kPinKey);
+    prefs.remove(kDeviceSuffixKey);
     prefs.putUChar(kApOfferSecKey, (uint8_t)kApOfferSecDefault);
     prefs.end();
   }
-  s_pin_ready = false;
-  (void)nvs_get_pin_code();
+  s_suffix_ready = false;
+  (void)nvs_get_device_suffix();
 }
 
 const char* nvs_ws_get_active_id() {

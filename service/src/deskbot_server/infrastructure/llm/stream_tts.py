@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Callable
+from collections.abc import Callable
 
 _TTS_KEY_RE = re.compile(r'"tts"\s*:\s*', re.IGNORECASE)
 
