@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from deskbot_server.dao.face_profiles_store import (
+from deskbot_server.service.face_profile_service import (
     delete_face_profile,
     list_face_profiles_summary,
     update_face_profile_name,

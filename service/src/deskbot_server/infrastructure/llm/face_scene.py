@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
+from deskbot_server.dao.device_mapper import get_camera_servo_auto_mode
 from deskbot_server.service.application.face_snapshot_cache import list_device_faces
 from deskbot_server.vision.camera_face_tune import get_horizontal_fov_deg
 

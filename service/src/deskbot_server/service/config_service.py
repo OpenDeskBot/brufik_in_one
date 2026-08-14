@@ -1,6 +1,5 @@
 """配置服务门面：封装调试偏好、表情场景、舵机配置等 dao 操作，供 controller 调用。"""
 
-from deskbot_server.dao.debug_prefs_store import get_live_service_enabled, set_live_service_enabled
 from deskbot_server.dao.face_design_store import (
     _load_face_design_cached,
     build_face_expression_catalog,
@@ -23,6 +22,20 @@ from deskbot_server.dao.servo_config_store import (
     save_servo_cfg_file,
     servo_limits,
 )
+
+# ────────── 全局开关（内存态，原 debug_prefs_store）──────────
+
+_live_service_enabled: bool = True
+
+
+def get_live_service_enabled() -> bool:
+    return _live_service_enabled
+
+
+def set_live_service_enabled(enabled: bool) -> None:
+    global _live_service_enabled
+    _live_service_enabled = bool(enabled)
+
 
 __all__ = [
     "_load_face_design_cached",

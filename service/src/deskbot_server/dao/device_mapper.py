@@ -79,3 +79,37 @@ def update_servo_mode(device_id: str, servo_mode: str) -> int:
 @execute("DELETE FROM devices WHERE device_id = :device_id AND owner_user_id = :user_id")
 def delete_by_device_id(device_id: str, user_id: str) -> int:
     """删除设备绑定。"""
+
+
+# ────────────────────────── 调试偏好（原 debug_prefs_store）──────────────────────────
+
+_VALID_SERVO_AUTO_MODES = frozenset({"", "follow", "follow_frontal", "gaze"})
+
+
+def normalize_camera_servo_auto_mode(raw: object) -> str:
+    mode = str(raw or "").strip()
+    return mode if mode in _VALID_SERVO_AUTO_MODES else ""
+
+
+def get_auto_reply(device_id: str) -> bool:
+    dev = get_by_device_id(device_id)
+    return bool(dev.auto_reply) if dev else True
+
+
+def set_auto_reply(device_id: str, enabled: bool) -> None:
+    update_auto_reply(device_id, bool(enabled))
+    if not enabled:
+        update_servo_mode(device_id, "")
+
+
+def get_camera_servo_auto_mode(device_id: str) -> str:
+    dev = get_by_device_id(device_id)
+    if dev is None:
+        return ""
+    return normalize_camera_servo_auto_mode(dev.servo_mode)
+
+
+def set_camera_servo_auto_mode(device_id: str, mode: object) -> str:
+    norm = normalize_camera_servo_auto_mode(mode)
+    update_servo_mode(device_id, norm)
+    return norm

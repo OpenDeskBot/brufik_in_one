@@ -1,4 +1,4 @@
-"""已注册人脸档案持久化（``device_profile_face`` 表）。"""
+"""人脸档案业务层：匹配、注册、版本管理（原 face_profiles_store.py 迁入）。"""
 
 from __future__ import annotations
 
@@ -31,11 +31,10 @@ def get_version() -> int:
         return _version
 
 
-# ────────────────── 加载 ─────────────────────────
+# ────────────────── ORM → dict ─────────────────────────
 
 
 def _row_to_dict(row) -> dict[str, Any]:
-    """将 ORM 行转为与旧 JSON 格式兼容的 dict（``id`` 替代 ``person_id``）。"""
     descriptor = json.loads(row.descriptor) if isinstance(row.descriptor, str) else row.descriptor
     return {
         "id": int(row.id),
@@ -43,6 +42,9 @@ def _row_to_dict(row) -> dict[str, Any]:
         "descriptor": descriptor,
         "descriptor_kind": str(row.descriptor_kind or ""),
     }
+
+
+# ────────────────── 查询 ─────────────────────────
 
 
 def load_face_profiles(*, device_id: str | None = None) -> list[dict[str, Any]]:

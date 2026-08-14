@@ -305,7 +305,7 @@ class CameraFaceService(metaclass=SingletonMeta):
     ) -> dict[str, Any] | None:
         """用 embedding 在 ``face_profiles`` 中查找匹配人名。"""
         from deskbot_server.dao.camera_face_config_store import load_camera_face_cfg_file
-        from deskbot_server.dao.face_profiles_store import find_profile_by_similarity, load_face_profiles
+        from deskbot_server.service.face_profile_service import find_profile_by_similarity, load_face_profiles
         from deskbot_server.vision.face_identity import is_embedding_vector, match_threshold_for_descriptor
 
         if not isinstance(embedding, list) or len(embedding) < 4:
@@ -340,7 +340,7 @@ class CameraFaceService(metaclass=SingletonMeta):
     ) -> dict[str, Any]:
         """将 embedding 写入 ``face_profiles``，并刷新 tracker。"""
         from deskbot_server.dao.camera_face_config_store import load_camera_face_cfg_file
-        from deskbot_server.dao.face_profiles_store import upsert_profile
+        from deskbot_server.service.face_profile_service import upsert_profile
         from deskbot_server.service.application.face_tracker import reload_all_trackers
 
         name = str(name or "").strip()

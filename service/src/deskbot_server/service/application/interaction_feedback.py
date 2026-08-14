@@ -9,7 +9,7 @@ import uuid
 from contextlib import suppress
 from typing import Any
 
-from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
+from deskbot_server.dao.device_mapper import get_camera_servo_auto_mode
 from deskbot_server.dao.servo_config_store import clamp_servo_step, servo_limits
 from deskbot_server.pb.llm_plan import expand_llm_moves
 from deskbot_server.pb.servo_pcm import PB_CHUNK_MS_MAX, attach_pb_device_hints_from_config
@@ -23,7 +23,7 @@ from deskbot_server.service.application.camera_servo_follower import (
     _clamp,
     _screen_angles_from_analysis,
 )
-from deskbot_server.dao.debug_prefs_store import get_auto_reply
+from deskbot_server.dao.device_mapper import get_auto_reply
 from deskbot_server.ws.asr_chat_hub import AsrChatHub
 
 logger = logging.getLogger("deskbot-server")

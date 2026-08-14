@@ -7,11 +7,11 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
+from deskbot_server.dao.device_mapper import get_camera_servo_auto_mode
 from deskbot_server.dao.servo_config_store import clamp_servo_step, servo_limits
 from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
 from deskbot_server.pb.shapes import PB_ACTION_REPLACE, PB_LEVEL_IDLE
-from deskbot_server.dao.debug_prefs_store import get_auto_reply
+from deskbot_server.dao.device_mapper import get_auto_reply
 from deskbot_server.vision.camera_face_tune import (
     get_frontal_angle_threshold_deg,
     get_gaze_pitch_threshold_deg,

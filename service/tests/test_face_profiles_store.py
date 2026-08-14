@@ -23,7 +23,7 @@ def db_env(monkeypatch, tmp_path):
 
 
 def test_delete_face_profile(db_env):
-    from deskbot_server.dao.face_profiles_store import (
+    from deskbot_server.service.face_profile_service import (
         delete_face_profile,
         list_face_profiles_summary,
         upsert_profile,
@@ -42,7 +42,7 @@ def test_delete_face_profile(db_env):
 
 
 def test_update_face_profile_name(db_env):
-    from deskbot_server.dao.face_profiles_store import (
+    from deskbot_server.service.face_profile_service import (
         list_face_profiles_summary,
         update_face_profile_name,
         upsert_profile,
@@ -63,7 +63,7 @@ def test_update_face_profile_api(monkeypatch, tmp_path):
     monkeypatch.setenv("DESKBOT_DB_PATH", str(db_path))
     monkeypatch.setattr("deskbot_server.utils.device_data.ensure_device_data_initialized", lambda _did: False)
 
-    from deskbot_server.dao.face_profiles_store import upsert_profile
+    from deskbot_server.service.face_profile_service import upsert_profile
     from deskbot_server.db import init_database
     from deskbot_server.db.engine import init_engine, reset_engine
     from deskbot_server.web.app import create_app

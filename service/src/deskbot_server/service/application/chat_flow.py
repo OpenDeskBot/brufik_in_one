@@ -21,7 +21,7 @@ from deskbot_server.service.application.llm_error_fallback import (
     stop_llm_error_motion_feedback,
 )
 from deskbot_server.service.application.llm_tool_loop import complete_llm_with_tool_loop
-from deskbot_server.dao.debug_prefs_store import get_auto_reply
+from deskbot_server.dao.device_mapper import get_auto_reply
 from deskbot_server.utils.util import _ms_between
 
 if TYPE_CHECKING:

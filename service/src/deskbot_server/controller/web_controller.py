@@ -102,7 +102,7 @@ async def api_devices(request: Request) -> JSONResponse:
 @router.get("/api/asr_auto_reply")
 @require_api_auth
 async def api_asr_auto_reply(request: Request) -> JSONResponse:
-    from deskbot_server.dao.debug_prefs_store import get_auto_reply, set_auto_reply
+    from deskbot_server.dao.device_mapper import get_auto_reply, set_auto_reply
     from deskbot_server.web.session_device import get_current_device_id
 
     qargs = _request_qargs(request)
@@ -133,7 +133,7 @@ async def api_asr_auto_reply(request: Request) -> JSONResponse:
 @router.get("/api/live_service")
 @require_api_auth
 async def api_live_service(request: Request) -> JSONResponse:
-    from deskbot_server.dao.debug_prefs_store import set_live_service_enabled
+    from deskbot_server.service.config_service import set_live_service_enabled
 
     qargs = _request_qargs(request)
     peer = _request_peer(request)
@@ -157,7 +157,7 @@ async def api_live_service(request: Request) -> JSONResponse:
 @router.get("/api/camera_servo_auto_mode")
 @require_api_auth
 async def api_camera_servo_auto_mode(request: Request) -> JSONResponse:
-    from deskbot_server.dao.debug_prefs_store import (
+    from deskbot_server.dao.device_mapper import (
         get_camera_servo_auto_mode,
         normalize_camera_servo_auto_mode,
         set_camera_servo_auto_mode,
@@ -193,8 +193,9 @@ async def api_camera_servo_auto_mode(request: Request) -> JSONResponse:
 @router.get("/api/debug_prefs")
 @require_api_auth
 async def api_debug_prefs(request: Request) -> JSONResponse:
-    from deskbot_server.dao.debug_prefs_store import (
-        debug_prefs_snapshot,
+    from deskbot_server.dao.device_mapper import (
+        get_auto_reply,
+        get_camera_servo_auto_mode,
         normalize_camera_servo_auto_mode,
         set_auto_reply,
         set_camera_servo_auto_mode,
@@ -209,7 +210,11 @@ async def api_debug_prefs(request: Request) -> JSONResponse:
     if raw_ar is None and raw_live is None and raw_mode is None:
         # GET：无 device_id 返回默认值
         if device_id:
-            snap = debug_prefs_snapshot(device_id)
+            snap = {
+                "asr_auto_reply": get_auto_reply(device_id),
+                "live_service": get_live_service_enabled(),
+                "camera_servo_auto_mode": get_camera_servo_auto_mode(device_id),
+            }
         else:
             snap = {"asr_auto_reply": True, "live_service": True, "camera_servo_auto_mode": ""}
         return JSONResponse(status_code=200, content={"ok": True, **snap})
@@ -225,7 +230,7 @@ async def api_debug_prefs(request: Request) -> JSONResponse:
         else:
             return JSONResponse(status_code=400, content={"ok": False, "error": "invalid asr_auto_reply"})
     if raw_live is not None:
-        from deskbot_server.dao.debug_prefs_store import set_live_service_enabled
+        from deskbot_server.service.config_service import set_live_service_enabled
 
         se = str(raw_live).strip().lower()
         if se in ("1", "true", "yes", "on"):
@@ -242,7 +247,12 @@ async def api_debug_prefs(request: Request) -> JSONResponse:
             if not norm:
                 return JSONResponse(status_code=400, content={"ok": False, "error": "invalid camera_servo_auto_mode"})
             set_camera_servo_auto_mode(device_id, norm)
-    return JSONResponse(status_code=200, content={"ok": True, **debug_prefs_snapshot(device_id)})
+    snap = {
+        "asr_auto_reply": get_auto_reply(device_id),
+        "live_service": get_live_service_enabled(),
+        "camera_servo_auto_mode": get_camera_servo_auto_mode(device_id),
+    }
+    return JSONResponse(status_code=200, content={"ok": True, **snap})
 
 
 @router.get("/api/pipeline_recent")

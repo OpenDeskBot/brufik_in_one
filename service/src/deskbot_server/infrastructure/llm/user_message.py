@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode
+from deskbot_server.dao.device_mapper import get_camera_servo_auto_mode
 from deskbot_server.infrastructure.llm.face_scene import _nose_xy
 from deskbot_server.service.application.face_snapshot_cache import list_device_faces
 

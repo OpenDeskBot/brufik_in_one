@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from deskbot_server.dao.debug_prefs_store import get_camera_servo_auto_mode, set_camera_servo_auto_mode
+from deskbot_server.dao.device_mapper import get_camera_servo_auto_mode, set_camera_servo_auto_mode
 from deskbot_server.dao.device_tmp_store import read_device_tmp_file, write_device_tmp_file
 from deskbot_server.dao.memory_store import add_memory, delete_memory
 from deskbot_server.dao.session_store import execute_session_tool

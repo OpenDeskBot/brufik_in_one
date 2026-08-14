@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from deskbot_server.dao.debug_prefs_store import get_live_service_enabled
+from deskbot_server.service.config_service import get_live_service_enabled
 from deskbot_server.dao.face_expr_scenes_store import design_frames_to_pb_chain
 from deskbot_server.pb.llm_plan import _resolve_servo_preset_steps, expand_llm_anims, expand_llm_moves
 from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_LEVEL_IDLE, apply_pb_dispatch_fields

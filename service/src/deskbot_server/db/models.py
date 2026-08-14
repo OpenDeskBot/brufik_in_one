@@ -104,3 +104,45 @@ class DeviceProfileFace(Base):
     descriptor_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="embedding")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class DeviceMemory(Base):
+    """设备长期记忆（原 user_memory.json 迁入），注入 LLM system prompt。"""
+
+    __tablename__ = "device_memory"
+    __table_args__ = (
+        UniqueConstraint("device_id", "title", name="uq_device_memory_device_title"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    parent: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    retrieved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DeviceSession(Base):
+    """设备对话 Session 头。"""
+
+    __tablename__ = "device_session"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    device_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(64), nullable=False, default="新对话")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class DeviceSessionMessage(Base):
+    """Session 内单条消息。"""
+
+    __tablename__ = "device_session_message"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("device_session.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
