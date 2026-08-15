@@ -31,7 +31,6 @@ from deskbot_server.service.camera_face_service import CameraFaceService
 from deskbot_server.service.config_service import (
     design_frames_to_pb_chain,
     find_design_scene_by_name,
-    get_live_service_enabled,
     load_face_expr_scenes_file,
     load_servo_cfg_file,
     normalize_servo_document,
@@ -133,25 +132,32 @@ async def api_asr_auto_reply(request: Request) -> JSONResponse:
 @router.get("/api/live_service")
 @require_api_auth
 async def api_live_service(request: Request) -> JSONResponse:
-    from deskbot_server.service.config_service import set_live_service_enabled
+    from deskbot_server.dao.device_mapper import get_live_mode, set_live_mode
+    from deskbot_server.web.session_device import get_current_device_id
 
     qargs = _request_qargs(request)
     peer = _request_peer(request)
+    device_id = _extract_device_id(qargs) or get_current_device_id(request)
     raw_e = qargs.get("enabled")
     if raw_e is None:
-        logger.info("[HTTP] GET /api/live_service -> enabled=%s peer=%s", get_live_service_enabled(), peer)
-    if raw_e is not None:
-        se = str(raw_e).strip().lower()
-        if se in ("1", "true", "yes", "on"):
-            set_live_service_enabled(True)
-        elif se in ("0", "false", "no", "off"):
-            set_live_service_enabled(False)
-        else:
-            return JSONResponse(
-                status_code=400, content={"ok": False, "error": "invalid enabled; use 1/0 or true/false"}
-            )
-        logger.info("[HTTP] /api/live_service set enabled=%s peer=%s", get_live_service_enabled(), peer)
-    return JSONResponse(status_code=200, content={"ok": True, "enabled": get_live_service_enabled()})
+        # GET：无 device_id 返回默认值
+        enabled = get_live_mode(device_id) if device_id else True
+        logger.info("[HTTP] GET /api/live_service -> enabled=%s peer=%s", enabled, peer)
+        return JSONResponse(status_code=200, content={"ok": True, "enabled": enabled})
+    # SET：需要 device_id
+    if not device_id:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "请先选择设备"})
+    se = str(raw_e).strip().lower()
+    if se in ("1", "true", "yes", "on"):
+        set_live_mode(device_id, True)
+    elif se in ("0", "false", "no", "off"):
+        set_live_mode(device_id, False)
+    else:
+        return JSONResponse(
+            status_code=400, content={"ok": False, "error": "invalid enabled; use 1/0 or true/false"}
+        )
+    logger.info("[HTTP] /api/live_service set enabled=%s peer=%s", get_live_mode(device_id), peer)
+    return JSONResponse(status_code=200, content={"ok": True, "enabled": get_live_mode(device_id)})
 
 
 @router.get("/api/camera_servo_auto_mode")
@@ -196,9 +202,11 @@ async def api_debug_prefs(request: Request) -> JSONResponse:
     from deskbot_server.dao.device_mapper import (
         get_auto_reply,
         get_camera_servo_auto_mode,
+        get_live_mode,
         normalize_camera_servo_auto_mode,
         set_auto_reply,
         set_camera_servo_auto_mode,
+        set_live_mode,
     )
     from deskbot_server.web.session_device import get_current_device_id
 
@@ -212,7 +220,7 @@ async def api_debug_prefs(request: Request) -> JSONResponse:
         if device_id:
             snap = {
                 "asr_auto_reply": get_auto_reply(device_id),
-                "live_service": get_live_service_enabled(),
+                "live_service": get_live_mode(device_id),
                 "camera_servo_auto_mode": get_camera_servo_auto_mode(device_id),
             }
         else:
@@ -230,13 +238,11 @@ async def api_debug_prefs(request: Request) -> JSONResponse:
         else:
             return JSONResponse(status_code=400, content={"ok": False, "error": "invalid asr_auto_reply"})
     if raw_live is not None:
-        from deskbot_server.service.config_service import set_live_service_enabled
-
         se = str(raw_live).strip().lower()
         if se in ("1", "true", "yes", "on"):
-            set_live_service_enabled(True)
+            set_live_mode(device_id, True)
         elif se in ("0", "false", "no", "off"):
-            set_live_service_enabled(False)
+            set_live_mode(device_id, False)
         else:
             return JSONResponse(status_code=400, content={"ok": False, "error": "invalid live_service"})
     if raw_mode is not None:
@@ -249,7 +255,7 @@ async def api_debug_prefs(request: Request) -> JSONResponse:
             set_camera_servo_auto_mode(device_id, norm)
     snap = {
         "asr_auto_reply": get_auto_reply(device_id),
-        "live_service": get_live_service_enabled(),
+        "live_service": get_live_mode(device_id),
         "camera_servo_auto_mode": get_camera_servo_auto_mode(device_id),
     }
     return JSONResponse(status_code=200, content={"ok": True, **snap})
@@ -381,7 +387,12 @@ async def api_device_servo(request: Request) -> JSONResponse:
             f" +scene={with_scene!r} frames={len(tail_frames)}" if tail_frames else "",
         )
         if tail_frames:
-            n = await asr_chat_hub.send_pb_single_then_chain_ordered(dev, payload, tail_frames)
+            from deskbot_server.model.pb_seq import PbBlock, PbSeq
+
+            head_entry = PbBlock.from_wire(payload)
+            tail_entries = tuple(PbBlock.from_wire(f) for f in tail_frames)
+            pb_seq = PbSeq(req=payload.get("req", ""), entries=(head_entry,) + tail_entries, level=pb_level)
+            n = await asr_chat_hub.send(dev, pb_seq)
         else:
             n = await asr_chat_hub.send(dev, payload)
     except Exception:
@@ -525,8 +536,9 @@ async def api_device_face_play(request: Request) -> JSONResponse:
     pairs = design_frames_to_pb_chain(ent.get("frames") or [], runtime_req=req_id)
     if not pairs:
         return JSONResponse(status_code=500, content={"ok": False, "error": "empty frames", "t": time.time()})
-    chain = [msg for msg, _bins in pairs]
-    binaries_per_frame = [list(_bins) for _msg, _bins in pairs]
+    from deskbot_server.model.pb_seq import PbSeq
+
+    pb_seq = PbSeq.from_wire_pairs(pairs, level=PB_LEVEL_DEBUG)
     expr_name = str(ent.get("name") or name_q).strip()
     logger.info(
         "[HTTP] GET /api/device_face_play peer=%s device_id=%s kind=%s name=%s req=%s frames=%d",
@@ -535,10 +547,10 @@ async def api_device_face_play(request: Request) -> JSONResponse:
         kind_q,
         expr_name,
         req_id,
-        len(chain),
+        pb_seq.block_count,
     )
     try:
-        n = await asr_chat_hub.send_pb_chain_ordered(dev, chain, binaries_per_frame=binaries_per_frame)
+        n = await asr_chat_hub.send(dev, pb_seq)
     except Exception:
         logger.exception("[HTTP] /api/device_face_play 下发异常 device_id=%s kind=%s name=%s", dev, kind_q, expr_name)
         n = 0
@@ -555,7 +567,7 @@ async def api_device_face_play(request: Request) -> JSONResponse:
             "kind": kind_q,
             "name": expr_name,
             "req": req_id,
-            "frames": len(chain),
+            "frames": pb_seq.block_count,
             "delivered": n,
             "hint": hint,
             "error": hint if n == 0 else None,
@@ -810,8 +822,9 @@ async def api_device_pb_scene(request: Request) -> JSONResponse:
     pairs = design_frames_to_pb_chain(ent.get("frames") or [], runtime_req=req_id)
     if not pairs:
         return JSONResponse(status_code=500, content={"error": "empty frames", "t": time.time()})
-    frames = [msg for msg, _bins in pairs]
-    binaries_per_frame = [list(_bins) for _msg, _bins in pairs]
+    from deskbot_server.model.pb_seq import PbSeq
+
+    pb_seq = PbSeq.from_wire_pairs(pairs, level=PB_LEVEL_DEBUG)
     scene_log = str(ent.get("name") or scene_q).strip().lower()
 
     logger.info(
@@ -820,10 +833,10 @@ async def api_device_pb_scene(request: Request) -> JSONResponse:
         dev,
         scene_log,
         req_id,
-        len(frames),
+        pb_seq.block_count,
     )
     try:
-        n = await asr_chat_hub.send_pb_chain_ordered(dev, frames, binaries_per_frame=binaries_per_frame)
+        n = await asr_chat_hub.send(dev, pb_seq)
     except Exception:
         logger.exception("[HTTP] /api/device_pb_scene 下发异常 device_id=%s scene=%s", dev, scene_log)
         return JSONResponse(
@@ -841,7 +854,7 @@ async def api_device_pb_scene(request: Request) -> JSONResponse:
         scene_log,
         dev,
         req_id,
-        len(frames),
+        pb_seq.block_count,
         n,
     )
     hint = None
@@ -857,7 +870,7 @@ async def api_device_pb_scene(request: Request) -> JSONResponse:
             "device_id": dev,
             "scene": scene_q,
             "req": req_id,
-            "frames": len(frames),
+            "frames": pb_seq.block_count,
             "delivered": n,
             "hint": hint,
             "t": time.time(),
@@ -1125,10 +1138,11 @@ async def api_device_pb_expr_scene(request: Request) -> JSONResponse:
     pairs = design_frames_to_pb_chain(ent.get("frames") or [], runtime_req=req_id)
     if not pairs:
         return JSONResponse(status_code=500, content={"ok": False, "error": "empty frames", "t": time.time()})
-    chain = [msg for msg, _bins in pairs]
-    binaries_per_frame = [list(_bins) for _msg, _bins in pairs]
+    from deskbot_server.model.pb_seq import PbSeq
+
+    pb_seq = PbSeq.from_wire_pairs(pairs, level=PB_LEVEL_DEBUG)
     try:
-        n = await asr_chat_hub.send_pb_chain_ordered(dev, chain, binaries_per_frame=binaries_per_frame)
+        n = await asr_chat_hub.send(dev, pb_seq)
     except Exception:
         logger.exception("[HTTP] /api/device_pb_expr_scene 下发异常 device_id=%s scene=%s", dev, scene_q)
         n = 0
@@ -1144,7 +1158,7 @@ async def api_device_pb_expr_scene(request: Request) -> JSONResponse:
             "device_id": dev,
             "scene": ent.get("name"),
             "req": req_id,
-            "frames": len(chain),
+            "frames": pb_seq.block_count,
             "delivered": n,
             "hint": hint,
             "error": hint if n == 0 else None,

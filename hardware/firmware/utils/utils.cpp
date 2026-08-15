@@ -392,3 +392,8 @@ void* psram_malloc(size_t sz) {
   void* p = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   return p ? p : malloc(sz);
 }
+
+void safe_copy(char* dst, size_t cap, const char* src) {
+  strncpy(dst, src, cap);
+  dst[cap - 1] = '\0';
+}

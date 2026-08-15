@@ -30,6 +30,7 @@ void display_guide_target_end();
 enum DisplayJobType : uint8_t {
   DISPLAY_JOB_CANCEL = 0,
   DISPLAY_JOB_PB_ANIM_FRAMES = 1,
+  DISPLAY_JOB_END_OF_TASK = 2,
 };
 
 /** 提交 pb_anim_frame[]；frames 所有权转移给渲染任务。 */
@@ -43,6 +44,12 @@ void display_render_submit_pb_anim_frames_owned(pb_anim_frame* frames, size_t fr
 void display_abort();
 /** 同 display_abort（兼容旧名）。 */
 void display_render_reset();
+/** 当前任务是否已执行完毕（DISPLAY_JOB_END_OF_TASK 已出队）。 */
+bool display_task_done();
+/** 入队 END_OF_TASK 标记；task_loop 处理后 display_task_done() 为 true。 */
+void display_signal_task_done();
+/** 直接设置完成标志（cancel 场景，不走队列）。 */
+void display_set_task_done_flag();
 
 /** xQueue 缓冲深度（供 pb 回压）。 */
 unsigned display_render_input_queue_depth();

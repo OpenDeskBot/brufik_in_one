@@ -133,12 +133,19 @@ async def complete_llm_with_tool_loop(
 
         cam_fps = parse_pb_cam_fps(parsed.get("cam_fps"))
         interim_text = (parsed.get("reply") or "").strip()
-        if not interim_text:
-            interim_text = build_tool_interim_tts(tools)
-            if interim_text:
-                logger.info(
-                    "[LLM] tool 轮兜底过渡 TTS device_id=%s req=%s text=%r", device_id, request_id, interim_text[:80]
-                )
+        if interim_text:
+            # LLM 已给出完整回复，reply 即最终结果，不再继续调用 LLM
+            all_tools.extend(tools)
+            tool_results = await _execute_tools_round(
+                tools, device_id=str(device_id), session_id=session_id, asr_chat_hub=asr_chat_hub, cam_fps=cam_fps
+            )
+            all_tool_results.extend(tool_results)
+            break
+        interim_text = build_tool_interim_tts(tools)
+        if interim_text:
+            logger.info(
+                "[LLM] tool 轮兜底过渡 TTS device_id=%s req=%s text=%r", device_id, request_id, interim_text[:80]
+            )
 
         # 拍照须先拿到帧再播过渡 TTS（播报期间固件暂停 camera 上行）
         if _tools_need_camera(tools):

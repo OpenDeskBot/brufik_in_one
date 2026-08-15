@@ -23,19 +23,6 @@ from deskbot_server.dao.servo_config_store import (
     servo_limits,
 )
 
-# ────────── 全局开关（内存态，原 debug_prefs_store）──────────
-
-_live_service_enabled: bool = True
-
-
-def get_live_service_enabled() -> bool:
-    return _live_service_enabled
-
-
-def set_live_service_enabled(enabled: bool) -> None:
-    global _live_service_enabled
-    _live_service_enabled = bool(enabled)
-
 
 __all__ = [
     "_load_face_design_cached",
@@ -44,7 +31,6 @@ __all__ = [
     "ensure_face_design_file",
     "find_design_scene_by_name",
     "find_playbook_by_name",
-    "get_live_service_enabled",
     "load_face_expr_scenes_file",
     "load_scene_playbooks_file",
     "load_servo_cfg_file",
@@ -53,5 +39,4 @@ __all__ = [
     "resolve_face_expression",
     "save_servo_cfg_file",
     "servo_limits",
-    "set_live_service_enabled",
 ]

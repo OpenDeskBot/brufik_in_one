@@ -43,6 +43,12 @@ void task_setup_head();
 void head_submit_pb_servo_chunk_owned(pb_servo_frame* frames, size_t count);
 /** 打断：置 need_cancel，再队尾入队 type=cancel。 */
 void head_abort();
+/** 当前任务是否已执行完毕（kEndOfTask 已出队）。 */
+bool head_task_done();
+/** 入队 kEndOfTask 标记；task_loop 处理后 head_task_done() 为 true。 */
+void head_signal_task_done();
+/** 直接设置完成标志（cancel 场景，不走队列）。 */
+void head_set_task_done_flag();
 /** xQueue 缓冲深度（供 pb 回压）。 */
 unsigned head_motor_input_queue_depth();
 

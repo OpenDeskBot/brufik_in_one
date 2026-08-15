@@ -175,10 +175,10 @@ def test_build_llm_user_message():
             }
         ],
     )
-    ack = '{"type":"pb_ack","servo":{"x":90,"y":75}}'
+    ack = '{"type":"pb_ack","req":"abc","idx":9,"ack_type":"pb_end","space":40}'
     msg = build_llm_user_message("你好", device_id=dev, device_context=ack)
-    assert "水平舵机角度: 90" in msg
-    assert "垂直舵机角度: 75" in msg
+    assert "水平舵机角度: 未知" in msg
+    assert "垂直舵机角度: 未知" in msg
     assert "faceid=1" in msg
     assert "name=小明" in msg
     assert "脸中心位置=(200,140)" in msg

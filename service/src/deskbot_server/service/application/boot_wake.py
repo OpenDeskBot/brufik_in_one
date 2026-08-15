@@ -40,12 +40,15 @@ async def deliver_boot_wake_scene(hub: AsrChatHub, device_id: str) -> int:
         logger.warning("[boot_wake] 场景 %r 无有效帧 device_id=%s", BOOT_WAKE_SCENE, dev)
         return 0
     frames = [msg for msg, _bins in pairs]
-    binaries_per_frame = [list(_bins) for _msg, _bins in pairs]
     apply_pb_dispatch_fields(frames, action=PB_ACTION_REPLACE, level=PB_LEVEL_TASK)
     attach_pb_device_hints_from_config(frames)
+    # frames 是 pairs 中 dict 的引用，修改已就地生效
+    from deskbot_server.model.pb_seq import PbSeq
+
+    pb_seq = PbSeq.from_wire_pairs(pairs, level=PB_LEVEL_TASK)
     n = 0
     try:
-        n = await hub.send_pb_chain_ordered(dev, frames, binaries_per_frame=binaries_per_frame)
+        n = await hub.send(dev, pb_seq)
         logger.info(
             "[boot_wake] scene=%s device_id=%s req=%s frames=%d ws_sends=%d",
             BOOT_WAKE_SCENE,

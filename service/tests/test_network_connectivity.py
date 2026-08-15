@@ -7,7 +7,7 @@ import asyncio
 from deskbot_server.ws.pb_ack_waiter import PbAckGate
 
 
-def test_pb_ack_gate_wait_idx():
+def test_pb_ack_gate_wait_for_chunk_or_end():
     async def _run():
         gate = PbAckGate()
         device_id = "test_dev"
@@ -16,25 +16,69 @@ def test_pb_ack_gate_wait_idx():
 
         async def delayed_ack():
             await asyncio.sleep(0.05)
-            await gate.notify(device_id, {"req": req, "idx": 0})
+            await gate.notify(device_id, {"req": req, "idx": 9, "ack_type": "pb_chunk", "space": 40})
 
         task = asyncio.create_task(delayed_ack())
-        ok = await gate.wait_idx(device_id, req, 0, timeout=2.0)
+        chunk_ok, end_ok = await gate.wait_for_chunk_or_end(device_id, req, timeout=2.0)
+        await task
+        assert chunk_ok is True
+        assert end_ok is False
+
+    asyncio.run(_run())
+
+
+def test_pb_ack_gate_end_received():
+    """pb_end ack 同时满足 wait_for_chunk_or_end 和 wait_for_end。"""
+    async def _run():
+        gate = PbAckGate()
+        device_id = "test_dev2"
+        req = "req002"
+        await gate.begin_req(device_id, req)
+        await gate.notify(device_id, {"req": req, "idx": 9, "ack_type": "pb_end", "space": 40})
+
+        chunk_ok, end_ok = await gate.wait_for_chunk_or_end(device_id, req, timeout=0.5)
+        assert chunk_ok is False
+        assert end_ok is True
+
+    asyncio.run(_run())
+
+
+def test_pb_ack_gate_wait_for_end():
+    async def _run():
+        gate = PbAckGate()
+        device_id = "test_dev3"
+        req = "req003"
+        await gate.begin_req(device_id, req)
+
+        async def delayed_ack():
+            await asyncio.sleep(0.05)
+            await gate.notify(device_id, {"req": req, "idx": 9, "ack_type": "pb_end", "space": 40})
+
+        task = asyncio.create_task(delayed_ack())
+        ok = await gate.wait_for_end(device_id, req, timeout=2.0)
         await task
         assert ok is True
 
     asyncio.run(_run())
 
 
-def test_pb_ack_gate_out_of_order_still_advances():
+def test_pb_ack_gate_chunk_consumed_on_wait():
+    """wait_for_chunk_or_end 消费 chunk_received，第二次调用需新 ack。"""
     async def _run():
         gate = PbAckGate()
-        device_id = "test_dev2"
-        req = "req002"
+        device_id = "test_dev4"
+        req = "req004"
         await gate.begin_req(device_id, req)
-        await gate.notify(device_id, {"req": req, "idx": 2})
-        ok = await gate.wait_idx(device_id, req, 1, timeout=0.5)
-        assert ok is True
+        await gate.notify(device_id, {"req": req, "idx": 9, "ack_type": "pb_chunk", "space": 40})
+
+        chunk_ok, end_ok = await gate.wait_for_chunk_or_end(device_id, req, timeout=0.5)
+        assert chunk_ok is True
+        assert end_ok is False
+
+        # 第二次无新 ack → 超时
+        chunk_ok2, end_ok2 = await gate.wait_for_chunk_or_end(device_id, req, timeout=0.2)
+        assert chunk_ok2 is False
+        assert end_ok2 is False
 
     asyncio.run(_run())
 

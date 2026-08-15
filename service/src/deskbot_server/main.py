@@ -80,8 +80,7 @@ def build_runtime() -> AppRuntime:
     asr_chat_hub = AsrChatHub(device_pb_only=pipeline.asr_chat_device_pb_only, pipeline_broker=device_pipeline_broker)
     LiveService().bind(asr_chat_hub)
     logger.info(
-        "[server] live enabled=%s: 无有效对话 %.1fs 后 wander，1-%d 轮后 sleep %.0f-%.0fs，gaze 优先",
-        LiveService.active(),
+        "[server] live_mode: per-device (DB), 无有效对话 %.1fs 后 wander，1-%d 轮后 sleep %.0f-%.0fs，gaze 优先",
         ENTER_SEC,
         WANDER_MAX_CYCLES,
         SLEEP_MIN_SEC,
@@ -155,4 +154,7 @@ async def main():
         ws_max_size=None,
     )
     server = uvicorn.Server(config)
-    await server.serve()
+    try:
+        await server.serve()
+    finally:
+        await runtime.asr_chat_hub.shutdown()

@@ -76,6 +76,11 @@ def update_servo_mode(device_id: str, servo_mode: str) -> int:
     """更新舵机跟随模式。"""
 
 
+@execute("UPDATE devices SET live_mode = :live_mode WHERE device_id = :device_id")
+def update_live_mode(device_id: str, live_mode: bool) -> int:
+    """更新活体模式开关。"""
+
+
 @execute("DELETE FROM devices WHERE device_id = :device_id AND owner_user_id = :user_id")
 def delete_by_device_id(device_id: str, user_id: str) -> int:
     """删除设备绑定。"""
@@ -113,3 +118,12 @@ def set_camera_servo_auto_mode(device_id: str, mode: object) -> str:
     norm = normalize_camera_servo_auto_mode(mode)
     update_servo_mode(device_id, norm)
     return norm
+
+
+def get_live_mode(device_id: str) -> bool:
+    dev = get_by_device_id(device_id)
+    return bool(dev.live_mode) if dev else True
+
+
+def set_live_mode(device_id: str, enabled: bool) -> None:
+    update_live_mode(device_id, bool(enabled))

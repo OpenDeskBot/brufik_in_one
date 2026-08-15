@@ -1,4 +1,4 @@
-"""下行 pb 链：按设备 ``pb_ack`` 流控（收齐 idx 后再发下一片）。"""
+"""下行 pb 链：按设备 ``pb_ack.ack_type`` 流控（pb_chunk / pb_end）。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ def pb_wait_ack_timeout_sec() -> float:
 
 @dataclass
 class _ReqAckState:
-    last_idx: int = -1
+    chunk_received: bool = False
+    end_received: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     cond: asyncio.Condition = field(init=False)
 
@@ -31,7 +32,7 @@ class _ReqAckState:
 
 
 class PbAckGate:
-    """按 ``(device_id, req)`` 等待 ``pb_ack.idx >= 目标 idx``。"""
+    """按 ``(device_id, req)`` 等待 ``pb_ack.ack_type`` 为 ``pb_chunk`` 或 ``pb_end``。"""
 
     def __init__(self) -> None:
         self._states: dict[tuple[str, str], _ReqAckState] = {}
@@ -47,7 +48,7 @@ class PbAckGate:
             return st
 
     async def begin_req(self, device_id: str, req: str) -> None:
-        """新一轮下发前重置该 ``req`` 的确认水位。"""
+        """新一轮下发前重置该 ``req`` 的确认状态。"""
         if not device_id or not req:
             return
         async with self._meta_lock:
@@ -59,17 +60,53 @@ class PbAckGate:
         req = ack.get("req")
         if not isinstance(req, str) or not req:
             return
-        try:
-            idx = int(ack.get("idx", -1))
-        except (TypeError, ValueError):
-            idx = -1
+        ack_type = str(ack.get("ack_type", ""))
         st = await self._state(device_id, req)
         async with st.cond:
-            if idx > st.last_idx:
-                st.last_idx = idx
+            if ack_type == "pb_chunk":
+                st.chunk_received = True
+            elif ack_type == "pb_end":
+                st.end_received = True
             st.cond.notify_all()
 
-    async def wait_idx(self, device_id: str, req: str, idx: int, *, timeout: float | None = None) -> bool:
+    async def wait_for_chunk_or_end(self, device_id: str, req: str, *, timeout: float | None = None) -> tuple[bool, bool]:
+        """等待 ``pb_chunk`` 或 ``pb_end`` ack。
+
+        Returns ``(chunk_received, end_received)``。
+        消费 ``chunk_received``（重置为 False），``end_received`` 保持 True。
+        """
+        if not device_id or not req:
+            return True, False
+        if timeout is None:
+            timeout = pb_wait_ack_timeout_sec()
+        st = await self._state(device_id, req)
+        deadline = time.monotonic() + timeout
+        async with st.cond:
+            while not st.chunk_received and not st.end_received:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    logger.warning(
+                        "[pb_ack] 等待超时 device_id=%s req=%s",
+                        device_id, req,
+                    )
+                    return False, False
+                try:
+                    await asyncio.wait_for(st.cond.wait(), timeout=remaining)
+                except TimeoutError:
+                    logger.warning(
+                        "[pb_ack] 等待超时 device_id=%s req=%s",
+                        device_id, req,
+                    )
+                    return False, False
+            chunk = st.chunk_received
+            end = st.end_received
+            st.chunk_received = False  # 消费 chunk
+            # end_received 保持 True（一次性事件）
+        logger.info("[pb_ack] 已确认 device_id=%s req=%s chunk=%s end=%s", device_id, req, chunk, end)
+        return chunk, end
+
+    async def wait_for_end(self, device_id: str, req: str, *, timeout: float | None = None) -> bool:
+        """等待 ``pb_end`` ack。"""
         if not device_id or not req:
             return True
         if timeout is None:
@@ -77,29 +114,23 @@ class PbAckGate:
         st = await self._state(device_id, req)
         deadline = time.monotonic() + timeout
         async with st.cond:
-            while st.last_idx < idx:
+            while not st.end_received:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     logger.warning(
-                        "[pb_ack] 等待超时 device_id=%s req=%s need_idx>=%s last_idx=%s",
-                        device_id,
-                        req,
-                        idx,
-                        st.last_idx,
+                        "[pb_ack] 等待 end 超时 device_id=%s req=%s",
+                        device_id, req,
                     )
                     return False
                 try:
                     await asyncio.wait_for(st.cond.wait(), timeout=remaining)
                 except TimeoutError:
                     logger.warning(
-                        "[pb_ack] 等待超时 device_id=%s req=%s need_idx>=%s last_idx=%s",
-                        device_id,
-                        req,
-                        idx,
-                        st.last_idx,
+                        "[pb_ack] 等待 end 超时 device_id=%s req=%s",
+                        device_id, req,
                     )
                     return False
-        logger.info("[pb_ack] 已确认 device_id=%s req=%s need_idx=%s last_idx=%s", device_id, req, idx, st.last_idx)
+        logger.info("[pb_ack] end 已确认 device_id=%s req=%s", device_id, req)
         return True
 
 

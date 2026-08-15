@@ -63,21 +63,11 @@ def _normalize_incoming_pb_ack(data: dict[str, Any]) -> dict[str, Any] | None:
     except Exception:
         out["idx"] = 0
     try:
-        out["audio_buf_ms"] = int(data["audio_buf_ms"])
+        out["space"] = int(data.get("space", 0))
     except Exception:
-        out["audio_buf_ms"] = 0
-    sv = data.get("servo")
-    if isinstance(sv, dict):
-        servo_out: dict[str, int] = {}
-        for k in ("x", "y", "x_min", "x_max", "y_min", "y_max"):
-            if k not in sv:
-                continue
-            try:
-                servo_out[k] = int(sv[k])  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                continue
-        if servo_out:
-            out["servo"] = servo_out
+        out["space"] = 0
+    ack_type = data.get("ack_type", "")
+    out["ack_type"] = ack_type if isinstance(ack_type, str) and ack_type in ("pb_chunk", "pb_end") else ""
     return out
 
 

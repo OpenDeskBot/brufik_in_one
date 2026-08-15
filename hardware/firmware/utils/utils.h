@@ -90,3 +90,12 @@ BaseType_t utils_task_create_pinned(TaskFunction_t fn, const char* name, uint32_
 
 /** PSRAM 优先分配，失败回落内部堆。调用方 free() 或 heap_caps_free() 均可。 */
 void* psram_malloc(size_t sz);
+
+/** 安全字符串拷贝（保证 NUL 终止）。 */
+void safe_copy(char* dst, size_t cap, const char* src);
+
+/** RAII 堆内存守卫；scope 结束时自动 free(ptr)。 */
+struct MemGuard {
+  void* p;
+  ~MemGuard() { free(p); }
+};

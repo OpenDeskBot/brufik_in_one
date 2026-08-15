@@ -32,6 +32,8 @@ static std::atomic<float> s_volume{DESKBOT_AUDIO_PLAY_VOLUME};
 static std::atomic<bool> s_stream_active{false};
 /** 跨任务请求取消当前 i2s 写出（abort 置位，见到 cancel 后清位）。 */
 static std::atomic<bool> s_need_cancel{false};
+/** pb_runtime 查询：当前任务是否已执行完毕（入队时 false，见到 kEndOfTask 后 true）。 */
+static std::atomic<bool> s_task_done{true};
 /** 仅 task_loop_speaker 访问。 */
 static bool s_mic_speak_held = false;
 static uint32_t s_i2s_rate = SAMPLE_RATE;
@@ -61,6 +63,7 @@ enum class JobType : uint8_t {
   kChunk = 3,
   kEnd = 4,
   kPbAudio = 5,
+  kEndOfTask = 6,
 };
 
 struct Job {
@@ -111,6 +114,9 @@ static HeapFree caps_to_mode(uint32_t caps) {
 
 static bool enqueue(Job& j) {
   /* 满则失败（不从队列偷包，避免与 task_loop_speaker 双消费者竞态）。 */
+  if (j.type != JobType::kCancel && j.type != JobType::kEndOfTask) {
+    s_task_done.store(false, std::memory_order_release);
+  }
   if (j.type == JobType::kChunk || j.type == JobType::kPbAudio) {
     return xQueueSend(s_queue, &j, 0) == pdTRUE;
   }
@@ -422,6 +428,10 @@ static void task_loop_speaker(void*) {
       }
       continue;
     }
+    if (job.type == JobType::kEndOfTask) {
+      s_task_done.store(true, std::memory_order_release);
+      continue;
+    }
     execute_job(job);
   }
 }
@@ -548,6 +558,20 @@ void speaker_abort() {
   j.type = JobType::kCancel;
   s_need_cancel.store(true, std::memory_order_release);
   (void)xQueueSend(s_queue, &j, portMAX_DELAY);
+}
+
+bool speaker_task_done() {
+  return s_task_done.load(std::memory_order_acquire);
+}
+
+void speaker_signal_task_done() {
+  Job j{};
+  j.type = JobType::kEndOfTask;
+  (void)xQueueSend(s_queue, &j, portMAX_DELAY);
+}
+
+void speaker_set_task_done_flag() {
+  s_task_done.store(true, std::memory_order_release);
 }
 
 bool speaker_play_url(const char* url) {

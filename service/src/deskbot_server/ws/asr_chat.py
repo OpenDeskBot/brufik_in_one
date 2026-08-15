@@ -667,12 +667,12 @@ async def handle_asr_chat(
                         note_uplink_ack(device_id)
                         await registry.record_pb_ack(device_id, norm)
                         logger.info(
-                            "[pb_ack] device_id=%s req=%r idx=%s audio_buf_ms=%s servo=%s",
+                            "[pb_ack] device_id=%s req=%r idx=%s ack_type=%s space=%s",
                             device_id,
                             norm.get("req"),
                             norm.get("idx"),
-                            norm.get("audio_buf_ms"),
-                            norm.get("servo"),
+                            norm.get("ack_type"),
+                            norm.get("space"),
                         )
                         if dp_broker is not None:
                             now_ts = time.time()
@@ -691,6 +691,8 @@ async def handle_asr_chat(
                                     },
                                 },
                             )
+                        # 通知消息队列的 ACK 流控
+                        await asr_chat_hub.ack(device_id, norm)
                     elif norm is not None and not device_id:
                         logger.info("[pb_ack] 已解析但连接无 device_id，未入库 peer=%s", peer)
                     continue

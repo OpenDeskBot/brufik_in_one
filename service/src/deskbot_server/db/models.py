@@ -48,6 +48,7 @@ class Device(Base):
     version: Mapped[str | None] = mapped_column(String(16), nullable=True)
     auto_reply: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     servo_mode: Mapped[str] = mapped_column(String(16), default="", nullable=False)
+    live_mode: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

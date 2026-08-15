@@ -299,6 +299,7 @@ struct DisplayRequest {
 };
 
 static std::atomic<bool>   s_need_cancel{false};
+static std::atomic<bool>   s_task_done{true};
 static QueueHandle_t       s_queue       = nullptr;
 static TaskHandle_t        s_task        = nullptr;
 static SemaphoreHandle_t   s_done_sem    = nullptr;
@@ -453,6 +454,10 @@ static void task_loop_display_render(void*) {
       }
       continue;
     }
+    if (req.type == DISPLAY_JOB_END_OF_TASK) {
+      s_task_done.store(true, std::memory_order_release);
+      continue;
+    }
     execute_display_job(req);
   }
 }
@@ -556,6 +561,7 @@ void display_render_submit_pb_anim_frames_owned(pb_anim_frame* frames, size_t fr
     if (frames) pb_anim_frames_free(frames, frame_count);
     return;
   }
+  s_task_done.store(false, std::memory_order_release);
   DisplayRequest req{};
   req.type = DISPLAY_JOB_PB_ANIM_FRAMES;
   req.anim_frames = frames;
@@ -572,6 +578,20 @@ void display_abort() {
 }
 
 void display_render_reset() { display_abort(); }
+
+bool display_task_done() {
+  return s_task_done.load(std::memory_order_acquire);
+}
+
+void display_signal_task_done() {
+  DisplayRequest req{};
+  req.type = DISPLAY_JOB_END_OF_TASK;
+  (void)xQueueSend(s_queue, &req, portMAX_DELAY);
+}
+
+void display_set_task_done_flag() {
+  s_task_done.store(true, std::memory_order_release);
+}
 
 unsigned display_render_input_queue_depth(void) {
   return s_queue ? (unsigned)uxQueueMessagesWaiting(s_queue) : 0;

@@ -60,6 +60,10 @@ secrets.yaml
 **/local*.json
 service/data/.free_api_key
 
+# --- Service device runtime data ---
+service/data/deskbot_*/
+service/data/brfk_*/
+
 # --- Service large / generated ---
 service/models/
 music/

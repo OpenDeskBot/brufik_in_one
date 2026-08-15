@@ -502,10 +502,9 @@ def pb_json_messages(
             msg["servo"] = copy.deepcopy(servos)
         # 无 PCM 时不要带 sr/fmt/ch/audio（与 /api/device_pb_anim 一致），避免固件按 R6 误等 binary
         if pcm:
-            if is_first or n == 1:
-                msg["sr"] = int(sample_rate)
-                msg["fmt"] = fmt
-                msg["ch"] = int(channels)
+            msg["sr"] = int(sample_rate)
+            msg["fmt"] = fmt
+            msg["ch"] = int(channels)
             audio_obj: dict[str, Any] = {"next_bin_len": len(pcm)}
             if fmt == "opus" and opus_frames_per_idx and i < len(opus_frames_per_idx):
                 audio_obj["frames"] = int(opus_frames_per_idx[i])

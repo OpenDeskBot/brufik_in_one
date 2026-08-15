@@ -156,7 +156,7 @@ def mount_web(app: FastAPI) -> None:
         SessionMiddleware,
         secret_key=secret,
         session_cookie="deskbot_session",
-        max_age=28800,
+        max_age=604800,
         same_site="lax",
         https_only=False,
     )

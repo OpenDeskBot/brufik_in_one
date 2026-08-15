@@ -52,9 +52,18 @@
                      @change="cvOnVoiceAutoReplyChange($event)" />
               <span>自动应答（关=不触发 LLM/TTS 及任何自动下发）</span>
             </label>
+            <label class="cv-voice-auto-lbl dv-config-opt">
+              <input type="checkbox"
+                     :checked="cvLiveMode"
+                     :disabled="cvLiveModeSaving"
+                     @change="cvOnLiveModeChange($event)" />
+              <span>活体模式（关=禁止自动下发 wander/sleep/gaze 指令）</span>
+            </label>
           </div>
           <p v-if="cvVoiceAutoReplySaving" class="muted sm dv-config-saving">保存中…</p>
           <p v-if="cvVoiceAutoReplyErr" class="dv-err">{{ cvVoiceAutoReplyErr }}</p>
+          <p v-if="cvLiveModeSaving" class="muted sm dv-config-saving">保存中…</p>
+          <p v-if="cvLiveModeErr" class="dv-err">{{ cvLiveModeErr }}</p>
           <p class="muted sm dv-config-status">
             订阅：<span :class="['dv-status', debugEnabled && dpConnected ? 'ok' : 'bad']">{{ debugEnabled ? dpStatus : '未开始' }}</span>
             <span v-if="debugEnabled"> · 画面 {{ cvConnected ? '已连接' : cvStatus }}</span>
@@ -1936,6 +1945,16 @@
       return new URL(joined, window.location.origin);
     }
 
+    /** fetch 包装：检测 302→login 等认证失效，弹窗提示重新登录。 */
+    async function deskbotFetch(url, opts) {
+      const res = await fetch(url, opts);
+      if (res.redirected && /\/login/i.test(res.url)) {
+        if (confirm("登录已过期，是否重新登录？")) { window.location.href = res.url; }
+        throw new Error("登录已过期");
+      }
+      return res;
+    }
+
     /** 舵机配置读写须带 device_id，否则写入全局 data/servo.json 而非 data/device/{id}/。 */
     function servoConfigApiUrl(httpBase, deviceId) {
       const url = deskbotApiUrl(httpBase, "/api/servo_config");
@@ -2031,6 +2050,9 @@
           cvVoiceAutoReply: true,
           cvVoiceAutoReplySaving: false,
           cvVoiceAutoReplyErr: "",
+          cvLiveMode: true,
+          cvLiveModeSaving: false,
+          cvLiveModeErr: "",
           _cvServoStatusTimer: null,
           _cvFpsTimer: null,
           _cvLastFpsSample: { ts: 0, count: 0 },
@@ -2782,7 +2804,7 @@
             url.searchParams.set("device_id", this.selected);
             url.searchParams.set("text", t);
             if (scene) url.searchParams.set("scene", scene);
-            const res = await fetch(url.toString(), { cache: "no-store" });
+            const res = await deskbotFetch(url.toString(), { cache: "no-store" });
             let body = {};
             try { body = await res.json(); } catch (e) {}
             if (!res.ok) {
@@ -2847,9 +2869,9 @@
         async cvFetchVoiceAutoReply() {
           this.cvVoiceAutoReplyErr = "";
           try {
-            const res = await fetch(this.httpBase + "/api/asr_auto_reply", { cache: "no-store" });
-            if (!res.ok) throw new Error("HTTP " + res.status);
-            const d = await res.json();
+            const res = await deskbotFetch(this.httpBase + "/api/asr_auto_reply?device_id=" + encodeURIComponent(this.selected), { cache: "no-store" });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || ("HTTP " + res.status));
             const en = d && d.ok ? this._cvCoerceAutoReplyEnabled(d.enabled) : null;
             if (en !== null) this.cvVoiceAutoReply = en;
           } catch (e) {
@@ -2865,9 +2887,9 @@
           this.cvVoiceAutoReplyErr = "";
           try {
             const q = want ? "1" : "0";
-            const res = await fetch(this.httpBase + "/api/asr_auto_reply?enabled=" + q, { cache: "no-store" });
-            if (!res.ok) throw new Error("HTTP " + res.status);
-            const d = await res.json();
+            const res = await deskbotFetch(this.httpBase + "/api/asr_auto_reply?enabled=" + q + "&device_id=" + encodeURIComponent(this.selected), { cache: "no-store" });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || ("HTTP " + res.status));
             if (!d || !d.ok) throw new Error((d && d.error) || "bad response");
             const en = this._cvCoerceAutoReplyEnabled(d.enabled);
             if (en !== null) {
@@ -2884,6 +2906,44 @@
             this.cvVoiceAutoReplyErr = "保存自动应答开关失败：" + (e && e.message ? e.message : e);
           } finally {
             this.cvVoiceAutoReplySaving = false;
+          }
+        },
+        async cvFetchLiveMode() {
+          this.cvLiveModeErr = "";
+          try {
+            const res = await deskbotFetch(this.httpBase + "/api/live_service?device_id=" + encodeURIComponent(this.selected), { cache: "no-store" });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || ("HTTP " + res.status));
+            const en = d && d.ok ? this._cvCoerceAutoReplyEnabled(d.enabled) : null;
+            if (en !== null) this.cvLiveMode = en;
+          } catch (e) {
+            this.cvLiveModeErr = "读取活体模式开关失败：" + (e && e.message ? e.message : e);
+          }
+        },
+        async cvOnLiveModeChange(ev) {
+          const el = ev && ev.target;
+          const want = !!(el && el.checked);
+          const prev = this.cvLiveMode;
+          this.cvLiveMode = want;
+          this.cvLiveModeSaving = true;
+          this.cvLiveModeErr = "";
+          try {
+            const q = want ? "1" : "0";
+            const res = await deskbotFetch(this.httpBase + "/api/live_service?enabled=" + q + "&device_id=" + encodeURIComponent(this.selected), { cache: "no-store" });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || ("HTTP " + res.status));
+            if (!d || !d.ok) throw new Error((d && d.error) || "bad response");
+            const en = this._cvCoerceAutoReplyEnabled(d.enabled);
+            if (en !== null) {
+              this.cvLiveMode = en;
+              if (el) el.checked = en;
+            }
+          } catch (e) {
+            this.cvLiveMode = prev;
+            if (el) el.checked = prev;
+            this.cvLiveModeErr = "保存活体模式开关失败：" + (e && e.message ? e.message : e);
+          } finally {
+            this.cvLiveModeSaving = false;
           }
         },
 
@@ -2911,7 +2971,7 @@
 
         async refreshDebugWsToken() {
           try {
-            const res = await fetch("/api/debug/ws_token", { cache: "no-store" });
+            const res = await deskbotFetch("/api/debug/ws_token", { cache: "no-store" });
             if (!res.ok) return false;
             const d = await res.json();
             const tok = String(d.token || "").trim();
@@ -2934,7 +2994,7 @@
         },
         async refreshDevices() {
           try {
-            const res = await fetch(this.httpBase + "/api/devices", { cache: "no-store" });
+            const res = await deskbotFetch(this.httpBase + "/api/devices", { cache: "no-store" });
             if (!res.ok) throw new Error("HTTP " + res.status);
             const d = await res.json();
             const ownedRows = this.ownedDeviceRows();
@@ -2987,7 +3047,7 @@
           this.exprCatalogLoading = true;
           this.exprCatalogError = "";
           try {
-            const res = await fetch(this.httpBase + "/api/device_face_catalog", { cache: "no-store" });
+            const res = await deskbotFetch(this.httpBase + "/api/device_face_catalog", { cache: "no-store" });
             if (!res.ok) throw new Error("HTTP " + res.status);
             const d = await res.json();
             if (!d || !d.ok) throw new Error((d && d.error) || "bad response");
@@ -3015,7 +3075,7 @@
           url.searchParams.set("kind", k);
           url.searchParams.set("name", nm);
           try {
-            const res = await fetch(url.toString(), { cache: "no-store" });
+            const res = await deskbotFetch(url.toString(), { cache: "no-store" });
             let body = {};
             try {
               body = await res.json();
@@ -3045,7 +3105,7 @@
         async refreshPbScenes() {
           this.pbScenesError = "";
           try {
-            const res = await fetch(this.httpBase + "/api/device_pb_scenes", { cache: "no-store" });
+            const res = await deskbotFetch(this.httpBase + "/api/device_pb_scenes", { cache: "no-store" });
             if (!res.ok) throw new Error("HTTP " + res.status);
             const d = await res.json();
             this.pbSceneKeys = Array.isArray(d.scenes) ? d.scenes.slice() : [];
@@ -3375,7 +3435,7 @@
             if (!this._asrAudioCtx) this._asrAudioCtx = new Ctx();
             const ctx = this._asrAudioCtx;
             if (ctx.state === "suspended") await ctx.resume();
-            const resp = await fetch(row.audioUrl);
+            const resp = await deskbotFetch(row.audioUrl);
             const ab = await resp.arrayBuffer();
             const buf = await ctx.decodeAudioData(ab);
             const src = ctx.createBufferSource();
@@ -3519,7 +3579,7 @@
         },
         async cvLoadCfgFromFile() {
           try {
-            const res = await fetch("/api/camera_face_config", { cache: "no-store" });
+            const res = await deskbotFetch("/api/camera_face_config", { cache: "no-store" });
             let body = {};
             try { body = await res.json(); } catch (e) {}
             if (!res.ok || !body.ok || !body.config) return;
@@ -3531,7 +3591,7 @@
           if (this.cvCfgSaving) return;
           this.cvCfgSaving = true;
           try {
-            const res = await fetch("/api/camera_face_config", {
+            const res = await deskbotFetch("/api/camera_face_config", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(this._cvCfgPayload()),
@@ -3604,7 +3664,7 @@
         },
         async cvFetchServoAutoMode() {
           try {
-            const res = await fetch(this.httpBase + "/api/camera_servo_auto_mode", { cache: "no-store" });
+            const res = await deskbotFetch(this.httpBase + "/api/camera_servo_auto_mode?device_id=" + encodeURIComponent(this.selected), { cache: "no-store" });
             if (!res.ok) return;
             const d = await res.json();
             if (d && d.ok && d.mode != null) this.cvServoAutoMode = String(d.mode || "");
@@ -3616,7 +3676,7 @@
           try {
             const mode = this.cvServoAutoMode || "";
             const q = encodeURIComponent(mode);
-            const res = await fetch(this.httpBase + "/api/camera_servo_auto_mode?mode=" + q, { cache: "no-store" });
+            const res = await deskbotFetch(this.httpBase + "/api/camera_servo_auto_mode?mode=" + q + "&device_id=" + encodeURIComponent(this.selected), { cache: "no-store" });
             if (!res.ok) return;
             const d = await res.json();
             if (d && d.ok && d.mode != null) this.cvServoAutoMode = String(d.mode || "");
@@ -3646,7 +3706,7 @@
         },
         async cvFetchSavedProfiles() {
           try {
-            const res = await fetch("/api/face_profiles", { cache: "no-store" });
+            const res = await deskbotFetch("/api/face_profiles", { cache: "no-store" });
             let body = {};
             try { body = await res.json(); } catch (e) {}
             if (res.ok && body.ok && Array.isArray(body.profiles)) {
@@ -3696,7 +3756,7 @@
             if (this.cvLastJpegBlob) {
               jpeg_base64 = await this._cvBlobToBase64(this.cvLastJpegBlob);
             }
-            const res = await fetch("/api/face_profiles/register", {
+            const res = await deskbotFetch("/api/face_profiles/register", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -3971,7 +4031,7 @@
         },
         async servoLoadCfgFromFile() {
           try {
-            const res = await fetch(this._servoConfigApiUrl().toString(), { cache: "no-store" });
+            const res = await deskbotFetch(this._servoConfigApiUrl().toString(), { cache: "no-store" });
             let body = {};
             try { body = await res.json(); } catch (e) {}
             if (!res.ok || !body.ok || !body.exists || !body.config) {
@@ -3992,7 +4052,7 @@
           }
           this.servoCfgSaving = true;
           try {
-            const res = await fetch(this._servoConfigApiUrl().toString(), {
+            const res = await deskbotFetch(this._servoConfigApiUrl().toString(), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(this._servoCfgPayload()),
@@ -4316,7 +4376,7 @@
           const ws = withScene && String(withScene).trim();
           if (ws) url.searchParams.set("with_scene", String(withScene).trim());
           try {
-            const res = await fetch(url.toString(), { cache: "no-store" });
+            const res = await deskbotFetch(url.toString(), { cache: "no-store" });
             let body = {};
             try { body = await res.json(); } catch (e) {}
             if (!res.ok) {
@@ -4449,7 +4509,7 @@
           url.searchParams.set("device_id", dev);
           url.searchParams.set("scene", scene);
           try {
-            const res = await fetch(url.toString(), { cache: "no-store" });
+            const res = await deskbotFetch(url.toString(), { cache: "no-store" });
             let body = {};
             try {
               body = await res.json();
@@ -4803,7 +4863,7 @@
           try {
             const url = new URL("/api/face_expr_scenes", window.location.origin);
             if (this.selected) url.searchParams.set("device_id", this.selected);
-            const res = await fetch(url.toString(), { cache: "no-store" });
+            const res = await deskbotFetch(url.toString(), { cache: "no-store" });
             const d = await res.json();
             if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
             const rows = Array.isArray(d.scenes) ? d.scenes : (Array.isArray(d.config) ? d.config : []);
@@ -4994,7 +5054,7 @@
           const url = new URL("/api/scene_playbook/export_plan", window.location.origin);
           url.searchParams.set("device_id", this.selected);
           try {
-            const res = await fetch(url.toString(), {
+            const res = await deskbotFetch(url.toString(), {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
@@ -5088,7 +5148,7 @@
           try {
             const url = new URL("/api/scene_playbooks", window.location.origin);
             if (this.selected) url.searchParams.set("device_id", this.selected);
-            const res = await fetch(url.toString(), { cache: "no-store" });
+            const res = await deskbotFetch(url.toString(), { cache: "no-store" });
             const d = await res.json();
             if (!res.ok || !d.ok) throw new Error((d && d.error) || ("HTTP " + res.status));
             if (d.file) this.spFileName = d.file;
@@ -5106,7 +5166,7 @@
             await this._spEnsureServoPresetsOnServer(body);
             const url = new URL("/api/scene_playbooks", window.location.origin);
             if (this.selected) url.searchParams.set("device_id", this.selected);
-            const res = await fetch(url.toString(), {
+            const res = await deskbotFetch(url.toString(), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(body),
@@ -5153,7 +5213,7 @@
             throw new Error("请先在页顶选择设备，再保存场景。");
           }
           try {
-            const res = await fetch(this._servoConfigApiUrl().toString(), {
+            const res = await deskbotFetch(this._servoConfigApiUrl().toString(), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(this._servoCfgPayload()),
@@ -5510,7 +5570,7 @@
         async spDispatchPlaybookDevice(pb) {
           if (!this.selected || !this.selectedHasAsrChat) return false;
           try {
-            const res = await fetch(this.httpBase + "/api/scene_playbook/run", {
+            const res = await deskbotFetch(this.httpBase + "/api/scene_playbook/run", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ device_id: this.selected, playbook: pb }),
@@ -6060,6 +6120,7 @@
         void this.cvFetchSavedProfiles();
         // 人脸跟随舵机由服务端 /asr_chat camera_frame + debug.camera_servo_auto_mode 下发
         void this.cvFetchVoiceAutoReply();
+        void this.cvFetchLiveMode();
         void this.cvFetchServoAutoMode();
         void this.exprScenesLoadForPreview();
         await this.spLoadFromFile();

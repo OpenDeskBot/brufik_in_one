@@ -6,7 +6,7 @@
 /**
  * 设备端 PB 领域模型。
  *
- * wire 格式仍兼容服务端当前 JSON：type/action/req 在外层为字符串，anim/servo/audio
+ * wire 格式仍兼容服务端当前 JSON：type/req 在外层为字符串，anim/servo/audio
  * 是 JSON 子树。本模型把语义字段归一化为整数，并把子树保存为 JSON String，避免业务层
  * 依赖 ArduinoJson 文档的生命周期。req 保留服务端字符串 ID，使用定长 char 数组存储。
  */
@@ -17,18 +17,6 @@ enum PbModelType : int {
   PB_MODEL_SINGLE = 3,
   PB_MODEL_CANCEL = 4,
   PB_MODEL_UNKNOWN = -1,
-};
-
-enum PbModelAction : int {
-  PB_MODEL_REPLACE = 0,
-  PB_MODEL_APPEND = 1,
-  PB_MODEL_DEFAULT = 2,
-};
-
-enum PbModelMicHint : int {
-  PB_MIC_NONE = 0,
-  PB_MIC_OPEN = 1,
-  PB_MIC_MUTE = 2,
 };
 
 constexpr size_t PB_MODEL_FMT_CAPACITY = 8;
@@ -115,14 +103,12 @@ struct pb_model {
   char req[37]{};
   int idx = 0;
   int chunk_ms = 0;
-  int action = PB_MODEL_REPLACE;
   int level = 1;
   uint32_t sr = 0;
   uint8_t ch = 0;
   char fmt[PB_MODEL_FMT_CAPACITY]{};
   int volume = -1;   // 0–100；-1 表示未指定。
   int cam_fps = 0;   // >0 时调整相机帧率。
-  int mic = PB_MIC_NONE;
   pb_anim_frame* anim = nullptr;
   size_t anim_count = 0;
   pb_servo_frame* servo = nullptr;

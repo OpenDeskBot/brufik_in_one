@@ -151,80 +151,6 @@ def builtin_emotion_scenes() -> list[dict[str, Any]]:
             ],
         ),
         _hold_scene(
-            "wry_smile",
-            "苦笑",
-            [
-                _mk_frame(
-                    520,
-                    mouth=[
-                        {"shape": "line", "x1": 58, "y1": 50, "x2": 84, "y2": 46},
-                        {"shape": "round_rect_outline", "x": 70, "y": 44, "w": 14, "h": 4, "radius": 1},
-                    ],
-                    eye_l=[{"shape": "ellipse_fill", "x": 40, "y": 11, "rw": 5, "rh": 3}],
-                    eye_r=[{"shape": "ellipse_fill", "x": 80, "y": 10, "rw": 6, "rh": 5}],
-                ),
-                _mk_frame(
-                    520,
-                    mouth=[
-                        {"shape": "line", "x1": 58, "y1": 51, "x2": 84, "y2": 47},
-                        {"shape": "round_rect_outline", "x": 70, "y": 45, "w": 14, "h": 4, "radius": 1},
-                    ],
-                    eye_l=[{"shape": "ellipse_fill", "x": 40, "y": 11, "rw": 5, "rh": 3}],
-                    eye_r=[{"shape": "ellipse_fill", "x": 80, "y": 10, "rw": 6, "rh": 5}],
-                ),
-            ],
-        ),
-        _hold_scene(
-            "fake_smile",
-            "假笑",
-            [
-                _mk_frame(
-                    500,
-                    mouth=[
-                        {"shape": "round_rect_outline", "x": 54, "y": 44, "w": 32, "h": 7, "radius": 2},
-                        {"shape": "line", "x1": 56, "y1": 49, "x2": 84, "y2": 49},
-                    ],
-                    eye_l=[{"shape": "ellipse_fill", "x": 40, "y": 11, "rw": 4, "rh": 2}],
-                    eye_r=[{"shape": "ellipse_fill", "x": 80, "y": 11, "rw": 4, "rh": 2}],
-                ),
-                _mk_frame(
-                    500,
-                    mouth=[
-                        {"shape": "round_rect_outline", "x": 54, "y": 44, "w": 32, "h": 7, "radius": 2},
-                        {"shape": "line", "x1": 56, "y1": 49, "x2": 84, "y2": 48},
-                    ],
-                    eye_l=[{"shape": "ellipse_fill", "x": 40, "y": 11, "rw": 4, "rh": 2}],
-                    eye_r=[{"shape": "ellipse_fill", "x": 80, "y": 11, "rw": 4, "rh": 2}],
-                ),
-            ],
-        ),
-        _hold_scene(
-            "fawning",
-            "谄媚",
-            [
-                _mk_frame(
-                    480,
-                    mouth=[
-                        {"shape": "round_rect_outline", "x": 56, "y": 43, "w": 30, "h": 9, "radius": 3},
-                        {"shape": "line", "x1": 58, "y1": 48, "x2": 84, "y2": 48},
-                    ],
-                    eye_l=e_open_l,
-                    eye_r=e_open_r,
-                    extra=[{"shape": "circle", "x": 34, "y": 8, "r": 1}, {"shape": "circle", "x": 90, "y": 8, "r": 1}],
-                ),
-                _mk_frame(
-                    480,
-                    mouth=[
-                        {"shape": "round_rect_outline", "x": 56, "y": 42, "w": 30, "h": 10, "radius": 3},
-                        {"shape": "line", "x1": 58, "y1": 47, "x2": 84, "y2": 47},
-                    ],
-                    eye_l=[{"shape": "ellipse_fill", "x": 40, "y": 9, "rw": 7, "rh": 7}],
-                    eye_r=[{"shape": "ellipse_fill", "x": 80, "y": 9, "rw": 7, "rh": 7}],
-                    extra=[{"shape": "circle", "x": 33, "y": 7, "r": 1}, {"shape": "circle", "x": 91, "y": 7, "r": 1}],
-                ),
-            ],
-        ),
-        _hold_scene(
             "shy",
             "害羞",
             [
@@ -247,30 +173,6 @@ def builtin_emotion_scenes() -> list[dict[str, Any]]:
                         {"shape": "ellipse_fill", "x": 28, "y": 38, "rw": 5, "rh": 3},
                         {"shape": "ellipse_fill", "x": 100, "y": 38, "rw": 5, "rh": 3},
                     ],
-                ),
-            ],
-        ),
-        _hold_scene(
-            "astonished",
-            "吃惊",
-            [
-                _mk_frame(
-                    400,
-                    mouth=[
-                        {"shape": "round_rect_outline", "x": 58, "y": 42, "w": 18, "h": 16, "radius": 8},
-                        {"shape": "round_rect_outline", "x": 59, "y": 43, "w": 16, "h": 14, "radius": 7},
-                    ],
-                    eye_l=[{"shape": "ellipse_fill", "x": 40, "y": 9, "rw": 7, "rh": 7}],
-                    eye_r=[{"shape": "ellipse_fill", "x": 80, "y": 9, "rw": 7, "rh": 7}],
-                ),
-                _mk_frame(
-                    440,
-                    mouth=[
-                        {"shape": "round_rect_outline", "x": 56, "y": 40, "w": 22, "h": 20, "radius": 10},
-                        {"shape": "round_rect_outline", "x": 57, "y": 41, "w": 20, "h": 18, "radius": 9},
-                    ],
-                    eye_l=[{"shape": "ellipse_fill", "x": 40, "y": 8, "rw": 8, "rh": 8}],
-                    eye_r=[{"shape": "ellipse_fill", "x": 80, "y": 8, "rw": 8, "rh": 8}],
                 ),
             ],
         ),

@@ -293,16 +293,30 @@ c  = (R5 << 11) | (G6 << 5) | B5
 
 **上行 `pb_ack`**
 
+设备端有两种 ack 类型：
+
+- **`pb_chunk`**：每分发 10 个 pb 块（非 pb_end）后，若执行器队列剩余空间 >= 10 则发送；否则 vdelay(5ms) 重试。服务端收到后可继续发下一批，但不能发新任务。
+- **`pb_end`**：pb_end/pb_single 分发到执行器后，等待所有执行器完成，然后发送。服务端收到后 `task_running=false`，可发新任务。
+
 ```json
 {
   "type": "pb_ack",
   "req": "a1b2c3d4e5f67890",
-  "idx": 2,
-  "audio_buf_ms": 360
+  "idx": 9,
+  "ack_type": "pb_chunk",
+  "space": 40
 }
 ```
 
-可选上行 **`servo` object**（单对象，非数组）反馈当前位置与软限位。
+```json
+{
+  "type": "pb_ack",
+  "req": "a1b2c3d4e5f67890",
+  "idx": 19,
+  "ack_type": "pb_end",
+  "space": 45
+}
+```
 
 **下行 `pb_cancel`**
 

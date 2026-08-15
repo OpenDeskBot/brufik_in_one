@@ -12,7 +12,7 @@ from deskbot_server.dao import device_mapper
 from deskbot_server.infrastructure.tts.text_split import split_tts_by_punctuation
 from deskbot_server.model.chat import ChatTurnResult
 from deskbot_server.pb.scenes import _pb_scene_entry_by_name, _prepare_pb_scene_chain_frames
-from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_ACTION_REPLACE
+from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_ACTION_REPLACE, PB_LEVEL_TASK
 from deskbot_server.pb.wire import build_pb_wire_pairs, device_pb_json_msg, pb_wire_json_bytes
 from deskbot_server.ports.downlink import DownlinkPort, PipelineEventsPort
 from deskbot_server.service.application.llm_error_fallback import (
@@ -605,63 +605,127 @@ async def run_device_playbook(
     return result
 
 
+_PB_ACK_BATCH = 10
+
+# ── 设备端 PB 任务状态（per device_id）──
+_pb_task_running: dict[str, bool] = {}
+_pb_task_level: dict[str, int] = {}
+_pb_task_request_id: dict[str, str] = {}
+
+
+async def _send_pb_cancel(downlink: DownlinkPort, device_id: str, req: str) -> None:
+    """下发 pb_cancel。"""
+    cancel_msg = {"type": "pb_cancel", "req": req, "pb_ver": 2}
+    wire_text = device_pb_json_msg(cancel_msg)
+    ok = await downlink.send_pb_wire(wire_text, binaries=[])
+    logger.info("[pb TX] cancel req=%s device_id=%s ok=%s", req, device_id, ok)
+
+
 async def _send_pb_pairs(
-    downlink: DownlinkPort, *, pairs: list[tuple[dict, list[bytes]]], pb_req: str, device_id: str | None, n_pb: int
+    downlink: DownlinkPort,
+    *,
+    pairs: list[tuple[dict, list[bytes]]],
+    pb_req: str,
+    device_id: str | None,
+    n_pb: int,
+    task_level: int = PB_LEVEL_TASK,
 ) -> bool:
-    """下发一组 pb wire 帧；返回是否因失败而中止。"""
+    """下发一组 pb wire 帧（每批 _PB_ACK_BATCH 块后等 ack）；返回是否因失败而中止。"""
     from deskbot_server.constants import PB_WAIT_ACK
     from deskbot_server.ws.pb_ack_waiter import pb_ack_gate, pb_wait_ack_timeout_sec
 
-    if device_id and PB_WAIT_ACK:
-        await pb_ack_gate.begin_req(device_id, pb_req)
+    if not device_id or not PB_WAIT_ACK:
+        # 无设备或未启用 ack：直接逐帧发送
+        pb_aborted = False
+        for i, (msg, binaries) in enumerate(pairs):
+            wire_text = device_pb_json_msg(msg)
+            ok = await downlink.send_pb_wire(wire_text, binaries=binaries)
+            if not ok:
+                pb_aborted = True
+                break
+        return pb_aborted
 
-    pb_aborted = False
-    for i, (msg, binaries) in enumerate(pairs):
-        wire_text = device_pb_json_msg(msg)
-        logger.info("[pb TX] %d/%d wire_json bytes=%d %s", i + 1, n_pb, pb_wire_json_bytes(msg), wire_text)
-        ok = await downlink.send_pb_wire(wire_text, binaries=binaries)
-        if binaries:
+    # ── 任务抢占检查 ──
+    if _pb_task_running.get(device_id):
+        existing_level = _pb_task_level.get(device_id, PB_LEVEL_TASK)
+        if task_level > existing_level:
+            # 高优先级抢占：发 pb_cancel
             logger.info(
-                "[pb TX] %d/%d binary idx=%s parts=%d total_bytes=%d ok=%s",
-                i + 1,
-                n_pb,
-                msg.get("idx"),
-                len(binaries),
-                sum(len(b) for b in binaries),
-                ok,
+                "[pb TX] 抢占 device_id=%s new_level=%d > existing_level=%d",
+                device_id, task_level, existing_level,
             )
-        elif not ok:
-            logger.warning("[pb TX] %d/%d JSON 下发失败 idx=%s device_id=%s", i + 1, n_pb, msg.get("idx"), device_id)
-        if not ok:
-            pb_aborted = True
-            logger.error(
-                "[pb TX] 中止下发 device_id=%s pb_req=%s 失败于 %d/%d idx=%s（常见：上一包 binary 后 ESP32 断线）",
-                device_id,
-                pb_req,
-                i + 1,
-                n_pb,
-                msg.get("idx"),
+            await _send_pb_cancel(downlink, device_id, _pb_task_request_id.get(device_id, ""))
+            await asyncio.sleep(0.05)
+        else:
+            # 低优先级：等当前任务 pb_end ack
+            existing_req = _pb_task_request_id.get(device_id, "")
+            logger.info(
+                "[pb TX] 等待 device_id=%s existing_req=%s end ack",
+                device_id, existing_req,
             )
-            break
-        if (
-            not pb_aborted
-            and binaries
-            and int((msg.get("audio") or {}).get("next_bin_len") or 0) > 0
-            and device_id
-            and PB_WAIT_ACK
-        ):
-            ack_ok = await pb_ack_gate.wait_idx(
-                device_id, pb_req, int(msg.get("idx") or 0), timeout=pb_wait_ack_timeout_sec()
-            )
-            if not ack_ok:
+            end_ok = await pb_ack_gate.wait_for_end(device_id, existing_req, timeout=30)
+            if not end_ok:
+                logger.error("[pb TX] 等待 end ack 超时 device_id=%s req=%s", device_id, existing_req)
+                return True
+            _pb_task_running[device_id] = False
+
+    # ── 标记任务开始 ──
+    _pb_task_running[device_id] = True
+    _pb_task_level[device_id] = task_level
+    _pb_task_request_id[device_id] = pb_req
+    await pb_ack_gate.begin_req(device_id, pb_req)
+
+    # ── 分批发送 + 等 ack ──
+    pb_aborted = False
+    for batch_start in range(0, len(pairs), _PB_ACK_BATCH):
+        batch = pairs[batch_start : batch_start + _PB_ACK_BATCH]
+        for j, (msg, binaries) in enumerate(batch):
+            i = batch_start + j
+            wire_text = device_pb_json_msg(msg)
+            logger.info("[pb TX] %d/%d wire_json bytes=%d %s", i + 1, n_pb, pb_wire_json_bytes(msg), wire_text)
+            ok = await downlink.send_pb_wire(wire_text, binaries=binaries)
+            if binaries:
+                logger.info(
+                    "[pb TX] %d/%d binary idx=%s parts=%d total_bytes=%d ok=%s",
+                    i + 1, n_pb, msg.get("idx"), len(binaries), sum(len(b) for b in binaries), ok,
+                )
+            elif not ok:
+                logger.warning("[pb TX] %d/%d JSON 下发失败 idx=%s device_id=%s", i + 1, n_pb, msg.get("idx"), device_id)
+            if not ok:
                 pb_aborted = True
                 logger.error(
-                    "[pb TX] 中止下发 device_id=%s pb_req=%s 未收到 idx>=%s 的 pb_ack",
-                    device_id,
-                    pb_req,
-                    msg.get("idx"),
+                    "[pb TX] 中止下发 device_id=%s pb_req=%s 失败于 %d/%d idx=%s",
+                    device_id, pb_req, i + 1, n_pb, msg.get("idx"),
                 )
                 break
+        if pb_aborted:
+            break
+
+        # 等 chunk ack 或 end ack
+        chunk_ok, end_ok = await pb_ack_gate.wait_for_chunk_or_end(
+            device_id, pb_req, timeout=pb_wait_ack_timeout_sec()
+        )
+        if end_ok:
+            # 任务已结束（pb_end ack 已收到）
+            _pb_task_running[device_id] = False
+            logger.info("[pb TX] 任务已结束 device_id=%s req=%s（end ack 在批次中到达）", device_id, pb_req)
+            return False
+        if not chunk_ok:
+            pb_aborted = True
+            logger.error(
+                "[pb TX] 中止下发 device_id=%s pb_req=%s 批次 %d-%d 未收到 pb_ack",
+                device_id, pb_req, batch_start + 1, min(batch_start + _PB_ACK_BATCH, n_pb),
+            )
+            break
+
+    # ── 所有块发完后等 pb_end ack ──
+    if not pb_aborted and device_id:
+        end_ok = await pb_ack_gate.wait_for_end(device_id, pb_req, timeout=30)
+        if not end_ok:
+            logger.error("[pb TX] 等待 end ack 超时 device_id=%s req=%s", device_id, pb_req)
+            pb_aborted = True
+        _pb_task_running[device_id] = False
+
     return pb_aborted
 
 
@@ -773,7 +837,10 @@ async def _run_pb_playback(
             )
             logger.info("[pb TX] 帧序一览 %s", json.dumps(frame_overview, ensure_ascii=False))
 
-            pb_aborted = await _send_pb_pairs(downlink, pairs=pairs, pb_req=pb_req, device_id=device_id, n_pb=n_pb)
+            task_level = int((pairs[0][0].get("level") or PB_LEVEL_TASK)) if pairs else PB_LEVEL_TASK
+            pb_aborted = await _send_pb_pairs(
+                downlink, pairs=pairs, pb_req=pb_req, device_id=device_id, n_pb=n_pb, task_level=task_level
+            )
             if pb_aborted:
                 if prefetch_tts_task is not None:
                     prefetch_tts_task.cancel()

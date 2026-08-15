@@ -54,6 +54,7 @@ struct MotorCmd {
 enum class MotorJobType : uint8_t {
   kCancel = 0,
   kPbServoChunk = 2,
+  kEndOfTask = 3,
 };
 
 struct MotorJob {
@@ -65,6 +66,7 @@ struct MotorJob {
 QueueHandle_t s_motor_queue = nullptr;
 TaskHandle_t  s_motor_task  = nullptr;
 std::atomic<bool> s_need_cancel{false};
+static std::atomic<bool> s_task_done{true};
 
 static void free_motor_job(MotorJob& job) {
   if (job.type == MotorJobType::kPbServoChunk) {
@@ -151,6 +153,10 @@ static void task_loop_motor(void* /*arg*/) {
       }
       continue;
     }
+    if (job.type == MotorJobType::kEndOfTask) {
+      s_task_done.store(true, std::memory_order_release);
+      continue;
+    }
     /* kPbServoChunk：逐帧执行，任意帧被 cancel 则中断本 chunk。 */
     if (job.servo_frames && job.servo_count > 0) {
       for (size_t i = 0; i < job.servo_count; ++i) {
@@ -203,8 +209,10 @@ void head_submit_pb_servo_chunk_owned(pb_servo_frame* frames, size_t count) {
   job.type = MotorJobType::kPbServoChunk;
   job.servo_frames = frames;
   job.servo_count = count;
+  s_task_done.store(false, std::memory_order_release);
   if (xQueueSend(s_motor_queue, &job, 0) != pdTRUE) {
     pb_servo_frames_free(frames);
+    s_task_done.store(true, std::memory_order_release);
     log_warn("[HEAD] motor queue full; drop new command");
     return;
   }
@@ -250,4 +258,18 @@ unsigned head_motor_input_queue_depth() {
     return 0;
   }
   return (unsigned)uxQueueMessagesWaiting(s_motor_queue);
+}
+
+bool head_task_done() {
+  return s_task_done.load(std::memory_order_acquire);
+}
+
+void head_signal_task_done() {
+  MotorJob job{};
+  job.type = MotorJobType::kEndOfTask;
+  (void)xQueueSend(s_motor_queue, &job, portMAX_DELAY);
+}
+
+void head_set_task_done_flag() {
+  s_task_done.store(true, std::memory_order_release);
 }

@@ -18,15 +18,6 @@ int parse_type(JsonVariantConst value) {
   return PB_MODEL_UNKNOWN;
 }
 
-int parse_action(JsonVariantConst value) {
-  if (!value.is<String>()) return PB_MODEL_REPLACE;
-  String raw = value.as<String>();
-  raw.toLowerCase();
-  if (raw == "append") return PB_MODEL_APPEND;
-  if (raw == "default") return PB_MODEL_DEFAULT;
-  return PB_MODEL_REPLACE;
-}
-
 bool parse_nonnegative_int(JsonVariantConst value, int& out) {
   if (value.isNull() || value.is<bool>() || value.is<const char*>()) return false;
   const double raw = value.as<double>();
@@ -174,15 +165,6 @@ bool parse_servo_frames(JsonVariantConst value, pb_model& out) {
   return true;
 }
 
-int parse_mic_hint(JsonVariantConst value) {
-  if (!value.is<String>()) return PB_MIC_NONE;
-  String raw = value.as<String>();
-  raw.toLowerCase();
-  if (raw == "open") return PB_MIC_OPEN;
-  if (raw == "mute") return PB_MIC_MUTE;
-  return PB_MIC_NONE;
-}
-
 }  // namespace
 
 void pb_anim_frames_free(pb_anim_frame* frames, size_t frame_count) {
@@ -245,8 +227,6 @@ bool pb_model_from_json(const JsonDocument& doc, const uint8_t* media, size_t me
     if (doc["level"].is<int>() || doc["level"].is<double>()) {
       out.level = constrain((int)doc["level"].as<double>(), 0, 3);
     }
-    out.action = parse_action(doc["action"]);
-    out.mic = parse_mic_hint(doc["mic"]);
     if (doc["sr"].is<uint32_t>()) out.sr = doc["sr"].as<uint32_t>();
     if (doc["ch"].is<int>()) out.ch = (uint8_t)doc["ch"].as<int>();
     else if (doc["ch"].is<double>()) out.ch = (uint8_t)doc["ch"].as<double>();

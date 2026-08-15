@@ -6,23 +6,23 @@ import asyncio
 import logging
 import random
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from deskbot_server.service.config_service import get_live_service_enabled
+from deskbot_server.dao.device_mapper import get_live_mode
 from deskbot_server.dao.face_expr_scenes_store import design_frames_to_pb_chain
 from deskbot_server.pb.llm_plan import _resolve_servo_preset_steps, expand_llm_anims, expand_llm_moves
 from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_LEVEL_IDLE, apply_pb_dispatch_fields
-from deskbot_server.service.application.interaction_feedback import build_servo_only_pb_frames, get_valid_face_analysis
+from deskbot_server.service.application.interaction_feedback import get_valid_face_analysis
 from deskbot_server.utils.singleton import SingletonMeta
-from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event
 
 logger = logging.getLogger("deskbot-server")
 
 ENTER_SEC = 5.0
 FACE_STALE_SEC = 0.7
-FACE_TICK_MIN_SEC = 0.22
+FACE_TICK_MIN_SEC = 1.0
 WANDER_MIN_CYCLES = 1
 WANDER_MAX_CYCLES = 3
 SLEEP_MIN_SEC = 30.0
@@ -100,7 +100,7 @@ def _scene_tail(scene: str, *, device_id: str, req: str, target_ms: int) -> list
     if not pairs:
         return []
     msgs = [msg for msg, _ in pairs]
-    # 接在同轮舵机链之后；清积压由舵机链 head 的 replace 负责（见 build_servo_only_pb_frames）。
+    # 接在同轮舵机链之后；清积压由舵机 PbSeq 的 level=0 + action=DEFAULT 负责。
     apply_pb_dispatch_fields(msgs, action=PB_ACTION_APPEND, level=PB_LEVEL_IDLE)
     return msgs
 
@@ -122,8 +122,10 @@ class LiveService(metaclass=SingletonMeta):
         return self._hub
 
     @staticmethod
-    def active() -> bool:
-        return get_live_service_enabled()
+    def active(device_id: str = "") -> bool:
+        if not device_id:
+            return True
+        return get_live_mode(device_id)
 
     def _ensure(self, device_id: str) -> _Dev:
         st = self._devs.get(device_id)
@@ -141,20 +143,20 @@ class LiveService(metaclass=SingletonMeta):
         return max(0.0, st.resume_at - time.monotonic())
 
     def handles_idle(self, device_id: str) -> bool:
-        if not self.active():
+        if not self.active(device_id):
             return False
         st = self._devs.get(str(device_id or "").strip())
         return st is not None and st.loop is not None and not st.loop.done()
 
     def owns_face_tracking(self, device_id: str) -> bool:
-        if not self.active():
+        if not self.active(device_id):
             return False
         st = self._devs.get(str(device_id or "").strip())
         return st is not None and not st.in_conversation and self.cooldown_remaining(device_id) <= 0
 
     def start(self, device_id: str) -> None:
         dev = str(device_id or "").strip()
-        if not dev or not self.active() or self._hub is None:
+        if not dev or not self.active(dev) or self._hub is None:
             return
         st = self._ensure(dev)
         if st.loop is None or st.loop.done():
@@ -191,7 +193,7 @@ class LiveService(metaclass=SingletonMeta):
 
     async def on_face_tick(self, device_id: str, analysis: dict[str, Any]) -> None:
         dev = str(device_id or "").strip()
-        if not dev or not self.active() or not analysis.get("landmarks"):
+        if not dev or not self.active(dev) or not analysis.get("landmarks"):
             return
         st = self._devs.get(dev)
         if st is None or st.in_conversation or self.cooldown_remaining(dev) > 0:
@@ -220,7 +222,7 @@ class LiveService(metaclass=SingletonMeta):
                 st = self._ensure(device_id)
                 st.interrupt.clear()
                 if (
-                    not self.active()
+                    not self.active(device_id)
                     or self._hub is None
                     or not await self.hub.first_ws(device_id)
                     or st.in_conversation
@@ -322,37 +324,39 @@ class LiveService(metaclass=SingletonMeta):
     async def _send(
         self, device_id: str, moves: list[dict[str, Any]], scene: str | None, source: str, summary: str
     ) -> int:
-        built = build_servo_only_pb_frames(moves, device_id=device_id)
-        if built is None:
+        from deskbot_server.model.pb_seq import PbAction, PbBlock, PbSeq, PbServo, PbType
+
+        steps = expand_llm_moves(moves, device_id=device_id)
+        if not steps:
             return 0
-        frames, req_id = built
-        total_ms = sum(max(1, int(f.get("chunk_ms") or 0)) for f in frames)
+        req_id = uuid.uuid4().hex[:16]
+        total_ms = sum(max(1, int(s.get("ms") or 0)) for s in steps)
+        servo = tuple(
+            PbServo(xm=int(s["xm"]), ym=int(s["ym"]), x=int(s["x"]), y=int(s["y"]), ms=int(s["ms"]))
+            for s in steps
+        )
+        servo_block = PbBlock(type=PbType.SINGLE, req=req_id, idx=0, chunk_ms=total_ms, servo=servo)
         tail = _scene_tail(scene, device_id=device_id, req=req_id, target_ms=total_ms) if scene else []
         hub = self.hub
         try:
-            if len(frames) == 1 and tail:
-                n = await hub.send_pb_single_then_chain_ordered(device_id, frames[0], tail)
-            elif len(frames) == 1:
-                n = await hub.send(device_id, frames[0], skip_idle_refresh=True)
-            else:
-                n = await hub.send_pb_chain_ordered(device_id, frames)
-                if tail and n > 0:
-                    n += await hub.send_pb_chain_ordered(device_id, tail)
+            tail_entries = tuple(PbBlock.from_wire(f) for f in tail)
+            entries = (servo_block,) + tail_entries
+            pb_seq = PbSeq(req=req_id, entries=entries, level=0, action=PbAction.DEFAULT)
+            n = await hub.send(device_id, pb_seq)
         except Exception:
             logger.exception("[live] send failed device_id=%s source=%s", device_id, source)
             return 0
         if n > 0:
             logger.info(
-                "[live] %s device_id=%s req=%s delivered=%d frames=%d summary=%s scene=%s",
+                "[live] %s device_id=%s req=%s delivered=%d blocks=%d servo_steps=%d ms=%d summary=%s scene=%s",
                 source,
                 device_id,
                 req_id,
                 n,
-                len(frames),
+                len(entries),
+                len(steps),
+                total_ms,
                 summary,
                 scene,
-            )
-            await publish_auto_dispatch_event(
-                hub.pipeline_broker, device_id=device_id, request_id=req_id, source=source, summary=summary, status="ok"
             )
         return n

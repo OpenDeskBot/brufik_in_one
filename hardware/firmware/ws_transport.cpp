@@ -39,6 +39,7 @@ static QueueHandle_t s_tx_q = nullptr;
 static TaskHandle_t s_task = nullptr;
 static bool s_boot_connect_sent = false;
 static unsigned long s_connect_attempt_ms = 0;
+static unsigned long s_last_reconnect_ms = 0;
 static uint8_t s_connect_fail_count = 0;
 static constexpr unsigned long RECONNECT_MIN_MS = 500;
 static constexpr unsigned long RECONNECT_MAX_MS = 60000;
@@ -163,6 +164,7 @@ bool setup_ws_transport(void) {
     if (type == WStype_CONNECTED) {
       ws_state.store(static_cast<int>(WsState::kConnected), std::memory_order_release);
       s_connect_fail_count = 0;
+      s_last_reconnect_ms = 0;
       s_app_ready.store(true, std::memory_order_release);
       s_connect_attempt_ms = 0;
       mic_set_ws_state(kMicWsOk);
@@ -277,16 +279,22 @@ void ws_transport_ensure_connected(void) {
     s_connect_attempt_ms = 0;
   }
 
-  ws_client.disconnect();
-  ws_transport_new_session();
   /* 指数退避：500ms → 1s → 2s → 4s → 8s → 16s → 32s → 60s */
-  if (s_connect_fail_count < 8) {
-    s_connect_fail_count++;
-  }
-  unsigned long interval = RECONNECT_MIN_MS << (s_connect_fail_count - 1);
+  unsigned long interval = RECONNECT_MIN_MS << s_connect_fail_count;
   if (interval > RECONNECT_MAX_MS) {
     interval = RECONNECT_MAX_MS;
   }
+  const unsigned long now = millis();
+  if (s_last_reconnect_ms != 0 && (now - s_last_reconnect_ms) < interval) {
+    return; /* 还在退避窗口内，等下一轮 */
+  }
+  s_last_reconnect_ms = now;
+  if (s_connect_fail_count < 8) {
+    s_connect_fail_count++;
+  }
+
+  ws_client.disconnect();
+  ws_transport_new_session();
   log_warn("[WS_TRANSPORT] connect %s://%s:%u%s (retry #%u, backoff %lus)",
            server_ws_proto.is_wss ? "wss" : "ws",
            server_ws_proto.host, (unsigned)server_ws_proto.port, server_ws_path.c_str(),
@@ -401,8 +409,8 @@ bool ws_transport_drain_tx(void) {
       }
       return sent_any;
     }
-    log_warn("[PB_LAT] tx_send type=%u len=%u send_ms=%u", (unsigned)item.type, (unsigned)plen,
-             (unsigned)send_ms);
+    // log_warn("[PB_LAT] tx_send type=%u len=%u send_ms=%u", (unsigned)item.type, (unsigned)plen,
+    //          (unsigned)send_ms);
     ws_tx_free_item(&item);
     sent_any = true;
   }

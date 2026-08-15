@@ -205,7 +205,11 @@ async def _send_servo_moves(
     if built is None:
         return 0
     frames, req_id = built
-    delivered = await hub.send_pb_chain_ordered(device_id, frames)
+    from deskbot_server.model.pb_seq import PbBlock, PbSeq
+
+    entries = tuple(PbBlock.from_wire(f) for f in frames)
+    pb_seq = PbSeq(req=req_id, entries=entries, level=0)
+    delivered = await hub.send(device_id, pb_seq)
     servo_n = sum(len(f.get("servo") or []) for f in frames)
     logger.info(
         "[interaction_feedback] %s device_id=%s req=%s delivered=%d frames=%d summary=%s servo_n=%d audio_next_bin_len=0",
