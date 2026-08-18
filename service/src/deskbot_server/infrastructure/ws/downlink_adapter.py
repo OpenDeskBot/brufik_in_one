@@ -1,24 +1,26 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from typing import Any
 
 from deskbot_server.model.settings import AppSettings
-from deskbot_server.ws.device_pipeline import DevicePipelineBroker
 from deskbot_server.ws.stages import _emit_stage
-from deskbot_server.ws.ws_send import _maybe_pb_serial_chain_guard, _send_pb_wire_to_asr_device
 
 
 class WsDownlinkAdapter:
     """WebSocket 下行适配器：实现 DownlinkPort。"""
 
     def __init__(
-        self, websocket, *, settings: AppSettings, device_id: str | None, dp_broker: DevicePipelineBroker | None
+        self,
+        websocket,
+        *,
+        settings: AppSettings,
+        device_id: str | None,
+        bus_service: Any | None = None,
     ) -> None:
         self._ws = websocket
         self._settings = settings
         self._device_id = device_id
-        self._broker = dp_broker
+        self._bus_service = bus_service
 
     async def emit_stage(
         self,
@@ -31,33 +33,26 @@ class WsDownlinkAdapter:
     ) -> None:
         await _emit_stage(
             self._ws,
-            self._broker,
             self._device_id,
             request_id,
             stage,
             client_fields=client_fields,
             event_fields=event_fields,
             send_client=send_client,
+            bus_service=self._bus_service,
         )
-
-    async def send_pb_wire(self, wire_text: str, binaries: list[bytes] | None = None, pcm: bytes | None = None) -> bool:
-        return await _send_pb_wire_to_asr_device(self._ws, wire_text, binaries=binaries, pcm=pcm)
-
-    @asynccontextmanager
-    async def pb_serial_chain(self):
-        async with _maybe_pb_serial_chain_guard(self._ws):
-            yield
 
 
 class WsPipelineEventsAdapter:
-    """DevicePipelineBroker + DeviceRegistry 的 PipelineEventsPort 实现。"""
+    """BusService + DeviceWsService 的 PipelineEventsPort 实现。"""
 
-    def __init__(self, broker: DevicePipelineBroker, registry) -> None:
-        self._broker = broker
-        self._registry = registry
+    def __init__(self, bus: Any, device_ws) -> None:
+        self._bus = bus
+        self._device_ws = device_ws
 
     async def publish_turn(self, event: dict[str, Any]) -> None:
-        await self._broker.publish(event)
+        device_id = str(event.get("device_id") or "unknown")
+        await self._bus.pub(device_id, event)
 
     async def touch_device(self, device_id: str, status: str) -> None:
-        await self._registry.touch(device_id, status)
+        await self._device_ws.touch(device_id, status)

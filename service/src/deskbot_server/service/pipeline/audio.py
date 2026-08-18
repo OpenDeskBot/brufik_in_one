@@ -57,6 +57,7 @@ class ConnectionSession:
         self.rom_codec = audio_cfg.input_codec
         self.lock = asyncio.Lock()
         self._uplink_open = False
+        self._pcm_buffer = bytearray()  # 用于调试：累积所有PCM数据
 
         model_path = audio_cfg.silero_model_path
         if not model_path:
@@ -140,7 +141,10 @@ class ConnectionSession:
 
             # --- Silero VAD 推理（CPU 密集，移到线程池）---
             if pcm:
+                self._pcm_buffer.extend(pcm)
                 utterance = await loop.run_in_executor(None, self._vad.feed_pcm, pcm)
+                if utterance:
+                    logger.info("[feed_audio] VAD utterance pcm_bytes=%d", len(utterance))
             else:
                 utterance = None
             return utterance, uplink_started, None
@@ -161,6 +165,33 @@ class ConnectionSession:
             duration_ms,
         )
         return out
+
+    def save_debug_wav(self, path: str | None = None) -> str:
+        """将累积的PCM保存为WAV文件，返回文件路径。"""
+        import struct
+        from datetime import datetime
+        if not self._pcm_buffer:
+            logger.warning("[debug] 无PCM数据可保存")
+            return ""
+        if path is None:
+            ts = datetime.now().strftime("%H%M%S")
+            path = f"/tmp/uplink_{ts}.wav"
+        pcm_data = bytes(self._pcm_buffer)
+        sr = self.rom_sr or 16000
+        ch = self.rom_ch or 1
+        with open(path, "wb") as f:
+            # WAV header
+            data_size = len(pcm_data)
+            f.write(b"RIFF")
+            f.write(struct.pack("<I", 36 + data_size))
+            f.write(b"WAVE")
+            f.write(b"fmt ")
+            f.write(struct.pack("<IHHIIHH", 16, 1, ch, sr, sr * ch * 2, ch * 2, 16))
+            f.write(b"data")
+            f.write(struct.pack("<I", data_size))
+            f.write(pcm_data)
+        logger.info("[debug] WAV已保存 path=%s pcm_bytes=%d duration_ms=%d", path, data_size, data_size // (sr * ch * 2) * 1000)
+        return path
 
     def _reset_rom(self) -> None:
         self._uplink_open = False

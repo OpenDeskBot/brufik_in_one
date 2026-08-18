@@ -17,9 +17,9 @@ from deskbot_server.service.scheduled_task_service import (
 
 if TYPE_CHECKING:
     from deskbot_server.service.application.chat_service import ChatService
-    from deskbot_server.ws.asr_chat_hub import AsrChatHub
-    from deskbot_server.ws.device_pipeline import DevicePipelineBroker
-    from deskbot_server.ws.registry import DeviceRegistry
+    from deskbot_server.service.device_ws_service import DeviceWsService
+    from deskbot_server.service.bus_service import BusService
+    from deskbot_server.service.device_ws_service import DeviceWsService
 
 logger = logging.getLogger("deskbot-server")
 
@@ -29,16 +29,14 @@ class ScheduledTaskScheduler:
         self,
         *,
         chat: ChatService,
-        asr_chat_hub: AsrChatHub,
-        registry: DeviceRegistry,
-        dp_broker: DevicePipelineBroker,
+        device_ws: DeviceWsService,
+        bus_service: Any | None = None,
         poll_interval_sec: float = 60.0,
         lookback_minutes: float = 5.0,
     ) -> None:
         self._chat = chat
-        self._hub = asr_chat_hub
-        self._registry = registry
-        self._broker = dp_broker
+        self._device_ws = device_ws
+        self._bus_service = bus_service
         self._poll_interval = max(30.0, float(poll_interval_sec))
         self._lookback_minutes = max(1.0, float(lookback_minutes))
         self._task: asyncio.Task | None = None
@@ -86,7 +84,7 @@ class ScheduledTaskScheduler:
         device_id = str(item.get("device_id") or "").strip()
         description = str(item.get("description") or "").strip()
         try:
-            ws = await self._hub.first_ws(device_id)
+            ws = self._device_ws._get_ws(device_id)
             if ws is None:
                 finish_scheduled_task(tid, ok=False, summary="设备未连接 /asr_chat")
                 logger.warning("[scheduler] 任务失败 device 离线 task_id=%s device_id=%s", tid, device_id)
@@ -105,8 +103,8 @@ class ScheduledTaskScheduler:
                 description,
                 req_id,
             )
-            downlink = WsDownlinkAdapter(ws, settings=self._chat.settings, device_id=device_id, dp_broker=self._broker)
-            events = WsPipelineEventsAdapter(self._broker, self._registry)
+            downlink = WsDownlinkAdapter(ws, settings=self._chat.settings, device_id=device_id, bus_service=self._bus_service)
+            events = WsPipelineEventsAdapter(self._bus_service, self._device_ws)
             t0 = asyncio.get_event_loop().time()
             task_session_id = str(item.get("session_id") or "").strip() or None
             turn = await run_chat_turn(
@@ -115,10 +113,11 @@ class ScheduledTaskScheduler:
                 user_text,
                 request_id=req_id,
                 device_id=device_id,
-                registry=self._registry,
+                registry=self._device_ws,
                 t_asr_text=t0,
                 force_voice=True,
                 reuse_session_id=task_session_id,
+                bus_service=self._bus_service,
             )
             await publish_chat_turn(
                 events,

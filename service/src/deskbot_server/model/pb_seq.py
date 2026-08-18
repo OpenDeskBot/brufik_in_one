@@ -8,6 +8,7 @@ wire 格式细节见 ``docs/esp32_pb_protocol.md``。
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
@@ -294,6 +295,7 @@ class PbSeq:
     sr: int = 24000
     ch: int = 1
     fmt: str = "opus"
+    _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False, compare=False)
 
     @property
     def block_count(self) -> int:

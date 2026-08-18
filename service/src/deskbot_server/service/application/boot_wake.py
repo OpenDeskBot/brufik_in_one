@@ -14,15 +14,18 @@ from deskbot_server.dao.face_expr_scenes_store import (
 )
 from deskbot_server.pb.servo_pcm import attach_pb_device_hints_from_config
 from deskbot_server.pb.shapes import PB_ACTION_REPLACE, PB_LEVEL_TASK, apply_pb_dispatch_fields
-from deskbot_server.ws.asr_chat_hub import AsrChatHub
-from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from deskbot_server.service.device_ws_service import DeviceWsService
 
 logger = logging.getLogger("deskbot-server")
 
 BOOT_WAKE_SCENE = "wake"
 
 
-async def deliver_boot_wake_scene(hub: AsrChatHub, device_id: str) -> int:
+async def deliver_boot_wake_scene(device_ws: DeviceWsService, device_id: str) -> int:
     """向设备顺序下发 deskbot-face 中的「苏醒」场景（无 PCM）。"""
     dev = str(device_id or "").strip()
     if not dev:
@@ -48,7 +51,7 @@ async def deliver_boot_wake_scene(hub: AsrChatHub, device_id: str) -> int:
     pb_seq = PbSeq.from_wire_pairs(pairs, level=PB_LEVEL_TASK)
     n = 0
     try:
-        n = await hub.send(dev, pb_seq)
+        n = await device_ws.send(dev, pb_seq)
         logger.info(
             "[boot_wake] scene=%s device_id=%s req=%s frames=%d ws_sends=%d",
             BOOT_WAKE_SCENE,
@@ -60,13 +63,14 @@ async def deliver_boot_wake_scene(hub: AsrChatHub, device_id: str) -> int:
     except Exception:
         logger.exception("[boot_wake] 下发失败 device_id=%s", dev)
     scene_title = str(ent.get("title") or BOOT_WAKE_SCENE).strip()
-    await publish_auto_dispatch_event(
-        hub.pipeline_broker,
-        device_id=dev,
-        request_id=req_id,
-        source="auto_boot_wake",
-        summary=f"开机苏醒 {scene_title}（{len(frames)} 帧）",
-        status="ok" if n > 0 else "error",
-        error=None if n > 0 else "未送达 WebSocket",
-    )
+    bus = getattr(device_ws, 'bus_service', None)
+    if bus is not None:
+        await bus.publish_auto_dispatch(
+            dev,
+            request_id=req_id,
+            source="auto_boot_wake",
+            summary=f"开机苏醒 {scene_title}（{len(frames)} 帧）",
+            status="ok" if n > 0 else "error",
+            error=None if n > 0 else "未送达 WebSocket",
+        )
     return n

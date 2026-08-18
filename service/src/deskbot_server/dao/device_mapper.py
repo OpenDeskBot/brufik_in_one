@@ -28,8 +28,8 @@ def device_ids_for_user(user_id: str) -> list[str]:
 
 @execute(
     """
-    INSERT INTO devices (id, device_id, owner_user_id, display_name, volume, fps, version, claimed_at, created_at)
-    VALUES (:uid, :device_id, :user_id, :display_name, :volume, :fps, :version, datetime('now'), datetime('now'))
+    INSERT INTO devices (id, device_id, owner_user_id, display_name, volume, fps, version, auto_reply, servo_mode, live_mode, claimed_at, created_at)
+    VALUES (:uid, :device_id, :user_id, :display_name, :volume, :fps, :version, 1, '', 1, datetime('now'), datetime('now'))
     """
 )
 def insert(

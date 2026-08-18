@@ -82,12 +82,12 @@ def deskbot_http_base() -> str:
 
 
 def _fetch_registry_devices(*, user_id: str | None = None) -> list[dict] | None:
-    """同进程内直接读 DeviceRegistry；无 runtime（如 web_only）时返回 None。"""
+    """同进程内直接读 DeviceWsService 注册表；无 runtime（如 web_only）时返回 None。"""
     try:
         from deskbot_server.controller.runtime import get_runtime
         from deskbot_server.service.user_service import UserService
 
-        snap = get_runtime().registry.snapshot()
+        snap = get_runtime().device_ws.snapshot()
         uid = str(user_id or "").strip()
         if uid:
             allowed = UserService().device_ids_for_user(uid)

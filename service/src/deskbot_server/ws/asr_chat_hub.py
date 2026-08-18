@@ -145,6 +145,20 @@ class AsrChatHub:
             conns = self._by_device.get(device_id, ())
             return next(iter(conns), None) if conns else None
 
+    async def send_text(self, device_id: str, text: str) -> bool:
+        """向设备所有连接发送一条纯文本帧（非 pb，不经过消息队列流控）。"""
+        if not device_id:
+            return False
+        async with self._lock:
+            targets = list(self._by_device.get(device_id, ()))
+        if not targets:
+            return False
+        sent = 0
+        for ws in targets:
+            if self._fanout.submit(ws, text):
+                sent += 1
+        return sent > 0
+
     async def send(self, device_id: str, payload: dict | PbSeq, *, skip_idle_refresh: bool = False) -> int:
         del skip_idle_refresh  # 兼容旧调用方；idle 已由 LiveService 接管
         if not device_id:

@@ -63,7 +63,7 @@ class FaceTracker:
     - ``profile_id`` 绑定后使用**滞回阈值**（保持阈值 < 匹配阈值），减少闪烁
     - ``face_id`` 单调递增、不在 1–32 间循环复用
     - 档案向量仅在注册时写入 DB；运行时**不** EMA 污染持久化数据
-    - 人名匹配走 ``face_profile_service``（与 ``CameraFaceService.find_face_by_embedding`` 同源）
+    - 人名匹配走 ``face_profile_service``
     """
 
     def __init__(

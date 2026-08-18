@@ -83,6 +83,7 @@ class SileroVadStream:
             is_voice = False
         else:
             is_voice = self._last_is_voice
+        logger.debug("[SileroVAD] prob=%.3f voice=%s->%s", speech_prob, self._last_is_voice, is_voice)
         self._last_is_voice = is_voice
 
         self._voice_window.append(is_voice)

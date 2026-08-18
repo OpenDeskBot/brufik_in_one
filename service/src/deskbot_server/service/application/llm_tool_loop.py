@@ -17,7 +17,7 @@ from deskbot_server.service.camera_face_service import request_camera_fps_boost
 if TYPE_CHECKING:
     from deskbot_server.service.application.chat_flow import _TtsPrefetch
     from deskbot_server.service.application.chat_service import ChatService
-    from deskbot_server.ws.asr_chat_hub import AsrChatHub
+    from deskbot_server.service.device_ws_service import DeviceWsService
 
 logger = logging.getLogger("deskbot-server")
 
@@ -73,14 +73,14 @@ async def _execute_tools_round(
     *,
     device_id: str,
     session_id: str | None,
-    asr_chat_hub: AsrChatHub | None,
+    device_ws: DeviceWsService | None,
     cam_fps: int | None,
 ) -> list[dict[str, Any]]:
-    if cam_fps and asr_chat_hub:
-        await request_camera_fps_boost(device_id, asr_chat_hub, cam_fps=cam_fps)
+    if cam_fps and device_ws:
+        await request_camera_fps_boost(device_id, device_ws, cam_fps=cam_fps)
 
     return await execute_llm_tools(
-        tools, device_id=device_id, session_id=session_id, asr_chat_hub=asr_chat_hub, cam_fps=cam_fps
+        tools, device_id=device_id, session_id=session_id, device_ws=device_ws, cam_fps=cam_fps
     )
 
 
@@ -93,12 +93,12 @@ async def complete_llm_with_tool_loop(
     device_context: str | None = None,
     history_messages: list[dict[str, str]] | None = None,
     request_id: str | None = None,
-    dp_broker: Any | None = None,
     pipeline_source: str | None = None,
-    asr_chat_hub: AsrChatHub | None = None,
+    device_ws: DeviceWsService | None = None,
     on_tts_ready: Callable[[str], Awaitable[None]] | None = None,
     tts_prefetch: _TtsPrefetch | None = None,
     on_interim_tts_play: Callable[[str, int], Awaitable[None]] | None = None,
+    bus_service: Any | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str]:
     """多轮 LLM：有 tools 则执行并继续，无 tools 则返回最终 parsed。
 
@@ -137,7 +137,7 @@ async def complete_llm_with_tool_loop(
             # LLM 已给出完整回复，reply 即最终结果，不再继续调用 LLM
             all_tools.extend(tools)
             tool_results = await _execute_tools_round(
-                tools, device_id=str(device_id), session_id=session_id, asr_chat_hub=asr_chat_hub, cam_fps=cam_fps
+                tools, device_id=str(device_id), session_id=session_id, device_ws=device_ws, cam_fps=cam_fps
             )
             all_tool_results.extend(tool_results)
             break
@@ -152,7 +152,7 @@ async def complete_llm_with_tool_loop(
             if interim_text and tts_prefetch is not None:
                 tts_prefetch.cancel()
             tool_results = await _execute_tools_round(
-                tools, device_id=str(device_id), session_id=session_id, asr_chat_hub=asr_chat_hub, cam_fps=cam_fps
+                tools, device_id=str(device_id), session_id=session_id, device_ws=device_ws, cam_fps=cam_fps
             )
             if interim_text and on_interim_tts_play is not None:
                 await on_interim_tts_play(interim_text, round_idx + 1)
@@ -164,7 +164,7 @@ async def complete_llm_with_tool_loop(
                 tts_prefetch.cancel()
 
             tool_coro = _execute_tools_round(
-                tools, device_id=str(device_id), session_id=session_id, asr_chat_hub=asr_chat_hub, cam_fps=cam_fps
+                tools, device_id=str(device_id), session_id=session_id, device_ws=device_ws, cam_fps=cam_fps
             )
             if play_coro is not None:
                 tool_results, _ = await asyncio.gather(tool_coro, play_coro)
@@ -181,19 +181,16 @@ async def complete_llm_with_tool_loop(
             tools,
             [_tool_result_for_llm(r) for r in tool_results],
         )
-        if dp_broker is not None and device_id and request_id:
+        if bus_service is not None and device_id and request_id:
             tool_names = [str(t.get("tool") or "").strip() for t in tools if str(t.get("tool") or "").strip()]
-            await dp_broker.publish(
-                {
-                    "device_id": device_id,
-                    "request_id": request_id,
-                    "source": pipeline_source or "asr",
-                    "asr_text": user_text,
-                    "stage": f"llm_tool_{round_idx + 1}",
-                    "status": "running",
-                    "llm_text": (f"执行工具: {', '.join(tool_names)}" if tool_names else "执行工具"),
-                }
-            )
+            await bus_service.pub(device_id, {
+                "request_id": request_id,
+                "source": pipeline_source or "asr",
+                "asr_text": user_text,
+                "stage": f"llm_tool_{round_idx + 1}",
+                "status": "running",
+                "llm_text": (f"执行工具: {', '.join(tool_names)}" if tool_names else "执行工具"),
+            })
         extra_messages.append({"role": "assistant", "content": answer})
         extra_messages.append({"role": "user", "content": build_llm_tool_followup_message(tool_results)})
     else:

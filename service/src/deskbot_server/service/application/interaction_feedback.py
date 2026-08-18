@@ -24,7 +24,7 @@ from deskbot_server.service.application.camera_servo_follower import (
     _screen_angles_from_analysis,
 )
 from deskbot_server.dao.device_mapper import get_auto_reply
-from deskbot_server.ws.asr_chat_hub import AsrChatHub
+from deskbot_server.service.device_ws_service import DeviceWsService
 
 logger = logging.getLogger("deskbot-server")
 
@@ -179,24 +179,8 @@ def build_servo_only_pb_frames(
     return frames, req_id
 
 
-def build_servo_only_pb_payload(
-    moves: list[dict[str, Any]], *, device_id: str, request_id: str | None = None
-) -> tuple[dict[str, Any], str] | None:
-    """兼容旧调用：仅当结果为单片时返回；多片请用 ``build_servo_only_pb_frames``。"""
-    built = build_servo_only_pb_frames(moves, device_id=device_id, request_id=request_id)
-    if built is None:
-        return None
-    frames, req_id = built
-    if len(frames) != 1:
-        # 多片时仍返回首片，避免静默丢动作；调用方应改用 frames API
-        logger.warning(
-            "[interaction_feedback] build_servo_only_pb_payload 得到 %d 片，仅返回首片 req=%s", len(frames), req_id
-        )
-    return frames[0], req_id
-
-
 async def _send_servo_moves(
-    hub: AsrChatHub, device_id: str, moves: list[dict[str, Any]], *, source: str, summary: str
+    device_ws: DeviceWsService, device_id: str, moves: list[dict[str, Any]], *, source: str, summary: str
 ) -> int:
     """下发 idle 级纯舵机 pb 链，可被口播等高优先级随时打断。"""
     if not moves:
@@ -209,7 +193,7 @@ async def _send_servo_moves(
 
     entries = tuple(PbBlock.from_wire(f) for f in frames)
     pb_seq = PbSeq(req=req_id, entries=entries, level=0)
-    delivered = await hub.send(device_id, pb_seq)
+    delivered = await device_ws.send(device_id, pb_seq)
     servo_n = sum(len(f.get("servo") or []) for f in frames)
     logger.info(
         "[interaction_feedback] %s device_id=%s req=%s delivered=%d frames=%d summary=%s servo_n=%d audio_next_bin_len=0",
@@ -222,15 +206,15 @@ async def _send_servo_moves(
         servo_n,
     )
     if delivered > 0:
-        from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event
-
-        await publish_auto_dispatch_event(
-            hub.pipeline_broker, device_id=device_id, request_id=req_id, source=source, summary=summary, status="ok"
-        )
+        bus = getattr(device_ws, 'bus_service', None)
+        if bus is not None:
+            await bus.publish_auto_dispatch(
+                device_id, request_id=req_id, source=source, summary=summary, status="ok",
+            )
     return delivered
 
 
-async def maybe_send_listen_feedback(hub: AsrChatHub, device_id: str) -> None:
+async def maybe_send_listen_feedback(device_ws: DeviceWsService, device_id: str) -> None:
     """收音开始时：有效人脸则注视，否则左右巡查（2s）；同类动作间隔 ≥5s。"""
     if not get_auto_reply(device_id) or _face_follow_active(device_id):
         return
@@ -247,19 +231,19 @@ async def maybe_send_listen_feedback(hub: AsrChatHub, device_id: str) -> None:
             dev,
         )
         return
-    if not await hub.first_ws(dev):
+    if not device_ws._get_ws(dev):
         return
 
     kind, moves = listen_feedback_moves(dev)
     summary = "收音注视人脸" if kind == "gaze" else "收音左右巡查"
     delivered = await _send_servo_moves(
-        hub, dev, moves, source="auto_listen_feedback", summary=f"{summary}（{_MOTION_MS}ms）"
+        device_ws, dev, moves, source="auto_listen_feedback", summary=f"{summary}（{_MOTION_MS}ms）"
     )
     if delivered > 0:
         _listen_last_mono[dev] = now
 
 
-async def llm_wait_nod_feedback_loop(hub: AsrChatHub, device_id: str, done: asyncio.Event) -> None:
+async def llm_wait_nod_feedback_loop(device_ws: DeviceWsService, device_id: str, done: asyncio.Event) -> None:
     """ASR 有效文本进入 LLM 后：每 2s 一次短点头，直至 ``done``。"""
     if not get_auto_reply(device_id):
         return
@@ -269,9 +253,9 @@ async def llm_wait_nod_feedback_loop(hub: AsrChatHub, device_id: str, done: asyn
     moves = llm_wait_nod_moves(device_id=dev)
     try:
         while not done.is_set():
-            if not _face_follow_active(device_id) and await hub.first_ws(dev):
+            if not _face_follow_active(device_id) and device_ws._get_ws(dev):
                 await _send_servo_moves(
-                    hub, dev, moves, source="auto_llm_wait_nod", summary=f"等待 LLM 点头（{_LLM_WAIT_NOD_MS}ms）"
+                    device_ws, dev, moves, source="auto_llm_wait_nod", summary=f"等待 LLM 点头（{_LLM_WAIT_NOD_MS}ms）"
                 )
             try:
                 await asyncio.wait_for(done.wait(), timeout=_MOTION_MS / 1000.0)
@@ -282,16 +266,16 @@ async def llm_wait_nod_feedback_loop(hub: AsrChatHub, device_id: str, done: asyn
         raise
 
 
-def schedule_listen_feedback(hub: AsrChatHub, device_id: str | None) -> None:
+def schedule_listen_feedback(device_ws: DeviceWsService, device_id: str | None) -> None:
     dev = str(device_id or "").strip()
     if not dev:
         return
-    asyncio.create_task(maybe_send_listen_feedback(hub, dev))
+    asyncio.create_task(maybe_send_listen_feedback(device_ws, dev))
 
 
-def start_llm_wait_nod_feedback(hub: AsrChatHub, device_id: str | None) -> tuple[asyncio.Event, asyncio.Task]:
+def start_llm_wait_nod_feedback(device_ws: DeviceWsService, device_id: str | None) -> tuple[asyncio.Event, asyncio.Task]:
     done = asyncio.Event()
-    task = asyncio.create_task(llm_wait_nod_feedback_loop(hub, str(device_id or "").strip(), done))
+    task = asyncio.create_task(llm_wait_nod_feedback_loop(device_ws, str(device_id or "").strip(), done))
     return done, task
 
 

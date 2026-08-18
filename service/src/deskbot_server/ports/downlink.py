@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
 
@@ -22,9 +21,3 @@ class DownlinkPort(Protocol):
         event_fields: dict[str, Any] | None = None,
         send_client: bool = True,
     ) -> None: ...
-
-    async def send_pb_wire(
-        self, wire_text: str, binaries: list[bytes] | None = None, pcm: bytes | None = None
-    ) -> bool: ...
-
-    def pb_serial_chain(self) -> AbstractAsyncContextManager[None]: ...

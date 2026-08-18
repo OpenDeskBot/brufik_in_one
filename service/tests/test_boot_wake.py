@@ -11,7 +11,7 @@ def test_deliver_boot_wake_scene_finds_wake(monkeypatch):
     sent: list = []
 
     class FakeHub:
-        pipeline_broker = None
+        _bus_service = None
 
         async def send_pb_chain_ordered(self, device_id, frames, binaries_per_frame=None):
             sent.append((device_id, frames, binaries_per_frame))

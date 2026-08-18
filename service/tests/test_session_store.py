@@ -1,26 +1,35 @@
 from __future__ import annotations
 
-import json
+import tempfile
+from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture()
-def session_env(tmp_path, monkeypatch):
-    from deskbot_server.utils import device_data as dd
-    from deskbot_server.dao import session_store as ss
-    from deskbot_server.ws.device_pin import set_online_pin
+def temp_db(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "test.db"
+        monkeypatch.setenv("DESKBOT_DB_PATH", str(db_path))
+        from deskbot_server.db import init_database
+        from deskbot_server.db.engine import init_engine, reset_engine
 
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    monkeypatch.setattr(dd, "DATA_DIR", data_dir)
+        reset_engine()
+        init_engine(db_path)
+        init_database()
+        yield db_path
+
+
+@pytest.fixture()
+def session_env(temp_db, monkeypatch):
+    from deskbot_server.dao import session_store as ss
+
     monkeypatch.setattr(ss, "SESSION_IDLE_SECONDS", 600)
-    set_online_pin("deskbot_test", "1234")
-    return data_dir, ss
+    return ss
 
 
 def test_create_and_append_turn(session_env):
-    data_dir, ss = session_env
+    ss = session_env
     dev = "deskbot_test"
 
     session = ss.create_session(dev, title="你好")
@@ -35,15 +44,9 @@ def test_create_and_append_turn(session_env):
     assert updated["messages"][1]["role"] == "assistant"
     assert updated["messages"][1]["message"] == "今天晴"
 
-    path = data_dir / f"{dev}_1234" / "session" / f"{session['session_id']}.json"
-    assert path.is_file()
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    assert raw["title"] == "今天天气怎么样"
-    assert len(raw["messages"]) == 2
-
 
 def test_session_history_for_llm(session_env):
-    _, ss = session_env
+    ss = session_env
     dev = "deskbot_test"
     session = ss.create_session(dev)
     ss.append_turn(dev, session["session_id"], "你好", "你好呀")
@@ -53,39 +56,36 @@ def test_session_history_for_llm(session_env):
 
 
 def test_new_session_after_idle(session_env):
-    _, ss = session_env
+    ss = session_env
     dev = "deskbot_test"
-    now = 1_000_000.0
 
-    s1 = ss.ensure_active_session(dev, user_text="第一轮", now=now)
-    ss.append_turn(dev, s1["session_id"], "第一轮", "回复一", now=now + 1)
+    s1 = ss.ensure_active_session(dev, user_text="第一轮", now=1_000_000.0)
+    ss.append_turn(dev, s1["session_id"], "第一轮", "回复一", now=1_000_001.0)
 
-    s2 = ss.ensure_active_session(dev, user_text="第二轮", now=now + 602)
+    s2 = ss.ensure_active_session(dev, user_text="第二轮", now=1_000_602.0)
     assert s2["session_id"] != s1["session_id"]
     assert s2["title"] == "第二轮"
     assert s2["messages"] == []
 
 
 def test_continue_session_within_idle_window(session_env):
-    _, ss = session_env
+    ss = session_env
     dev = "deskbot_test"
-    now = 2_000_000.0
 
-    s1 = ss.ensure_active_session(dev, user_text="你好", now=now)
-    ss.append_turn(dev, s1["session_id"], "你好", "你好呀", now=now + 1)
+    s1 = ss.ensure_active_session(dev, user_text="你好", now=2_000_000.0)
+    ss.append_turn(dev, s1["session_id"], "你好", "你好呀", now=2_000_001.0)
 
-    s2 = ss.ensure_active_session(dev, user_text="再问一句", now=now + 300)
+    s2 = ss.ensure_active_session(dev, user_text="再问一句", now=2_000_300.0)
     assert s2["session_id"] == s1["session_id"]
 
 
 def test_list_and_get_sessions(session_env):
-    _, ss = session_env
+    ss = session_env
     dev = "deskbot_test"
-    now = 3_000_000.0
 
-    s1 = ss.create_session(dev, title="旧对话", now=now)
-    ss.append_turn(dev, s1["session_id"], "旧", "旧回复", now=now + 1)
-    s2 = ss.create_session(dev, title="新对话", now=now + 700)
+    s1 = ss.create_session(dev, title="旧对话", now=3_000_000.0)
+    ss.append_turn(dev, s1["session_id"], "旧", "旧回复", now=3_000_001.0)
+    s2 = ss.create_session(dev, title="新对话", now=3_000_700.0)
 
     rows = ss.list_recent_sessions(dev, limit=5)
     assert len(rows) == 2
@@ -99,7 +99,7 @@ def test_list_and_get_sessions(session_env):
 
 
 def test_execute_session_tool(session_env):
-    _, ss = session_env
+    ss = session_env
     dev = "deskbot_test"
     session = ss.create_session(dev, title="测试")
     ss.append_turn(dev, session["session_id"], "问题", "答案")
@@ -118,7 +118,7 @@ def test_execute_session_tool(session_env):
 
 
 def test_session_tool_requires_device_id(session_env):
-    _, ss = session_env
+    ss = session_env
     with pytest.raises(ValueError, match="device_id"):
         ss.execute_session_tool({"action": "current"}, device_id="")
 
@@ -128,7 +128,7 @@ def test_llm_tool_runner_session_tool(session_env):
 
     from deskbot_server.service.application.llm_tool_runner import execute_llm_tools
 
-    _, ss = session_env
+    ss = session_env
     dev = "deskbot_test"
     session = ss.create_session(dev, title="工具测试")
     ss.append_turn(dev, session["session_id"], "你好", "嗨")

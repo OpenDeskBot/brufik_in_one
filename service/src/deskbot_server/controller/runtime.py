@@ -8,10 +8,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from deskbot_server.model.settings import AppSettings
     from deskbot_server.service.application.chat_service import ChatService
+    from deskbot_server.service.bus_service import BusService
+    from deskbot_server.service.device_ws_service import DeviceWsService
     from deskbot_server.service.pipeline.audio import AudioConfig
-    from deskbot_server.ws.asr_chat_hub import AsrChatHub
-    from deskbot_server.ws.device_pipeline import DevicePipelineBroker
-    from deskbot_server.ws.registry import DeviceRegistry
 
 
 @dataclass
@@ -20,9 +19,8 @@ class AppRuntime:
     chat: ChatService
     audio_cfg: AudioConfig
     ws_path: str
-    device_pipeline_broker: DevicePipelineBroker
-    registry: DeviceRegistry
-    asr_chat_hub: AsrChatHub
+    bus_service: BusService
+    device_ws: DeviceWsService
     scheduler: object | None = None
 
 

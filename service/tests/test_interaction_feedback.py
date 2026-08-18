@@ -83,7 +83,7 @@ def test_camera_face_follow_sends_latest_absolute_position(monkeypatch):
     from deskbot_server.service.application import camera_servo_follower as follower
 
     class Hub:
-        pipeline_broker = None
+        _bus_service = None
 
         def __init__(self):
             self.payloads: list[dict] = []
@@ -124,9 +124,10 @@ def test_listen_feedback_patrol_without_face():
 
 def test_listen_feedback_respects_min_gap(monkeypatch):
     from deskbot_server.service.application import interaction_feedback as fb
-    from deskbot_server.ws.asr_chat_hub import AsrChatHub
+    from deskbot_server.service.device_ws_service import DeviceWsService
 
     async def _run() -> None:
+        DeviceWsService.reset_instance()
         fb._listen_last_mono.clear()
         sent: list[str] = []
 
@@ -137,15 +138,15 @@ def test_listen_feedback_respects_min_gap(monkeypatch):
         monkeypatch.setattr(fb, "_send_servo_moves", fake_send)
         monkeypatch.setattr("deskbot_server.auto_reply.get_asr_voice_auto_reply_enabled", lambda: True)
 
-        hub = AsrChatHub(device_pb_only=True)
-        hub.first_ws = lambda _dev: asyncio.sleep(0, result=object())  # type: ignore[method-assign]
+        svc = DeviceWsService()
+        svc._get_ws = lambda _dev: object()  # type: ignore[method-assign]
 
-        await fb.maybe_send_listen_feedback(hub, "dev3")
-        await fb.maybe_send_listen_feedback(hub, "dev3")
+        await fb.maybe_send_listen_feedback(svc, "dev3")
+        await fb.maybe_send_listen_feedback(svc, "dev3")
         assert len(sent) == 1
 
         fb._listen_last_mono["dev3"] = time.monotonic() - fb._LISTEN_MIN_GAP_SEC - 0.1
-        await fb.maybe_send_listen_feedback(hub, "dev3")
+        await fb.maybe_send_listen_feedback(svc, "dev3")
         assert len(sent) == 2
 
     asyncio.run(_run())
@@ -153,9 +154,10 @@ def test_listen_feedback_respects_min_gap(monkeypatch):
 
 def test_llm_wait_nod_loop_stops_when_done(monkeypatch):
     from deskbot_server.service.application import interaction_feedback as fb
-    from deskbot_server.ws.asr_chat_hub import AsrChatHub
+    from deskbot_server.service.device_ws_service import DeviceWsService
 
     async def _run() -> None:
+        DeviceWsService.reset_instance()
         calls: list[int] = []
 
         async def fake_send(*_a, **_k):
@@ -166,11 +168,11 @@ def test_llm_wait_nod_loop_stops_when_done(monkeypatch):
         monkeypatch.setattr(fb, "_MOTION_MS", 50)
         monkeypatch.setattr("deskbot_server.auto_reply.get_asr_voice_auto_reply_enabled", lambda: True)
 
-        hub = AsrChatHub(device_pb_only=True)
-        hub.first_ws = lambda _dev: asyncio.sleep(0, result=object())  # type: ignore[method-assign]
+        svc = DeviceWsService()
+        svc._get_ws = lambda _dev: object()  # type: ignore[method-assign]
 
         done = asyncio.Event()
-        task = asyncio.create_task(fb.llm_wait_nod_feedback_loop(hub, "dev4", done))
+        task = asyncio.create_task(fb.llm_wait_nod_feedback_loop(svc, "dev4", done))
         await asyncio.sleep(0.05)
         assert calls
         done.set()

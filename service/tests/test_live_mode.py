@@ -32,12 +32,11 @@ def test_conversation_blocks_live_idle():
     svc = LiveService()
 
     class Hub:
-        pipeline_broker = None
+        _bus_service = None
 
     svc.bind(Hub())
     svc.note_conversation_start("dev1")
     assert svc._ensure("dev1").in_conversation
-    assert svc.handles_idle("dev1") is False
     svc.note_conversation_end("dev1")
     assert not svc._ensure("dev1").in_conversation
     assert svc.cooldown_remaining("dev1") > 0

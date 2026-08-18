@@ -225,7 +225,7 @@ class CameraFaceService(metaclass=SingletonMeta):
     """设备 JPEG 帧处理入口（全局一套 runtime）。
 
     - ``recognize``：多进程识别 → landmarks / embedding
-    - ``find_face_by_embedding`` / ``register_face_embedding``：档案查写
+    - ``register_face_embedding``：档案写入
     - ``process``：跟踪、缓存、交互反馈；有订阅时 ``try_emit`` 推流
     """
 
@@ -299,41 +299,6 @@ class CameraFaceService(metaclass=SingletonMeta):
         return await loop.run_in_executor(_pool, _mp_recognize, image, opts)
 
     # ----- 档案：embedding 查 / 写 -----
-
-    def find_face_by_embedding(
-        self, embedding: list[float], *, device_id: str | None = None, threshold: float | None = None
-    ) -> dict[str, Any] | None:
-        """用 embedding 在 ``face_profiles`` 中查找匹配人名。"""
-        from deskbot_server.dao.camera_face_config_store import load_camera_face_cfg_file
-        from deskbot_server.service.face_profile_service import find_profile_by_similarity, load_face_profiles
-        from deskbot_server.vision.face_identity import is_embedding_vector, match_threshold_for_descriptor
-
-        if not isinstance(embedding, list) or len(embedding) < 4:
-            return None
-        try:
-            vec = [float(x) for x in embedding]
-        except (TypeError, ValueError):
-            return None
-
-        cfg = load_camera_face_cfg_file(device_id=device_id) or {}
-        emb_thr = float(cfg.get("identity_similarity_threshold", self.runtime.identity_similarity_threshold))
-        geo_thr = float(cfg.get("identity_geometry_threshold", self.runtime.identity_geometry_threshold))
-        if threshold is None:
-            thr = match_threshold_for_descriptor(vec, embedding_threshold=emb_thr, geometry_threshold=geo_thr)
-        else:
-            thr = float(threshold)
-        profiles = load_face_profiles(device_id=device_id)
-        profile, score = find_profile_by_similarity(profiles, vec, threshold=thr)
-        if profile is None:
-            return None
-        return {
-            "name": str(profile["name"]),
-            "id": int(profile["id"]),
-            "score": round(float(score), 3),
-            "descriptor_kind": str(
-                profile.get("descriptor_kind") or ("embedding" if is_embedding_vector(vec) else "geometry")
-            ),
-        }
 
     def register_face_embedding(
         self, name: str, embedding: list[float], *, device_id: str | None = None
@@ -633,7 +598,7 @@ class CameraFaceService(metaclass=SingletonMeta):
             live = LiveService()
             await live.on_face_tick(device_id, detect)
             if not live.owns_face_tracking(device_id):
-                await camera_servo_follower_tick(runtime.asr_chat_hub, device_id, detect)
+                await camera_servo_follower_tick(runtime.device_ws, device_id, detect)
         except RuntimeError:
             # 独立的人脸配置/测试路径没有完整应用运行时，跳过设备下发。
             pass
@@ -651,16 +616,16 @@ _DEFAULT_CAPTURE_FPS = 5
 _DEFAULT_WAIT_TIMEOUT_S = 4.0
 
 
-async def request_camera_fps_boost(device_id: str, hub: Any, *, cam_fps: int = _DEFAULT_CAPTURE_FPS) -> None:
+async def request_camera_fps_boost(device_id: str, device_ws: Any, *, cam_fps: int = _DEFAULT_CAPTURE_FPS) -> None:
     """通过 pb 提示设备提高相机上行帧率（经 /asr_chat）。"""
     dev = str(device_id or "").strip()
-    if not dev or hub is None:
+    if not dev or device_ws is None:
         return
     try:
         from deskbot_server.pb.cam_signal import build_cam_fps_signal_pb
 
         payload = build_cam_fps_signal_pb(cam_fps=cam_fps)
-        n = await hub.send(dev, payload)
+        n = await device_ws.send(dev, payload)
         logger.info("[capture_camera] cam_fps=%d boost device_id=%s delivered=%s", cam_fps, dev, n)
     except Exception as exc:
         logger.warning("[capture_camera] cam_fps boost failed device_id=%s: %s", dev, exc)
@@ -669,7 +634,7 @@ async def request_camera_fps_boost(device_id: str, hub: Any, *, cam_fps: int = _
 async def capture_camera_for_device_async(
     device_id: str,
     *,
-    hub: Any = None,
+    device_ws: Any = None,
     cam_fps: int = _DEFAULT_CAPTURE_FPS,
     wait_timeout_s: float = _DEFAULT_WAIT_TIMEOUT_S,
 ) -> dict[str, Any]:
@@ -678,5 +643,5 @@ async def capture_camera_for_device_async(
     if not dev:
         return {"ok": False, "error": "缺少 device_id"}
 
-    await request_camera_fps_boost(dev, hub, cam_fps=cam_fps)
+    await request_camera_fps_boost(dev, device_ws, cam_fps=cam_fps)
     return await CameraFaceService().capture_frame_async(dev, timeout_s=wait_timeout_s)

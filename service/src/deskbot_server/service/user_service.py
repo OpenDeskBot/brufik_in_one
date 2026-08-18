@@ -9,7 +9,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from deskbot_server.dao import device_mapper, user_mapper
 from deskbot_server.db.models import Device, User, _new_id
 from deskbot_server.utils.singleton import SingletonMeta
-from deskbot_server.ws.device_pin import is_device_online
+from deskbot_server.service.device_ws_service import DeviceWsService
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _DEVICE_ID_RE = re.compile(r"^[a-zA-Z0-9_.\-]{1,128}$")
@@ -147,7 +147,8 @@ class UserService(metaclass=SingletonMeta):
         if not _validate_device_id(did):
             raise ValueError("device_id 格式无效（允许字母数字 _ . -）")
 
-        if not is_device_online(did):
+        svc = DeviceWsService.instance()
+        if svc is None or not svc.is_device_online(did):
             raise ValueError("绑定失败：设备未在线，请确认设备已开机并连接 Wi‑Fi")
 
         existing = device_mapper.get_by_device_id(did)

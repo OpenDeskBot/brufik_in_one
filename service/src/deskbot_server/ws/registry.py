@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 from deskbot_server.utils.util import _format_ts
-from deskbot_server.ws.device_pin import clear_device_online, set_device_online
+from deskbot_server.ws.device_online import clear_device_online, set_device_online
 
 logger = logging.getLogger("deskbot-server")
 

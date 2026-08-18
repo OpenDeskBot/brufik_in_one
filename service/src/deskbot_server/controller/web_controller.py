@@ -42,7 +42,7 @@ from deskbot_server.utils.device_data import resolve_json_path
 from deskbot_server.utils.util import _extract_device_id, _json_msg
 from deskbot_server.utils.ws_utils import WsUtils
 from deskbot_server.ws.device_pipeline import handle_device_pipeline
-from deskbot_server.ws.registry import DeviceRegistry
+from deskbot_server.service.device_ws_service import DeviceWsService
 
 logger = logging.getLogger("deskbot-server")
 
@@ -56,8 +56,8 @@ def _config_device_id(qargs: dict, body: object = None) -> str | None:
     return dev or None
 
 
-def _registry_channels(registry: DeviceRegistry, device_id: str) -> dict[str, int]:
-    for row in registry.snapshot():
+def _registry_channels(device_ws: DeviceWsService, device_id: str) -> dict[str, int]:
+    for row in device_ws.snapshot():
         if row.get("device_id") == device_id:
             ch = row.get("channels")
             return dict(ch) if isinstance(ch, dict) else {}
@@ -85,9 +85,9 @@ async def health() -> JSONResponse:
 async def api_devices(request: Request) -> JSONResponse:
     from deskbot_server.controller.runtime import get_runtime
 
-    registry = get_runtime().registry
+    device_ws = get_runtime().device_ws
     peer = _request_peer(request)
-    snap = registry.snapshot()
+    snap = device_ws.snapshot()
     if request.state.user_id:
         from deskbot_server.service.user_service import UserService
 
@@ -265,28 +265,25 @@ async def api_debug_prefs(request: Request) -> JSONResponse:
 @require_api_auth
 async def api_pipeline_recent(request: Request) -> JSONResponse:
     from deskbot_server.controller.runtime import get_runtime
-    from deskbot_server.service.pipeline_service import PipelineService
 
     qargs = _request_qargs(request)
     peer = _request_peer(request)
-    try:
-        broker = PipelineService().broker
-    except RuntimeError:
-        broker = get_runtime().device_pipeline_broker
+    rt = get_runtime()
+    bus = rt.bus_service
     dev = _extract_device_id(qargs)
     denied = device_access_denied(request.state.user_id, dev)
     if denied is not None:
         return denied
     try:
-        limit = int(qargs.get("limit") or str(broker.max_events))
+        limit = int(qargs.get("limit") or str(bus.max_events))
     except ValueError:
-        limit = broker.max_events
-    limit = max(1, min(broker.max_events, limit))
-    items = broker.snapshot_events(dev, limit)
+        limit = bus.max_events
+    limit = max(1, min(bus.max_events, limit))
+    items = bus.snapshot(dev, limit)
     logger.info("[HTTP] GET /api/pipeline_recent peer=%s device_id=%s limit=%d -> %d 条", peer, dev, limit, len(items))
     return JSONResponse(
         status_code=200,
-        content={"items": items, "device_id": dev, "limit": limit, "max_events": broker.max_events, "t": time.time()},
+        content={"items": items, "device_id": dev, "limit": limit, "max_events": bus.max_events, "t": time.time()},
     )
 
 
@@ -295,7 +292,7 @@ async def api_pipeline_recent(request: Request) -> JSONResponse:
 async def api_device_servo(request: Request) -> JSONResponse:
     from deskbot_server.controller.runtime import get_runtime
 
-    asr_chat_hub = get_runtime().asr_chat_hub
+    device_ws = get_runtime().device_ws
     qargs = _request_qargs(request)
     peer = _request_peer(request)
     dev = (qargs.get("device_id") or "").strip()
@@ -386,15 +383,15 @@ async def api_device_servo(request: Request) -> JSONResponse:
             json.dumps(payload, ensure_ascii=False),
             f" +scene={with_scene!r} frames={len(tail_frames)}" if tail_frames else "",
         )
-        if tail_frames:
-            from deskbot_server.model.pb_seq import PbBlock, PbSeq
+        from deskbot_server.model.pb_seq import PbBlock, PbSeq
 
-            head_entry = PbBlock.from_wire(payload)
+        head_entry = PbBlock.from_wire(payload)
+        if tail_frames:
             tail_entries = tuple(PbBlock.from_wire(f) for f in tail_frames)
             pb_seq = PbSeq(req=payload.get("req", ""), entries=(head_entry,) + tail_entries, level=pb_level)
-            n = await asr_chat_hub.send(dev, pb_seq)
         else:
-            n = await asr_chat_hub.send(dev, payload)
+            pb_seq = PbSeq(req=payload.get("req", ""), entries=(head_entry,), level=pb_level)
+        n = await device_ws.send(dev, pb_seq)
     except Exception:
         logger.exception("[HTTP] /api/device_servo 下发异常 device_id=%s", dev)
         n = 0
@@ -488,8 +485,8 @@ async def api_device_face_play(request: Request) -> JSONResponse:
     )
 
     rt = get_runtime()
-    asr_chat_hub = rt.asr_chat_hub
-    registry = rt.registry
+    device_ws = rt.device_ws
+    device_ws = rt.device_ws
     qargs = _request_qargs(request)
     peer = _request_peer(request)
     dev = (qargs.get("device_id") or "").strip()
@@ -550,14 +547,14 @@ async def api_device_face_play(request: Request) -> JSONResponse:
         pb_seq.block_count,
     )
     try:
-        n = await asr_chat_hub.send(dev, pb_seq)
+        n = await device_ws.send(dev, pb_seq)
     except Exception:
         logger.exception("[HTTP] /api/device_face_play 下发异常 device_id=%s kind=%s name=%s", dev, kind_q, expr_name)
         n = 0
     hint = None
     channels: dict[str, int] = {}
     if n == 0:
-        channels = _registry_channels(registry, dev)
+        channels = _registry_channels(device_ws, dev)
         hint = f"没有发往 WebSocket：该 device_id 当前无已连接的 /asr_chat。当前注册通道={channels or '无'}。"
     return JSONResponse(
         status_code=200,
@@ -586,10 +583,8 @@ async def api_device_tts(request: Request) -> JSONResponse:
     from deskbot_server.service.application.ws_chat_turn import publish_ws_chat_turn
 
     rt = get_runtime()
-    asr_chat_hub = rt.asr_chat_hub
+    device_ws = rt.device_ws
     chat = rt.chat
-    device_pipeline_broker = rt.device_pipeline_broker
-    registry = rt.registry
     qargs = _request_qargs(request)
     peer = _request_peer(request)
     method = request.method.upper()
@@ -619,7 +614,7 @@ async def api_device_tts(request: Request) -> JSONResponse:
         return denied
     if not text:
         return JSONResponse(status_code=400, content={"ok": False, "error": "missing text", "t": time.time()})
-    ws = await asr_chat_hub.first_ws(dev)
+    ws = device_ws._get_ws(dev)
     if ws is None:
         return JSONResponse(
             status_code=200,
@@ -634,17 +629,17 @@ async def api_device_tts(request: Request) -> JSONResponse:
         )
     req_id = uuid.uuid4().hex[:16]
     settings = chat.settings
-    broker = device_pipeline_broker
 
     async def _device_tts_job() -> None:
-        downlink = WsDownlinkAdapter(ws, settings=settings, device_id=dev, dp_broker=broker)
+        downlink = WsDownlinkAdapter(ws, settings=settings, device_id=dev, bus_service=rt.bus_service)
         try:
             turn = await run_device_tts_only(
-                downlink, chat, text, request_id=req_id, device_id=dev, scenes=[scene_q] if scene_q else None
+                downlink, chat, text, request_id=req_id, device_id=dev, scenes=[scene_q] if scene_q else None,
+                device_ws=device_ws,
             )
             await publish_ws_chat_turn(
-                broker,
-                registry,
+                rt.bus_service,
+                device_ws,
                 dev,
                 source="device_tts",
                 asr_text=None,
@@ -696,9 +691,8 @@ async def api_scene_playbook_run(request: Request) -> JSONResponse:
     )
 
     rt = get_runtime()
-    asr_chat_hub = rt.asr_chat_hub
+    device_ws = rt.device_ws
     chat = rt.chat
-    device_pipeline_broker = rt.device_pipeline_broker
     qargs = _request_qargs(request)
     peer = _request_peer(request)
     method = request.method.upper()
@@ -738,7 +732,7 @@ async def api_scene_playbook_run(request: Request) -> JSONResponse:
         playbook = normalize_playbook(playbook_raw)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(exc), "t": time.time()})
-    ws = await asr_chat_hub.first_ws(dev)
+    ws = device_ws._get_ws(dev)
     if ws is None:
         return JSONResponse(
             status_code=200,
@@ -753,12 +747,12 @@ async def api_scene_playbook_run(request: Request) -> JSONResponse:
         )
     req_id = uuid.uuid4().hex[:16]
     settings = chat.settings
-    broker = device_pipeline_broker
 
     async def _playbook_job() -> None:
-        downlink = WsDownlinkAdapter(ws, settings=settings, device_id=dev, dp_broker=broker)
+        downlink = WsDownlinkAdapter(ws, settings=settings, device_id=dev, bus_service=rt.bus_service)
         try:
-            turn = await run_device_playbook(downlink, chat, playbook, request_id=req_id, device_id=dev)
+            turn = await run_device_playbook(downlink, chat, playbook, request_id=req_id, device_id=dev,
+                                              device_ws=device_ws)
             ok = (turn.status or "ok") == "ok" and not turn.error
             logger.info(
                 "[HTTP] /api/scene_playbook/run done device_id=%s req=%s name=%s ok=%s err=%s",
@@ -799,7 +793,7 @@ async def api_scene_playbook_run(request: Request) -> JSONResponse:
 async def api_device_pb_scene(request: Request) -> JSONResponse:
     from deskbot_server.controller.runtime import get_runtime
 
-    asr_chat_hub = get_runtime().asr_chat_hub
+    device_ws = get_runtime().device_ws
     qargs = _request_qargs(request)
     peer = _request_peer(request)
     dev = (qargs.get("device_id") or "").strip()
@@ -836,7 +830,7 @@ async def api_device_pb_scene(request: Request) -> JSONResponse:
         pb_seq.block_count,
     )
     try:
-        n = await asr_chat_hub.send(dev, pb_seq)
+        n = await device_ws.send(dev, pb_seq)
     except Exception:
         logger.exception("[HTTP] /api/device_pb_scene 下发异常 device_id=%s scene=%s", dev, scene_log)
         return JSONResponse(
@@ -954,8 +948,8 @@ async def api_device_pb_anim(request: Request) -> JSONResponse:
     from deskbot_server.controller.runtime import get_runtime
 
     rt = get_runtime()
-    asr_chat_hub = rt.asr_chat_hub
-    registry = rt.registry
+    device_ws = rt.device_ws
+    device_ws = rt.device_ws
     qargs = _request_qargs(request)
     peer = _request_peer(request)
     method = request.method.upper()
@@ -1071,14 +1065,14 @@ async def api_device_pb_anim(request: Request) -> JSONResponse:
         json.dumps(payload, ensure_ascii=False),
     )
     try:
-        n = await asr_chat_hub.send(dev, payload)
+        n = await device_ws.send(dev, payload)
     except Exception:
         logger.exception("[HTTP] /api/device_pb_anim 下发异常 device_id=%s", dev)
         n = 0
     hint = None
     channels: dict[str, int] = {}
     if n == 0:
-        channels = _registry_channels(registry, dev)
+        channels = _registry_channels(device_ws, dev)
         hint = (
             "没有发往 WebSocket：该 device_id 当前无已连接的 /asr_chat，"
             "或连接已断开。pb 下发（表情/口型/场景/舵机）均需 ESP32 使用相同 device_id 登录 /asr_chat；"
@@ -1111,8 +1105,8 @@ async def api_device_pb_expr_scene(request: Request) -> JSONResponse:
     from deskbot_server.controller.runtime import get_runtime
 
     rt = get_runtime()
-    asr_chat_hub = rt.asr_chat_hub
-    registry = rt.registry
+    device_ws = rt.device_ws
+    device_ws = rt.device_ws
     qargs = _request_qargs(request)
     dev = (qargs.get("device_id") or "").strip()
     scene_q = (qargs.get("scene") or qargs.get("name") or "").strip()
@@ -1142,14 +1136,14 @@ async def api_device_pb_expr_scene(request: Request) -> JSONResponse:
 
     pb_seq = PbSeq.from_wire_pairs(pairs, level=PB_LEVEL_DEBUG)
     try:
-        n = await asr_chat_hub.send(dev, pb_seq)
+        n = await device_ws.send(dev, pb_seq)
     except Exception:
         logger.exception("[HTTP] /api/device_pb_expr_scene 下发异常 device_id=%s scene=%s", dev, scene_q)
         n = 0
     hint = None
     channels: dict[str, int] = {}
     if n == 0:
-        channels = _registry_channels(registry, dev)
+        channels = _registry_channels(device_ws, dev)
         hint = f"没有发往 WebSocket：该 device_id 当前无已连接的 /asr_chat。当前注册通道={channels or '无'}。"
     return JSONResponse(
         status_code=200,
@@ -1236,4 +1230,4 @@ async def camera_view(websocket: WebSocket) -> None:
 async def device_pipeline(websocket: WebSocket) -> None:
     rt = get_runtime()
     st = websocket.state
-    await handle_device_pipeline(st.ws, rt.device_pipeline_broker, rt.registry)
+    await handle_device_pipeline(st.ws, rt.bus_service, rt.device_ws)

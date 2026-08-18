@@ -83,10 +83,6 @@ def sleep_moves(device_id: str, *, hold_ms: int) -> list[dict[str, Any]]:
     ]
 
 
-# 兼容旧测试名
-look_around_moves = wander_moves
-
-
 def _moves_ms(moves: list[dict[str, Any]], *, device_id: str) -> int:
     return sum(max(1, int(s.get("ms") or 0)) for s in expand_llm_moves(moves, device_id=device_id))
 
@@ -141,12 +137,6 @@ class LiveService(metaclass=SingletonMeta):
         if st.in_conversation:
             return ENTER_SEC
         return max(0.0, st.resume_at - time.monotonic())
-
-    def handles_idle(self, device_id: str) -> bool:
-        if not self.active(device_id):
-            return False
-        st = self._devs.get(str(device_id or "").strip())
-        return st is not None and st.loop is not None and not st.loop.done()
 
     def owns_face_tracking(self, device_id: str) -> bool:
         if not self.active(device_id):
@@ -224,7 +214,7 @@ class LiveService(metaclass=SingletonMeta):
                 if (
                     not self.active(device_id)
                     or self._hub is None
-                    or not await self.hub.first_ws(device_id)
+                    or not self.hub._get_ws(device_id)
                     or st.in_conversation
                     or self.cooldown_remaining(device_id) > 0
                 ):

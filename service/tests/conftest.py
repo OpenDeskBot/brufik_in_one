@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from tests.device_bind_helpers import DEFAULT_TEST_PIN, bind_device_online, mark_device_online
+from tests.device_bind_helpers import bind_device_online, mark_device_online
 
-__all__ = ["DEFAULT_TEST_PIN", "bind_device_online", "mark_device_online"]
+__all__ = ["bind_device_online", "mark_device_online"]
 
 
 def pytest_configure(config):
@@ -13,7 +13,8 @@ def pytest_configure(config):
 
 def pytest_runtest_teardown(item, nextitem):
     del item, nextitem
-    from deskbot_server.ws import device_pin as dp
+    from deskbot_server.service.device_ws_service import DeviceWsService
 
-    with dp._lock:
-        dp._online_pins.clear()
+    svc = DeviceWsService.instance()
+    if svc is not None:
+        svc._devices.clear()

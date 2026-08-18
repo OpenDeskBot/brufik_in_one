@@ -10,8 +10,8 @@ from deskbot_server.service.application.chat_flow import publish_chat_turn, run_
 
 if TYPE_CHECKING:
     from deskbot_server.service.application.chat_service import ChatService
-    from deskbot_server.ws.device_pipeline import DevicePipelineBroker
-    from deskbot_server.ws.registry import DeviceRegistry
+    from deskbot_server.service.bus_service import BusService
+    from deskbot_server.service.device_ws_service import DeviceWsService
 
 
 async def run_ws_chat_turn(
@@ -20,34 +20,32 @@ async def run_ws_chat_turn(
     user_text: str,
     *,
     request_id: str | None = None,
-    dp_broker: DevicePipelineBroker | None = None,
-    registry: DeviceRegistry | None = None,
+    device_ws: DeviceWsService | None = None,
     device_id: str | None = None,
     t_asr_start: float | None = None,
     t_asr_text: float | None = None,
-    asr_chat_hub: Any | None = None,
     on_llm_error: Any | None = None,
+    bus_service: BusService | None = None,
 ) -> dict:
-    downlink = WsDownlinkAdapter(websocket, settings=pipeline.settings, device_id=device_id, dp_broker=dp_broker)
+    downlink = WsDownlinkAdapter(websocket, settings=pipeline.settings, device_id=device_id, bus_service=bus_service)
     turn = await run_chat_turn(
         downlink,
         pipeline,
         user_text,
         request_id=request_id,
         device_id=device_id,
-        registry=registry,
+        device_ws=device_ws,
         t_asr_start=t_asr_start,
         t_asr_text=t_asr_text,
-        pipeline_broker=dp_broker,
-        asr_chat_hub=asr_chat_hub,
         on_llm_error=on_llm_error,
+        bus_service=bus_service,
     )
     return turn.as_dict()
 
 
 async def publish_ws_chat_turn(
-    broker: DevicePipelineBroker,
-    registry: DeviceRegistry,
+    bus: Any,
+    device_ws: DeviceWsService,
     device_id: str | None,
     *,
     source: str,
@@ -57,9 +55,9 @@ async def publish_ws_chat_turn(
     flow: dict,
     request_id: str | None = None,
 ) -> None:
-    if not device_id or broker is None:
+    if not device_id or bus is None:
         return
-    events = WsPipelineEventsAdapter(broker, registry)
+    events = WsPipelineEventsAdapter(bus, device_ws)
     turn = ChatTurnResult(
         llm_text=flow.get("llm_text"),
         llm_raw=flow.get("llm_raw"),

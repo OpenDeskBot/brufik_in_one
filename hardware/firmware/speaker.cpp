@@ -413,9 +413,16 @@ static void execute_job(Job& job) {
 
 static void task_loop_speaker(void*) {
   Job job{};
+  constexpr TickType_t kIdleTimeout = pdMS_TO_TICKS(2000);
   for (;;) {
     (void)poll_cancel();
-    if (xQueueReceive(s_queue, &job, portMAX_DELAY) != pdTRUE) {
+    if (xQueueReceive(s_queue, &job, kIdleTimeout) != pdTRUE) {
+      /* 空闲超时：队列已空。若 mic gate 仍被持有（缺失 kEnd / 异常中断），
+       * 主动释放，避免麦克风永久死锁。 */
+      if (s_mic_speak_held) {
+        log_warn("[SPEAKER] idle timeout, force releasing mic gate");
+        release_mic(/*immediate=*/false);
+      }
       continue;
     }
     if (job.type == JobType::kCancel) {

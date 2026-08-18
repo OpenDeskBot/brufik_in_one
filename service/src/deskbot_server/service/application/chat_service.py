@@ -23,20 +23,12 @@ class ChatService:
         self._tts = tts
 
     @property
-    def config(self) -> dict:
-        return self.settings.raw
-
-    @property
     def tts_cfg(self) -> dict:
         return self.settings.tts_cfg
 
     @property
     def asr_chat_device_pb_only(self) -> bool:
         return self.settings.server.asr_chat_device_pb_only
-
-    @property
-    def asr_chat_minimal_device_downlink(self) -> bool:
-        return self.settings.server.asr_chat_minimal_device_downlink
 
     async def asr(self, pcm_bytes: bytes, sample_rate: int) -> str:
         try:

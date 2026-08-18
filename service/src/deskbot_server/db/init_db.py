@@ -285,79 +285,6 @@ def _migrate_memory_to_db(engine) -> None:
         logger.info("已迁移 %d 条记忆到 device_memory 表", migrated)
 
 
-def _migrate_sessions_to_db(engine) -> None:
-    """将旧 JSON Session（data/{device_id}/session/*.json）导入 device_session + device_session_message 表。"""
-    import json
-
-    from sqlalchemy import inspect, text
-
-    from deskbot_server.utils.paths import DATA_DIR
-
-    insp = inspect(engine)
-    tables = insp.get_table_names()
-    if "device_session" not in tables or "device_session_message" not in tables:
-        return
-    with engine.begin() as conn:
-        count = conn.execute(text("SELECT COUNT(*) FROM device_session")).scalar()
-    if count and count > 0:
-        return
-
-    session_dirs = list(DATA_DIR.glob("*/session"))
-    if not session_dirs:
-        return
-
-    migrated = 0
-    for sdir in session_dirs:
-        device_id = sdir.parent.name
-        if device_id == "global":
-            continue
-        for jf in sorted(sdir.glob("*.json")):
-            if jf.name == "_meta.json":
-                continue
-            try:
-                raw = json.loads(jf.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            sid = str(raw.get("session_id") or jf.stem).strip()
-            title = str(raw.get("title") or "新对话").strip()[:64]
-            created = raw.get("created_at")
-            updated = raw.get("updated_at")
-            if not sid:
-                continue
-            try:
-                with engine.begin() as conn:
-                    conn.execute(
-                        text(
-                            "INSERT OR IGNORE INTO device_session "
-                            "(id, device_id, title, created_at, updated_at) "
-                            "VALUES (:sid, :did, :title, "
-                            "COALESCE(:created, datetime('now')), COALESCE(:updated, datetime('now')))"
-                        ),
-                        {"sid": sid, "did": device_id, "title": title, "created": created, "updated": updated},
-                    )
-                    for msg in raw.get("messages") or []:
-                        if not isinstance(msg, dict):
-                            continue
-                        role = str(msg.get("role") or "").strip()
-                        content = str(msg.get("message") or msg.get("content") or "").strip()
-                        if role not in ("user", "assistant") or not content:
-                            continue
-                        conn.execute(
-                            text(
-                                "INSERT INTO device_session_message "
-                                "(session_id, role, content, created_at) "
-                                "VALUES (:sid, :role, :content, COALESCE(:ts, datetime('now')))"
-                            ),
-                            {"sid": sid, "role": role, "content": content, "ts": msg.get("ts")},
-                        )
-                migrated += 1
-            except Exception:
-                logger.warning("迁移 session 失败: device_id=%s sid=%s", device_id, sid, exc_info=True)
-
-    if migrated:
-        logger.info("已迁移 %d 个 Session 到 device_session 表", migrated)
-
-
 def init_database() -> None:
     engine = init_engine()
     _migrate_legacy_schema(engine)
@@ -366,4 +293,3 @@ def init_database() -> None:
     _migrate_scheduled_tasks_schema(engine)
     _migrate_face_profiles_to_db(engine)
     _migrate_memory_to_db(engine)
-    _migrate_sessions_to_db(engine)

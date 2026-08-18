@@ -4,10 +4,10 @@ from __future__ import annotations
 
 __all__ = [
     "AsrService",
+    "BusService",
     "CameraFaceService",
     "LiveService",
     "LlmService",
-    "PipelineService",
     "TtsService",
     "UserService",
     "VadService",
@@ -19,6 +19,10 @@ def __getattr__(name: str):
         from deskbot_server.service.asr_service import AsrService
 
         return AsrService
+    if name == "BusService":
+        from deskbot_server.service.bus_service import BusService
+
+        return BusService
     if name == "CameraFaceService":
         from deskbot_server.service.camera_face_service import CameraFaceService
 
@@ -31,10 +35,6 @@ def __getattr__(name: str):
         from deskbot_server.service.llm_service import LlmService
 
         return LlmService
-    if name == "PipelineService":
-        from deskbot_server.service.pipeline_service import PipelineService
-
-        return PipelineService
     if name == "TtsService":
         from deskbot_server.service.tts_service import TtsService
 

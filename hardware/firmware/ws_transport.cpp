@@ -4,6 +4,7 @@
 #include "logger.h"
 #include "mic.h"
 #include "pb_runtime.h"
+#include "speaker.h"
 #include "utils/nvs_config_utils.h"
 #include "utils/opus_codec.h"
 #include "utils/utils.h"
@@ -349,6 +350,7 @@ void ws_transport_new_session(void) {
   s_ws_session++;
   s_app_ready.store(false, std::memory_order_release);
   mic_set_ws_state(kMicWsError);
+  speaker_abort();
   pb_runtime_discard_rx_queue();
   log_info("[WS_TRANSPORT] new session=%u (PB rx queue cleared)", (unsigned)s_ws_session);
 }

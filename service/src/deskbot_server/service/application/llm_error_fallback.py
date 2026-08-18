@@ -64,7 +64,7 @@ def build_llm_error_fallback_plan(*, tts: str | None = None) -> dict[str, Any]:
     }
 
 
-async def llm_error_motion_loop(hub: Any, device_id: str, done: asyncio.Event) -> None:
+async def llm_error_motion_loop(device_ws: Any, device_id: str, done: asyncio.Event) -> None:
     """LLM 失败恢复期间：每 2s 一轮 idle 舵机，直至 ``done``。"""
     if not get_auto_reply(device_id):
         return
@@ -74,9 +74,9 @@ async def llm_error_motion_loop(hub: Any, device_id: str, done: asyncio.Event) -
     moves = llm_error_idle_moves()
     try:
         while not done.is_set():
-            if await hub.first_ws(dev):
+            if device_ws._get_ws(dev):
                 await _send_servo_moves(
-                    hub, dev, moves, source="auto_llm_error_motion", summary=f"LLM 失败兜底动作（{_MOTION_MS}ms）"
+                    device_ws, dev, moves, source="auto_llm_error_motion", summary=f"LLM 失败兜底动作（{_MOTION_MS}ms）"
                 )
             try:
                 await asyncio.wait_for(done.wait(), timeout=_MOTION_MS / 1000.0)
@@ -88,13 +88,13 @@ async def llm_error_motion_loop(hub: Any, device_id: str, done: asyncio.Event) -
 
 
 def start_llm_error_motion_feedback(
-    hub: Any, device_id: str | None
+    device_ws: Any, device_id: str | None
 ) -> tuple[asyncio.Event | None, asyncio.Task | None]:
     dev = str(device_id or "").strip()
-    if not dev or hub is None or not get_auto_reply(device_id):
+    if not dev or device_ws is None or not get_auto_reply(device_id):
         return None, None
     done = asyncio.Event()
-    task = asyncio.create_task(llm_error_motion_loop(hub, dev, done))
+    task = asyncio.create_task(llm_error_motion_loop(device_ws, dev, done))
     return done, task
 
 

@@ -21,7 +21,7 @@ from deskbot_server.vision.camera_face_tune import (
 from deskbot_server.vision.geometry import FRONTAL_YAW_THRESHOLD_DEG
 
 if TYPE_CHECKING:
-    from deskbot_server.ws.asr_chat_hub import AsrChatHub
+    from deskbot_server.service.device_ws_service import DeviceWsService
 
 _SERVO_CENTER_X = 90
 _SERVO_CENTER_Y = 90
@@ -91,7 +91,7 @@ def _mode_accepts_face(mode: str, analysis: dict[str, Any]) -> bool:
     return False
 
 
-async def camera_servo_follower_tick(hub: AsrChatHub, device_id: str, analysis: dict[str, Any]) -> None:
+async def camera_servo_follower_tick(device_ws: DeviceWsService, device_id: str, analysis: dict[str, Any]) -> None:
     """按当前跟随模式下发最新的人脸绝对位置，避免重复或过密的舵机命令。"""
     if not get_auto_reply(device_id):
         return
@@ -137,18 +137,17 @@ async def camera_servo_follower_tick(hub: AsrChatHub, device_id: str, analysis: 
         "servo": [step],
     }
     attach_pb_device_hints_from_config(payload)
-    delivered = await hub.send(dev, payload)
+    delivered = await device_ws.send(dev, payload)
     if delivered <= 0:
         return
 
     state.update(last_send_ms=now_ms, x=step["x"], y=step["y"])
-    from deskbot_server.ws.device_pipeline import publish_auto_dispatch_event
-
-    await publish_auto_dispatch_event(
-        hub.pipeline_broker,
-        device_id=dev,
-        request_id=request_id,
-        source="auto_face_follow",
-        summary=f"{mode} 舵机 ({step['x']}, {step['y']})",
-        status="ok",
-    )
+    bus = getattr(device_ws, 'bus_service', None)
+    if bus is not None:
+        await bus.publish_auto_dispatch(
+            dev,
+            request_id=request_id,
+            source="auto_face_follow",
+            summary=f"{mode} 舵机 ({step['x']}, {step['y']})",
+            status="ok",
+        )

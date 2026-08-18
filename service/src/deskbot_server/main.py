@@ -14,15 +14,13 @@ from deskbot_server.infrastructure.bootstrap import build_chat_service
 from deskbot_server.model.settings import AppSettings
 from deskbot_server.service.application.scheduled_task_scheduler import ScheduledTaskScheduler
 from deskbot_server.service.camera_face_service import CameraFaceService, build_camera_face_runtime
+from deskbot_server.service.device_ws_service import DeviceWsService
 from deskbot_server.service.live_service import ENTER_SEC, SLEEP_MAX_SEC, SLEEP_MIN_SEC, WANDER_MAX_CYCLES, LiveService
 from deskbot_server.service.pipeline.audio import AudioConfig
-from deskbot_server.service.pipeline_service import PipelineService
+from deskbot_server.service.bus_service import BusService
 from deskbot_server.service.vad_service import VadService
 from deskbot_server.utils.concurrency import configure_concurrency, resolve_face_pool_workers
 from deskbot_server.utils.env import load_dotenv
-from deskbot_server.ws.asr_chat_hub import AsrChatHub
-from deskbot_server.ws.device_pipeline import DevicePipelineBroker
-from deskbot_server.ws.registry import DeviceRegistry
 
 logger = logging.getLogger("deskbot-server")
 
@@ -74,11 +72,12 @@ def build_runtime() -> AppRuntime:
         logger.exception("[concurrency] 人脸识别进程池初始化失败")
     pipeline = build_chat_service(config)
     VadService().configure(audio_cfg)
-    device_pipeline_broker = DevicePipelineBroker()
-    PipelineService().bind(device_pipeline_broker)
-    registry = DeviceRegistry()
-    asr_chat_hub = AsrChatHub(device_pb_only=pipeline.asr_chat_device_pb_only, pipeline_broker=device_pipeline_broker)
-    LiveService().bind(asr_chat_hub)
+    bus_service = BusService()
+
+    device_ws = DeviceWsService()
+    device_ws.bind(pipeline, audio_cfg, bus_service=bus_service)
+    LiveService().bind(device_ws)
+
     logger.info(
         "[server] live_mode: per-device (DB), 无有效对话 %.1fs 后 wander，1-%d 轮后 sleep %.0f-%.0fs，gaze 优先",
         ENTER_SEC,
@@ -98,7 +97,7 @@ def build_runtime() -> AppRuntime:
         ws_path = f"/{ws_path}"
 
     scheduler = ScheduledTaskScheduler(
-        chat=pipeline, asr_chat_hub=asr_chat_hub, registry=registry, dp_broker=device_pipeline_broker
+        chat=pipeline, device_ws=device_ws, bus_service=bus_service
     )
     scheduler.start()
 
@@ -107,9 +106,8 @@ def build_runtime() -> AppRuntime:
         chat=pipeline,
         audio_cfg=audio_cfg,
         ws_path=ws_path,
-        device_pipeline_broker=device_pipeline_broker,
-        registry=registry,
-        asr_chat_hub=asr_chat_hub,
+        bus_service=bus_service,
+        device_ws=device_ws,
         scheduler=scheduler,
     )
 
@@ -157,4 +155,4 @@ async def main():
     try:
         await server.serve()
     finally:
-        await runtime.asr_chat_hub.shutdown()
+        await runtime.device_ws.shutdown()

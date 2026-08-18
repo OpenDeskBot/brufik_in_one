@@ -13,7 +13,7 @@ from deskbot_server.infrastructure.tts.text_split import split_tts_by_punctuatio
 from deskbot_server.model.chat import ChatTurnResult
 from deskbot_server.pb.scenes import _pb_scene_entry_by_name, _prepare_pb_scene_chain_frames
 from deskbot_server.pb.shapes import PB_ACTION_APPEND, PB_ACTION_REPLACE, PB_LEVEL_TASK
-from deskbot_server.pb.wire import build_pb_wire_pairs, device_pb_json_msg, pb_wire_json_bytes
+from deskbot_server.pb.wire import build_pb_wire_pairs
 from deskbot_server.ports.downlink import DownlinkPort, PipelineEventsPort
 from deskbot_server.service.application.llm_error_fallback import (
     build_llm_error_fallback_plan,
@@ -26,8 +26,8 @@ from deskbot_server.utils.util import _ms_between
 
 if TYPE_CHECKING:
     from deskbot_server.service.application.chat_service import ChatService
-    from deskbot_server.ws.device_pipeline import DevicePipelineBroker
-    from deskbot_server.ws.registry import DeviceRegistry
+    from deskbot_server.service.bus_service import BusService
+    from deskbot_server.service.device_ws_service import DeviceWsService
 
 logger = logging.getLogger("deskbot-server")
 
@@ -69,6 +69,7 @@ async def _play_interim_tts(
     request_id: str | None,
     device_id: str | None,
     round_idx: int,
+    device_ws: Any | None = None,
 ) -> None:
     """工具轮过渡语：复用流式 prefetch 任务，与工具执行并行下发 pb。"""
     playback = (text or "").strip()
@@ -98,7 +99,6 @@ async def _play_interim_tts(
         event_fields={"tts_text": playback, "source": "llm_tool_interim", "stage": f"llm_tool_{round_idx}"},
     )
     await _run_pb_playback(
-        downlink,
         chat,
         reply_text=playback,
         parsed=parsed,
@@ -108,6 +108,7 @@ async def _play_interim_tts(
         result=interim_result,
         t_asr_start=None,
         prefetch_tts=task,
+        device_ws=device_ws,
     )
 
 
@@ -118,7 +119,7 @@ async def _play_llm_error_fallback(
     request_id: str | None,
     device_id: str | None,
     result: ChatTurnResult,
-    asr_chat_hub: Any | None,
+    device_ws: Any | None,
     t_asr_start: float | None,
     llm_exc: Exception,
 ) -> None:
@@ -130,7 +131,7 @@ async def _play_llm_error_fallback(
     parsed = plan["parsed"]
     fallback_rid = f"{request_id}_llm_err" if request_id else None
 
-    motion_done, motion_task = start_llm_error_motion_feedback(asr_chat_hub, device_id)
+    motion_done, motion_task = start_llm_error_motion_feedback(device_ws, device_id)
     logger.warning(
         "[LLM] 调用失败，启动兜底 TTS device_id=%s req=%s err=%s tts=%r", device_id, request_id, llm_exc, playback
     )
@@ -156,7 +157,6 @@ async def _play_llm_error_fallback(
             event_fields={"tts_text": playback, "source": "llm_error_fallback"},
         )
         await _run_pb_playback(
-            downlink,
             chat,
             reply_text=playback,
             parsed=parsed,
@@ -165,6 +165,7 @@ async def _play_llm_error_fallback(
             device_id=device_id,
             result=result,
             t_asr_start=t_asr_start,
+            device_ws=device_ws,
         )
     finally:
         await stop_llm_error_motion_feedback(motion_done, motion_task)
@@ -215,14 +216,13 @@ async def run_chat_turn(
     *,
     request_id: str | None = None,
     device_id: str | None = None,
-    registry: DeviceRegistry | None = None,
+    device_ws: DeviceWsService | None = None,
     t_asr_start: float | None = None,
     t_asr_text: float | None = None,
     force_voice: bool = False,
-    pipeline_broker: DevicePipelineBroker | None = None,
     reuse_session_id: str | None = None,
-    asr_chat_hub: Any | None = None,
     on_llm_error: Any | None = None,
+    bus_service: Any | None = None,
 ) -> ChatTurnResult:
     """在已有用户侧文本后执行 LLM + TTS/pb 管道（应用层，不依赖 WebSocket 类型）。"""
     result = ChatTurnResult()
@@ -256,13 +256,13 @@ async def run_chat_turn(
             return result
 
         ack_ctx = None
-        if registry is not None and device_id:
-            ack_ctx = await registry.pb_ack_llm_context(device_id)
+        if device_ws is not None and device_id:
+            ack_ctx = await device_ws.pb_ack_llm_context(device_id)
 
         session_id: str | None = None
         history_messages: list[dict[str, str]] | None = None
         if device_id:
-            from deskbot_server.dao.session_store import ensure_active_session, session_history_for_llm
+            from deskbot_server.dao.device_session_mapper import ensure_active_session, session_history_for_llm
             from deskbot_server.utils.async_helpers import run_blocking
 
             if reuse_session_id:
@@ -279,7 +279,8 @@ async def run_chat_turn(
 
         async def _on_interim_tts_play(text: str, round_idx: int) -> None:
             await _play_interim_tts(
-                downlink, chat, text, tts_prefetch, request_id=request_id, device_id=device_id, round_idx=round_idx
+                downlink, chat, text, tts_prefetch, request_id=request_id, device_id=device_id, round_idx=round_idx,
+                device_ws=device_ws,
             )
 
         parsed, llm_tools, tool_results, answer = await complete_llm_with_tool_loop(
@@ -290,12 +291,12 @@ async def run_chat_turn(
             device_context=ack_ctx,
             history_messages=history_messages,
             request_id=request_id,
-            dp_broker=pipeline_broker,
             pipeline_source="asr" if t_asr_start is not None else "text",
             on_tts_ready=tts_prefetch.on_ready,
             tts_prefetch=tts_prefetch,
             on_interim_tts_play=_on_interim_tts_play,
-            asr_chat_hub=asr_chat_hub,
+            device_ws=device_ws,
+            bus_service=bus_service,
         )
 
         reply_text = parsed["reply"]
@@ -326,7 +327,7 @@ async def run_chat_turn(
         result.t_llm_end = time.monotonic()
 
         if device_id and session_id:
-            from deskbot_server.dao.session_store import append_turn
+            from deskbot_server.dao.device_session_mapper import append_turn
             from deskbot_server.utils.async_helpers import run_blocking
 
             assistant_text = (reply_text or "").strip() or (answer or "").strip()
@@ -374,7 +375,6 @@ async def run_chat_turn(
                 )
                 try:
                     await _run_pb_playback(
-                        downlink,
                         chat,
                         reply_text="",
                         parsed=parsed,
@@ -384,6 +384,7 @@ async def run_chat_turn(
                         result=result,
                         t_asr_start=t_asr_start,
                         motion_only=True,
+                        device_ws=device_ws,
                     )
                 except Exception as pb_exc:
                     logger.exception("[LLM] need_reply=false 动作 pb 失败")
@@ -422,7 +423,6 @@ async def run_chat_turn(
         )
         try:
             await _run_pb_playback(
-                downlink,
                 chat,
                 reply_text=playback_text,
                 parsed=parsed,
@@ -432,6 +432,7 @@ async def run_chat_turn(
                 result=result,
                 t_asr_start=t_asr_start,
                 prefetch_tts=tts_prefetch.task,
+                device_ws=device_ws,
             )
         except Exception as tts_exc:
             tts_prefetch.cancel()
@@ -458,7 +459,7 @@ async def run_chat_turn(
                 request_id=request_id,
                 device_id=device_id,
                 result=result,
-                asr_chat_hub=asr_chat_hub,
+                device_ws=device_ws,
                 t_asr_start=t_asr_start,
                 llm_exc=llm_exc,
             )
@@ -480,6 +481,7 @@ async def run_device_tts_only(
     moves: list | None = None,
     anims: list | None = None,
     leading_move_steps: int = 0,
+    device_ws: Any | None = None,
 ) -> ChatTurnResult:
     """跳过 LLM，将给定文本走音素 TTS 并下发 pb；可选在同一条链锁内追加场景 pb 帧。"""
     reply_text = (text or "").strip()
@@ -512,7 +514,6 @@ async def run_device_tts_only(
         if parsed["moves"] or parsed["anims"]:
             scene_list = []
         await _run_pb_playback(
-            downlink,
             chat,
             reply_text=reply_text,
             parsed=parsed,
@@ -521,6 +522,7 @@ async def run_device_tts_only(
             device_id=device_id,
             result=result,
             t_asr_start=result.t_llm_end,
+            device_ws=device_ws,
         )
     except Exception as tts_exc:
         logger.exception("[device_tts] TTS 流程失败 device_id=%s", device_id)
@@ -536,6 +538,7 @@ async def run_device_playbook(
     *,
     request_id: str | None = None,
     device_id: str | None = None,
+    device_ws: Any | None = None,
 ) -> ChatTurnResult:
     """场景编排：按阶段串行下发（舵机 → 口播前表情 → 口播+并行轨）。"""
     from deskbot_server.service.scene_playbook_runner import playbook_to_phases
@@ -565,7 +568,6 @@ async def run_device_playbook(
             }
             try:
                 await _run_pb_playback(
-                    downlink,
                     chat,
                     reply_text="",
                     parsed=parsed,
@@ -575,6 +577,7 @@ async def run_device_playbook(
                     result=result,
                     t_asr_start=result.t_llm_end or time.monotonic(),
                     motion_only=True,
+                    device_ws=device_ws,
                 )
             except Exception as exc:
                 logger.exception("[scene_playbook] motion phase failed device_id=%s", device_id)
@@ -596,6 +599,7 @@ async def run_device_playbook(
             moves=list(phase.get("moves") or []),
             anims=list(phase.get("anims") or []),
             leading_move_steps=int(phase.get("leading_move_steps") or 0),
+            device_ws=device_ws,
         )
         if turn.error:
             result.status = turn.status
@@ -605,132 +609,30 @@ async def run_device_playbook(
     return result
 
 
-_PB_ACK_BATCH = 10
-
-# ── 设备端 PB 任务状态（per device_id）──
-_pb_task_running: dict[str, bool] = {}
-_pb_task_level: dict[str, int] = {}
-_pb_task_request_id: dict[str, str] = {}
-
-
-async def _send_pb_cancel(downlink: DownlinkPort, device_id: str, req: str) -> None:
-    """下发 pb_cancel。"""
-    cancel_msg = {"type": "pb_cancel", "req": req, "pb_ver": 2}
-    wire_text = device_pb_json_msg(cancel_msg)
-    ok = await downlink.send_pb_wire(wire_text, binaries=[])
-    logger.info("[pb TX] cancel req=%s device_id=%s ok=%s", req, device_id, ok)
-
-
 async def _send_pb_pairs(
-    downlink: DownlinkPort,
     *,
     pairs: list[tuple[dict, list[bytes]]],
     pb_req: str,
-    device_id: str | None,
+    device_ws: Any,
+    device_id: str,
     n_pb: int,
     task_level: int = PB_LEVEL_TASK,
 ) -> bool:
-    """下发一组 pb wire 帧（每批 _PB_ACK_BATCH 块后等 ack）；返回是否因失败而中止。"""
-    from deskbot_server.constants import PB_WAIT_ACK
-    from deskbot_server.ws.pb_ack_waiter import pb_ack_gate, pb_wait_ack_timeout_sec
+    """下发一组 pb wire 帧。经 DeviceWsService 消息队列统一调度，返回是否因失败而中止。"""
+    from deskbot_server.model.pb_seq import PbSeq
 
-    if not device_id or not PB_WAIT_ACK:
-        # 无设备或未启用 ack：直接逐帧发送
-        pb_aborted = False
-        for i, (msg, binaries) in enumerate(pairs):
-            wire_text = device_pb_json_msg(msg)
-            ok = await downlink.send_pb_wire(wire_text, binaries=binaries)
-            if not ok:
-                pb_aborted = True
-                break
-        return pb_aborted
-
-    # ── 任务抢占检查 ──
-    if _pb_task_running.get(device_id):
-        existing_level = _pb_task_level.get(device_id, PB_LEVEL_TASK)
-        if task_level > existing_level:
-            # 高优先级抢占：发 pb_cancel
-            logger.info(
-                "[pb TX] 抢占 device_id=%s new_level=%d > existing_level=%d",
-                device_id, task_level, existing_level,
-            )
-            await _send_pb_cancel(downlink, device_id, _pb_task_request_id.get(device_id, ""))
-            await asyncio.sleep(0.05)
-        else:
-            # 低优先级：等当前任务 pb_end ack
-            existing_req = _pb_task_request_id.get(device_id, "")
-            logger.info(
-                "[pb TX] 等待 device_id=%s existing_req=%s end ack",
-                device_id, existing_req,
-            )
-            end_ok = await pb_ack_gate.wait_for_end(device_id, existing_req, timeout=30)
-            if not end_ok:
-                logger.error("[pb TX] 等待 end ack 超时 device_id=%s req=%s", device_id, existing_req)
-                return True
-            _pb_task_running[device_id] = False
-
-    # ── 标记任务开始 ──
-    _pb_task_running[device_id] = True
-    _pb_task_level[device_id] = task_level
-    _pb_task_request_id[device_id] = pb_req
-    await pb_ack_gate.begin_req(device_id, pb_req)
-
-    # ── 分批发送 + 等 ack ──
-    pb_aborted = False
-    for batch_start in range(0, len(pairs), _PB_ACK_BATCH):
-        batch = pairs[batch_start : batch_start + _PB_ACK_BATCH]
-        for j, (msg, binaries) in enumerate(batch):
-            i = batch_start + j
-            wire_text = device_pb_json_msg(msg)
-            logger.info("[pb TX] %d/%d wire_json bytes=%d %s", i + 1, n_pb, pb_wire_json_bytes(msg), wire_text)
-            ok = await downlink.send_pb_wire(wire_text, binaries=binaries)
-            if binaries:
-                logger.info(
-                    "[pb TX] %d/%d binary idx=%s parts=%d total_bytes=%d ok=%s",
-                    i + 1, n_pb, msg.get("idx"), len(binaries), sum(len(b) for b in binaries), ok,
-                )
-            elif not ok:
-                logger.warning("[pb TX] %d/%d JSON 下发失败 idx=%s device_id=%s", i + 1, n_pb, msg.get("idx"), device_id)
-            if not ok:
-                pb_aborted = True
-                logger.error(
-                    "[pb TX] 中止下发 device_id=%s pb_req=%s 失败于 %d/%d idx=%s",
-                    device_id, pb_req, i + 1, n_pb, msg.get("idx"),
-                )
-                break
-        if pb_aborted:
-            break
-
-        # 等 chunk ack 或 end ack
-        chunk_ok, end_ok = await pb_ack_gate.wait_for_chunk_or_end(
-            device_id, pb_req, timeout=pb_wait_ack_timeout_sec()
-        )
-        if end_ok:
-            # 任务已结束（pb_end ack 已收到）
-            _pb_task_running[device_id] = False
-            logger.info("[pb TX] 任务已结束 device_id=%s req=%s（end ack 在批次中到达）", device_id, pb_req)
-            return False
-        if not chunk_ok:
-            pb_aborted = True
-            logger.error(
-                "[pb TX] 中止下发 device_id=%s pb_req=%s 批次 %d-%d 未收到 pb_ack",
-                device_id, pb_req, batch_start + 1, min(batch_start + _PB_ACK_BATCH, n_pb),
-            )
-            break
-
-    # ── 所有块发完后等 pb_end ack ──
-    if not pb_aborted and device_id:
-        end_ok = await pb_ack_gate.wait_for_end(device_id, pb_req, timeout=30)
-        if not end_ok:
-            logger.error("[pb TX] 等待 end ack 超时 device_id=%s req=%s", device_id, pb_req)
-            pb_aborted = True
-        _pb_task_running[device_id] = False
-
-    return pb_aborted
+    pb_seq = PbSeq.from_wire_pairs(pairs, level=task_level)
+    logger.info(
+        "[pb TX] enqueue device_id=%s req=%s level=%d blocks=%d",
+        device_id, pb_seq.req, pb_seq.level, pb_seq.block_count,
+    )
+    success = await device_ws.send(device_id, pb_seq, wait=True)
+    if not success:
+        logger.error("[pb TX] enqueue 失败 device_id=%s req=%s", device_id, pb_req)
+    return not success
 
 
 async def _run_pb_playback(
-    downlink: DownlinkPort,
     chat: ChatService,
     *,
     reply_text: str,
@@ -742,6 +644,7 @@ async def _run_pb_playback(
     t_asr_start: float | None,
     motion_only: bool = False,
     prefetch_tts: asyncio.Task | None = None,
+    device_ws: Any | None = None,
 ) -> None:
     if motion_only:
         sr_pb = int(chat.tts_cfg.get("sample_rate") or 24000)
@@ -775,98 +678,99 @@ async def _run_pb_playback(
     chunk_is_last = True
     prefetch_tts_task: asyncio.Task | None = prefetch_tts
 
-    async with downlink.pb_serial_chain():
-        for chunk_i, chunk_text in enumerate(text_chunks):
-            if motion_only:
-                segs_local = segs
-                sr_pb = int(chat.tts_cfg.get("sample_rate") or 24000)
-            else:
-                if prefetch_tts_task is None:
-                    prefetch_tts_task = asyncio.create_task(chat.tts_phoneme_segments(chunk_text))
-                sr_pb, segs_local = await prefetch_tts_task
-                prefetch_tts_task = None
-                result.t_tts_synth_end = time.monotonic()
-                pcm_ok = any(len(s.get("pcm") or b"") > 0 for s in segs_local)
-                if not segs_local or not pcm_ok:
-                    raise RuntimeError(f"phoneme TTS 无分片或无 PCM: {chunk_text!r}")
-                if chunk_i + 1 < len(text_chunks):
-                    prefetch_tts_task = asyncio.create_task(chat.tts_phoneme_segments(text_chunks[chunk_i + 1]))
+    for chunk_i, chunk_text in enumerate(text_chunks):
+        if motion_only:
+            segs_local = segs
+            sr_pb = int(chat.tts_cfg.get("sample_rate") or 24000)
+        else:
+            if prefetch_tts_task is None:
+                prefetch_tts_task = asyncio.create_task(chat.tts_phoneme_segments(chunk_text))
+            sr_pb, segs_local = await prefetch_tts_task
+            prefetch_tts_task = None
+            result.t_tts_synth_end = time.monotonic()
+            pcm_ok = any(len(s.get("pcm") or b"") > 0 for s in segs_local)
+            if not segs_local or not pcm_ok:
+                raise RuntimeError(f"phoneme TTS 无分片或无 PCM: {chunk_text!r}")
+            if chunk_i + 1 < len(text_chunks):
+                prefetch_tts_task = asyncio.create_task(chat.tts_phoneme_segments(text_chunks[chunk_i + 1]))
 
-            chunk_is_first = chunk_i == 0
-            chunk_is_last = chunk_i == len(text_chunks) - 1
-            pairs, pb_req, n_pb, sr_pb = build_pb_wire_pairs(
-                segs_local,
-                chat.tts_cfg,
-                servo_plan=list(parsed.get("servo") or []) if chunk_is_first and not parsed.get("moves") else None,
-                moves=list(parsed.get("moves") or []) if chunk_is_first else None,
-                anims=list(parsed.get("anims") or []) if chunk_is_first else None,
-                sample_rate=sr_pb,
-                request_id=(f"{request_id}_{chunk_i}" if request_id and len(text_chunks) > 1 else request_id),
-                random_servo_cfg=chat.settings.pb_random_servo_cfg() if chunk_is_first else None,
-                volume=parsed.get("volume") if chunk_is_first else None,
-                cam_fps=parsed.get("cam_fps") if chunk_is_first else None,
-                device_id=device_id,
-                action=PB_ACTION_REPLACE if chunk_is_first else PB_ACTION_APPEND,
-                leading_move_steps=int(parsed.get("leading_move_steps") or 0) if chunk_is_first else 0,
-            )
-            total_pb += n_pb
+        chunk_is_first = chunk_i == 0
+        chunk_is_last = chunk_i == len(text_chunks) - 1
+        pairs, pb_req, n_pb, sr_pb = build_pb_wire_pairs(
+            segs_local,
+            chat.tts_cfg,
+            servo_plan=list(parsed.get("servo") or []) if chunk_is_first and not parsed.get("moves") else None,
+            moves=list(parsed.get("moves") or []) if chunk_is_first else None,
+            anims=list(parsed.get("anims") or []) if chunk_is_first else None,
+            sample_rate=sr_pb,
+            request_id=(f"{request_id}_{chunk_i}" if request_id and len(text_chunks) > 1 else request_id),
+            random_servo_cfg=chat.settings.pb_random_servo_cfg() if chunk_is_first else None,
+            volume=parsed.get("volume") if chunk_is_first else None,
+            cam_fps=parsed.get("cam_fps") if chunk_is_first else None,
+            device_id=device_id,
+            action=PB_ACTION_REPLACE if chunk_is_first else PB_ACTION_APPEND,
+            leading_move_steps=int(parsed.get("leading_move_steps") or 0) if chunk_is_first else 0,
+        )
+        total_pb += n_pb
 
-            frame_overview = [
-                {
-                    "i": i,
-                    "type": m.get("type"),
-                    "idx": m.get("idx"),
-                    "chunk_ms": m.get("chunk_ms"),
-                    "anim_n": len(m.get("anim") or []),
-                    "phonemes": [
-                        str(x.get("phoneme")) for x in (m.get("anim") or []) if isinstance(x, dict) and x.get("phoneme")
-                    ],
-                    "action": m.get("action"),
-                    "bin_bytes": sum(len(b) for b in bins),
-                }
-                for i, (m, bins) in enumerate(pairs)
-            ]
-            logger.info(
-                "[pb TX] 段 %d/%d TTS=%r pb_req=%s segments=%d sr=%s",
-                chunk_i + 1,
-                len(text_chunks),
-                chunk_text,
-                pb_req,
-                n_pb,
-                sr_pb,
-            )
-            logger.info("[pb TX] 帧序一览 %s", json.dumps(frame_overview, ensure_ascii=False))
+        frame_overview = [
+            {
+                "i": i,
+                "type": m.get("type"),
+                "idx": m.get("idx"),
+                "chunk_ms": m.get("chunk_ms"),
+                "anim_n": len(m.get("anim") or []),
+                "phonemes": [
+                    str(x.get("phoneme")) for x in (m.get("anim") or []) if isinstance(x, dict) and x.get("phoneme")
+                ],
+                "action": m.get("action"),
+                "bin_bytes": sum(len(b) for b in bins),
+            }
+            for i, (m, bins) in enumerate(pairs)
+        ]
+        logger.info(
+            "[pb TX] 段 %d/%d TTS=%r pb_req=%s segments=%d sr=%s",
+            chunk_i + 1,
+            len(text_chunks),
+            chunk_text,
+            pb_req,
+            n_pb,
+            sr_pb,
+        )
+        logger.info("[pb TX] 帧序一览 %s", json.dumps(frame_overview, ensure_ascii=False))
 
-            task_level = int((pairs[0][0].get("level") or PB_LEVEL_TASK)) if pairs else PB_LEVEL_TASK
-            pb_aborted = await _send_pb_pairs(
-                downlink, pairs=pairs, pb_req=pb_req, device_id=device_id, n_pb=n_pb, task_level=task_level
-            )
-            if pb_aborted:
-                if prefetch_tts_task is not None:
-                    prefetch_tts_task.cancel()
-                break
+        task_level = int((pairs[0][0].get("level") or PB_LEVEL_TASK)) if pairs else PB_LEVEL_TASK
+        pb_aborted = await _send_pb_pairs(
+            pairs=pairs, pb_req=pb_req, device_ws=device_ws, device_id=device_id, n_pb=n_pb, task_level=task_level,
+        )
+        if pb_aborted:
+            if prefetch_tts_task is not None:
+                prefetch_tts_task.cancel()
+            break
 
-        if prefetch_tts_task is not None:
-            prefetch_tts_task.cancel()
+    if prefetch_tts_task is not None:
+        prefetch_tts_task.cancel()
 
-        if not pb_aborted and chunk_is_last:
-            for sc_name in llm_scenes:
-                if not isinstance(sc_name, str):
-                    continue
-                sc_key = sc_name.strip()
-                if not sc_key or _pb_scene_entry_by_name({}, sc_key, device_id=device_id) is None:
-                    if sc_key:
-                        logger.warning(
-                            "[pb TX] LLM scenes 跳过未知场景 %r device_id=%s req=%s", sc_key, device_id, request_id
-                        )
-                    continue
-                sreq = uuid.uuid4().hex[:16]
-                sframes = _prepare_pb_scene_chain_frames(sc_key, runtime_req=sreq, device_id=device_id)
-                if not sframes:
-                    continue
-                for one in sframes:
-                    await downlink.send_pb_wire(device_pb_json_msg(one), None)
-                    n_scene_pb += 1
+    if not pb_aborted and chunk_is_last:
+        for sc_name in llm_scenes:
+            if not isinstance(sc_name, str):
+                continue
+            sc_key = sc_name.strip()
+            if not sc_key or _pb_scene_entry_by_name({}, sc_key, device_id=device_id) is None:
+                if sc_key:
+                    logger.warning(
+                        "[pb TX] LLM scenes 跳过未知场景 %r device_id=%s req=%s", sc_key, device_id, request_id
+                    )
+                continue
+            sreq = uuid.uuid4().hex[:16]
+            sframes = _prepare_pb_scene_chain_frames(sc_key, runtime_req=sreq, device_id=device_id)
+            if not sframes:
+                continue
+            from deskbot_server.model.pb_seq import PbBlock, PbSeq
+            scene_blocks = [PbBlock.from_wire(f) for f in sframes]
+            scene_seq = PbSeq(req=sreq, entries=tuple(scene_blocks), level=PB_LEVEL_DEBUG)
+            await device_ws.send(device_id, scene_seq)
+            n_scene_pb += len(scene_blocks)
 
     logger.info(
         "[pb TX] 下发结束 device_id=%s request_id=%s 语音 JSON=%d%s%s",

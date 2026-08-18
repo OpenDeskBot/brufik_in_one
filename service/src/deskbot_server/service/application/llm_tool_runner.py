@@ -8,7 +8,7 @@ from typing import Any
 from deskbot_server.dao.device_mapper import get_camera_servo_auto_mode, set_camera_servo_auto_mode
 from deskbot_server.dao.device_tmp_store import read_device_tmp_file, write_device_tmp_file
 from deskbot_server.dao.memory_store import add_memory, delete_memory
-from deskbot_server.dao.session_store import execute_session_tool
+from deskbot_server.dao.device_session_mapper import execute_session_tool
 from deskbot_server.service.application.face_registration import register_face_for_device
 from deskbot_server.service.camera_face_service import capture_camera_for_device_async
 from deskbot_server.service.miot_tools import execute_miot_tool
@@ -47,7 +47,7 @@ async def execute_llm_tools(
     *,
     device_id: str | None = None,
     session_id: str | None = None,
-    asr_chat_hub: Any = None,
+    device_ws: Any = None,
     cam_fps: int | None = None,
 ) -> list[dict[str, Any]]:
     """逐条执行工具，返回结果摘要（供日志与 pipeline 事件）。"""
@@ -76,7 +76,7 @@ async def execute_llm_tools(
                     }
                 )
             elif tool in ("capture_camera", "get_camera_frame", "camera_capture"):
-                cap = await capture_camera_for_device_async(dev, hub=asr_chat_hub, cam_fps=boost_fps)
+                cap = await capture_camera_for_device_async(dev, hub=device_ws, cam_fps=boost_fps)
                 if not cap.get("ok"):
                     results.append({"tool": tool, "ok": False, "error": cap.get("error")})
                 else:

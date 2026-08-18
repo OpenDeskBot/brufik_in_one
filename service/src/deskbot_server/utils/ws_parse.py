@@ -1,4 +1,4 @@
-"""WebSocket 请求解析：路径拆分、查询参数提取、设备/PIN 识别。"""
+"""WebSocket 请求解析：路径拆分、查询参数提取、设备 ID 识别。"""
 
 from __future__ import annotations
 
