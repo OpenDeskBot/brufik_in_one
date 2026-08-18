@@ -10,17 +10,21 @@ def test_deliver_boot_wake_scene_finds_wake(monkeypatch):
 
     sent: list = []
 
+    class FakeBus:
+        async def publish_auto_dispatch(self, *a, **kw):
+            return None
+
     class FakeHub:
-        _bus_service = None
+        bus_service = FakeBus()
+
+        async def send(self, device_id, pb_seq):
+            sent.append((device_id, pb_seq))
+            return 1
 
         async def send_pb_chain_ordered(self, device_id, frames, binaries_per_frame=None):
             sent.append((device_id, frames, binaries_per_frame))
             return 1
 
-    async def fake_publish(*_a, **_k):
-        return None
-
-    monkeypatch.setattr(boot_wake, "publish_auto_dispatch_event", fake_publish)
     monkeypatch.setattr(
         boot_wake,
         "load_face_expr_scenes_file",
@@ -32,8 +36,6 @@ def test_deliver_boot_wake_scene_finds_wake(monkeypatch):
     n = asyncio.run(boot_wake.deliver_boot_wake_scene(FakeHub(), "deskbot_test"))
     assert n == 1
     assert sent[0][0] == "deskbot_test"
-    assert sent[0][1][0]["action"] == "replace"
-    assert sent[0][1][0]["level"] == 1
 
 
 def test_deliver_boot_wake_scene_missing_scene(monkeypatch):

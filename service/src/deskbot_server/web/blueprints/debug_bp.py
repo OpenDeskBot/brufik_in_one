@@ -20,7 +20,7 @@ from deskbot_server.dao.camera_face_config_store import (
 )
 from deskbot_server.dao.face_expr_scenes_store import load_face_expr_scenes_file
 from deskbot_server.service.face_profile_service import load_face_profiles
-from deskbot_server.dao.memory_store import add_memory, delete_memory, list_memory_for_device
+from deskbot_server.dao.device_memory_mapper import add_memory, delete_memory, list_memory_for_device
 from deskbot_server.dao.scene_playbooks_store import (
     collect_missing_servo_presets,
     load_scene_playbooks_file,

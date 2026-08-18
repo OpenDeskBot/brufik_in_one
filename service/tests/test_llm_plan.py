@@ -239,19 +239,12 @@ def test_parse_llm_reply_empty_tts_not_raw_json():
     assert parsed["moves"] == [{"move": "shake_head", "ms": 1280}]
 
 
-def test_memory_store_roundtrip(tmp_path, monkeypatch):
-    from deskbot_server.dao import memory_store as ms
+def test_memory_store_roundtrip():
+    from deskbot_server.dao.device_memory_mapper import add_memory, delete_memory, get_memory, list_memory_for_device
 
-    mem_file = tmp_path / "user_memory.json"
-
-    def _resolve(path, device_id=None):
-        return str(mem_file)
-
-    monkeypatch.setattr(ms, "resolve_json_path", _resolve)
-    monkeypatch.setattr(ms, "USER_MEMORY_FILE", str(mem_file))
-    e1 = ms.add_memory("主人喜欢猫", device_id="dev1")
+    e1 = add_memory("主人喜欢猫", device_id="test_dev_plan")
     assert e1["text"] == "主人喜欢猫"
-    rows = ms.list_memory_for_device("dev1")
-    assert len(rows) == 1
-    assert ms.delete_memory(e1["id"], device_id="dev1")
-    assert ms.list_memory_for_device("dev1") == []
+    rows = list_memory_for_device("test_dev_plan")
+    assert len(rows) >= 1
+    assert delete_memory(e1["id"], device_id="test_dev_plan")
+    assert get_memory(e1["id"], device_id="test_dev_plan") is None

@@ -1065,7 +1065,9 @@ async def api_device_pb_anim(request: Request) -> JSONResponse:
         json.dumps(payload, ensure_ascii=False),
     )
     try:
-        n = await device_ws.send(dev, payload)
+        from deskbot_server.model.pb_seq import PbBlock, PbSeq
+        pb_seq = PbSeq(req=req_id, entries=(PbBlock.from_wire(payload),), level=pb_level)
+        n = await device_ws.send(dev, pb_seq)
     except Exception:
         logger.exception("[HTTP] /api/device_pb_anim 下发异常 device_id=%s", dev)
         n = 0

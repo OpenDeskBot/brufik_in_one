@@ -137,7 +137,9 @@ async def camera_servo_follower_tick(device_ws: DeviceWsService, device_id: str,
         "servo": [step],
     }
     attach_pb_device_hints_from_config(payload)
-    delivered = await device_ws.send(dev, payload)
+    from deskbot_server.model.pb_seq import PbBlock, PbSeq
+    pb_seq = PbSeq(req=request_id, entries=(PbBlock.from_wire(payload),), level=PB_LEVEL_IDLE)
+    delivered = await device_ws.send(dev, pb_seq)
     if delivered <= 0:
         return
 

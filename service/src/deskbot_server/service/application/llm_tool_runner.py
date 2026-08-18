@@ -6,8 +6,7 @@ import logging
 from typing import Any
 
 from deskbot_server.dao.device_mapper import get_camera_servo_auto_mode, set_camera_servo_auto_mode
-from deskbot_server.dao.device_tmp_store import read_device_tmp_file, write_device_tmp_file
-from deskbot_server.dao.memory_store import add_memory, delete_memory
+from deskbot_server.dao.device_memory_mapper import add_memory, delete_memory
 from deskbot_server.dao.device_session_mapper import execute_session_tool
 from deskbot_server.service.application.face_registration import register_face_for_device
 from deskbot_server.service.camera_face_service import capture_camera_for_device_async
@@ -129,19 +128,6 @@ async def execute_llm_tools(
                 max_results = raw.get("max_results") or raw.get("limit") or 5
                 out = websearch(query, max_results=int(max_results))
                 results.append({"tool": tool, **out})
-            elif tool == "read":
-                if not dev:
-                    raise ValueError("read 需要 device_id")
-                path = str(raw.get("path") or raw.get("file") or "").strip()
-                out = read_device_tmp_file(dev, path)
-                results.append({"tool": tool, "ok": True, **out})
-            elif tool == "write":
-                if not dev:
-                    raise ValueError("write 需要 device_id")
-                path = str(raw.get("path") or raw.get("file") or "").strip()
-                content = str(raw.get("content") or raw.get("text") or raw.get("data") or "")
-                out = write_device_tmp_file(dev, path, content)
-                results.append({"tool": tool, "ok": True, **out})
             else:
                 results.append({"tool": tool, "ok": False, "error": f"未知工具: {tool}"})
         except Exception as exc:

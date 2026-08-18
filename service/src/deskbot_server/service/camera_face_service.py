@@ -625,7 +625,10 @@ async def request_camera_fps_boost(device_id: str, device_ws: Any, *, cam_fps: i
         from deskbot_server.pb.cam_signal import build_cam_fps_signal_pb
 
         payload = build_cam_fps_signal_pb(cam_fps=cam_fps)
-        n = await device_ws.send(dev, payload)
+        from deskbot_server.model.pb_seq import PbBlock, PbSeq
+        from deskbot_server.pb.shapes import PB_LEVEL_TASK
+        pb_seq = PbSeq(req=payload.get("req", ""), entries=(PbBlock.from_wire(payload),), level=PB_LEVEL_TASK)
+        n = await device_ws.send(dev, pb_seq)
         logger.info("[capture_camera] cam_fps=%d boost device_id=%s delivered=%s", cam_fps, dev, n)
     except Exception as exc:
         logger.warning("[capture_camera] cam_fps boost failed device_id=%s: %s", dev, exc)

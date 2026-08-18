@@ -138,7 +138,7 @@ def llm_pb_scenes_prompt_appendix(*, device_id: str | None = None) -> str:
 
 def llm_memory_prompt_appendix(device_id: str | None = None) -> str:
     """长期记忆列表，注入 system prompt。"""
-    from deskbot_server.dao.memory_store import list_memory_for_device
+    from deskbot_server.dao.device_memory_mapper import list_memory_for_device
 
     rows = list_memory_for_device(device_id, limit=30)
     if not rows:

@@ -17,7 +17,7 @@ from deskbot_server.dao.llm_config_store import (
     set_active_llm_model,
     update_llm_model,
 )
-from deskbot_server.dao.memory_store import add_memory, delete_memory, get_memory, list_memory_for_device, update_memory
+from deskbot_server.dao.device_memory_mapper import add_memory, delete_memory, get_memory, list_memory_for_device, update_memory
 from deskbot_server.infrastructure.llm.runtime import (
     ResolvedLlmConfig,
     build_chat_model,
