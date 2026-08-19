@@ -593,6 +593,7 @@ async def api_device_tts(request: Request) -> JSONResponse:
     dev = ""
     text = ""
     scene_q = ""
+    pb_level = PB_LEVEL_DEBUG  # 后台下发默认调试级别
     if method == "POST":
         try:
             raw_body = (body or b"").decode("utf-8")
@@ -603,10 +604,12 @@ async def api_device_tts(request: Request) -> JSONResponse:
             dev = str(payload.get("device_id") or "").strip()
             text = str(payload.get("text") or "").strip()
             scene_q = str(payload.get("scene") or "").strip()
+            pb_level = int(payload.get("level", PB_LEVEL_DEBUG))
     else:
         dev = (qargs.get("device_id") or "").strip()
         text = (qargs.get("text") or "").strip()
         scene_q = (qargs.get("scene") or "").strip()
+        pb_level = int(qargs.get("level", PB_LEVEL_DEBUG))
     if not dev:
         return JSONResponse(status_code=400, content={"ok": False, "error": "missing device_id", "t": time.time()})
     denied = device_access_denied(request.state.user_id, dev)
@@ -635,7 +638,7 @@ async def api_device_tts(request: Request) -> JSONResponse:
         try:
             turn = await run_device_tts_only(
                 downlink, chat, text, request_id=req_id, device_id=dev, scenes=[scene_q] if scene_q else None,
-                device_ws=device_ws,
+                device_ws=device_ws, task_level=pb_level,
             )
             await publish_ws_chat_turn(
                 rt.bus_service,

@@ -76,7 +76,9 @@ def build_runtime() -> AppRuntime:
 
     device_ws = DeviceWsService()
     device_ws.bind(pipeline, audio_cfg, bus_service=bus_service)
-    LiveService().bind(device_ws)
+    live_svc = LiveService()
+    live_svc.bind(device_ws)
+    device_ws.bind_live_service(live_svc)
 
     logger.info(
         "[server] live_mode: per-device (DB), 无有效对话 %.1fs 后 wander，1-%d 轮后 sleep %.0f-%.0fs，gaze 优先",

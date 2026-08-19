@@ -261,6 +261,7 @@ class AsyncDeviceMessageQueue:
                         i = batch_end
                 finally:
                     ctx.sending_seq = None
+                    pb_seq._done.set()
                     logger.info("[_device_loop] %s done req=%s total_ms=%.0f",
                                 device_id, pb_seq.req, (time.monotonic() - t0) * 1000)
         except asyncio.CancelledError:

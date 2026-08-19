@@ -78,4 +78,4 @@ async def _ticker() -> None:
             f"{device_id}:audio={snap[device_id].audio} ack={snap[device_id].ack} cam={snap[device_id].camera}"
             for device_id in sorted(_known)
         ]
-        logger.info("[uplink/1s] %s", " | ".join(parts))
+        logger.debug("[uplink/1s] %s", " | ".join(parts))

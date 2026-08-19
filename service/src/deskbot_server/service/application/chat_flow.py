@@ -482,6 +482,7 @@ async def run_device_tts_only(
     anims: list | None = None,
     leading_move_steps: int = 0,
     device_ws: Any | None = None,
+    task_level: int = PB_LEVEL_TASK,
 ) -> ChatTurnResult:
     """跳过 LLM，将给定文本走音素 TTS 并下发 pb；可选在同一条链锁内追加场景 pb 帧。"""
     reply_text = (text or "").strip()
@@ -523,6 +524,7 @@ async def run_device_tts_only(
             result=result,
             t_asr_start=result.t_llm_end,
             device_ws=device_ws,
+            task_level=task_level,
         )
     except Exception as tts_exc:
         logger.exception("[device_tts] TTS 流程失败 device_id=%s", device_id)
@@ -645,6 +647,7 @@ async def _run_pb_playback(
     motion_only: bool = False,
     prefetch_tts: asyncio.Task | None = None,
     device_ws: Any | None = None,
+    task_level: int = PB_LEVEL_TASK,
 ) -> None:
     if motion_only:
         sr_pb = int(chat.tts_cfg.get("sample_rate") or 24000)
@@ -739,7 +742,6 @@ async def _run_pb_playback(
         )
         logger.info("[pb TX] 帧序一览 %s", json.dumps(frame_overview, ensure_ascii=False))
 
-        task_level = int((pairs[0][0].get("level") or PB_LEVEL_TASK)) if pairs else PB_LEVEL_TASK
         pb_aborted = await _send_pb_pairs(
             pairs=pairs, pb_req=pb_req, device_ws=device_ws, device_id=device_id, n_pb=n_pb, task_level=task_level,
         )

@@ -40,6 +40,8 @@ logger = logging.getLogger("deskbot-server")
 
 _WINDOW_SIZE = 10
 _IDLE_TIMEOUT = 300
+_PB_IDLE_SEC = 10.0     # PbSeq 空闲超时：超过此时长无下发则触发 LiveService
+_IDLE = object()         # _dequeue 超时哨兵
 
 
 @dataclass
@@ -64,6 +66,7 @@ class _DeviceEntry:
     last_pb_ack: dict[str, Any] | None = None
     last_pb_ack_ts: float = 0.0
     last_pb_ack_mono: float = 0.0
+    last_pb_send_mono: float = 0.0    # 最后一次 PbBlock 发送的单调时间戳
     last_status: str | None = None
     event_count: int = 0
 
@@ -146,6 +149,7 @@ class DeviceWsService(metaclass=SingletonMeta):
         self._pipeline: ChatService | None = None
         self._audio_cfg: AudioConfig | None = None
         self._bus_service: Any | None = None
+        self._live_service: Any = None  # LiveService | None
 
     @staticmethod
     def instance() -> DeviceWsService | None:
@@ -180,6 +184,10 @@ class DeviceWsService(metaclass=SingletonMeta):
         self._pipeline = pipeline
         self._audio_cfg = audio_cfg
         self._bus_service = bus_service
+
+    def bind_live_service(self, ls: Any) -> None:
+        """注入 LiveService（用于 PbSeq 空闲唤醒）。"""
+        self._live_service = ls
 
     @property
     def bus_service(self):
@@ -374,9 +382,18 @@ class DeviceWsService(metaclass=SingletonMeta):
             return
         try:
             while not entry.stopped:
-                pb_seq = await self._dequeue(entry)
+                pb_seq = await self._dequeue(entry, timeout=_PB_IDLE_SEC)
                 if pb_seq is None:
                     break
+                if pb_seq is _IDLE:
+                    # 空闲超时：从 LiveService 获取待机 PbSeq 并直接入队
+                    if self._live_service is not None:
+                        live_seq = self._live_service.get_live_pb_seq(device_id)
+                        if live_seq is not None:
+                            async with self._queue_lock:
+                                self._enqueue(entry, live_seq)
+                            entry.event.set()
+                    continue
                 entry.sending_seq = pb_seq
                 while not entry.ack_queue.empty():
                     try:
@@ -408,6 +425,7 @@ class DeviceWsService(metaclass=SingletonMeta):
                         i = batch_end
                 finally:
                     entry.sending_seq = None
+                    pb_seq._done.set()
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -417,7 +435,7 @@ class DeviceWsService(metaclass=SingletonMeta):
             entry.sending_seq = None
             entry.event.set()
 
-    async def _dequeue(self, entry: _DeviceEntry) -> PbSeq | None:
+    async def _dequeue(self, entry: _DeviceEntry, timeout: float = 0) -> PbSeq | None:
         while True:
             async with self._queue_lock:
                 if entry.queue:
@@ -427,7 +445,10 @@ class DeviceWsService(metaclass=SingletonMeta):
                 entry.event.clear()
                 if entry.queue:
                     return entry.queue.pop(0)
-            await entry.event.wait()
+            try:
+                await asyncio.wait_for(entry.event.wait(), timeout=timeout or None)
+            except TimeoutError:
+                return _IDLE  # type: ignore[return-value]
 
     async def _wait_ack(self, entry: _DeviceEntry, req: str) -> str | None:
         while True:
@@ -459,6 +480,7 @@ class DeviceWsService(metaclass=SingletonMeta):
         wire = device_pb_json_msg(payload)
         _log_pb_tx_wire(device_id, payload, wire, pcm_bytes=sum(len(b) for b in block.binaries))
         await self._enqueue_dl(entry, wire, list(block.binaries) if block.binaries else None)
+        entry.last_pb_send_mono = time.monotonic()
         elapsed = (time.monotonic() - t0) * 1000
         if elapsed > 50:
             logger.warning(
@@ -737,25 +759,36 @@ class DeviceWsService(metaclass=SingletonMeta):
                                     })
                             continue
 
+                        if msg_type == "boot_connect":
+                            if device_id:
+                                await deliver_boot_wake_scene(self, device_id)
+                            continue
+
+                        if msg_type == "pb_ack":
+                            from deskbot_server.utils.util import _normalize_incoming_pb_ack
+
+                            norm = _normalize_incoming_pb_ack(data)
+                            if norm is not None and device_id:
+                                async with self._lock:
+                                    entry = self._devices.get(device_id)
+                                    sending = entry.sending_seq if entry else None
+                                    sending_req = sending.req if sending else None
+                                    sending_level = sending.level if sending else None
+                                logger.debug(
+                                    "[pb_ack RX] device_id=%s ack_type=%s req=%s space=%s | sending_seq req=%s level=%s",
+                                    device_id,
+                                    norm.get("ack_type"),
+                                    norm.get("req"),
+                                    norm.get("space"),
+                                    sending_req,
+                                    sending_level,
+                                )
+                                await self.ack(device_id, norm)
+                                await self.record_pb_ack(device_id, norm)
+                            continue
+
                         logger.debug("[/asr_chat] 未知打包帧 type=%r device_id=%s", msg_type, device_id)
                         continue
-
-                    data = json.loads(message)
-                    msg_type = data.get("type")
-
-                    if msg_type == "boot_connect":
-                        if device_id:
-                            await deliver_boot_wake_scene(self, device_id)
-                        continue
-
-                    if msg_type == "pb_ack":
-                        from deskbot_server.utils.util import _normalize_incoming_pb_ack
-
-                        norm = _normalize_incoming_pb_ack(data)
-                        if norm is not None and device_id:
-                            await self.ack(device_id, norm)
-                        continue
-                    logger.debug("[/asr_chat] 未知消息类型 type=%r device_id=%s", msg_type, device_id)
 
                 except Exception as exc:
                     logger.exception("处理客户端消息失败: %s", format_exc_detail(exc))

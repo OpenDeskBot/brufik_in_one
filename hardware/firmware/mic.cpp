@@ -295,12 +295,6 @@ void task_loop_mic(void* /*arg*/) {
     if (s_stat_log_ms == 0) {
       s_stat_log_ms = now;
     } else if ((now - s_stat_log_ms) >= 1000UL) {
-      log_warn("[MIC/1s] enc=%u enq_ok=%u enq_fail=%u batch_drop=%u gate_ws=%u gate_spk=%u "
-               "ws=%s speak=%s batch=%u short_rd=%u",
-               (unsigned)s_stat_encode_ok, (unsigned)s_stat_enq_ok, (unsigned)s_stat_enq_fail,
-               (unsigned)s_stat_batch_drop, (unsigned)s_stat_gate_ws, (unsigned)s_stat_gate_spk,
-               ws == kMicWsOk ? "ok" : "err", spk == kMicSpeakEnd ? "end" : "start",
-               (unsigned)s_batch_count, short_rd ? 1u : 0u);
       s_stat_encode_ok = 0;
       s_stat_enq_ok = 0;
       s_stat_enq_fail = 0;

@@ -488,7 +488,7 @@ class CameraFaceService(metaclass=SingletonMeta):
                 faces = await self.recognize(frame_bytes)
         except Exception as exc:
             infer_ms = (time.monotonic() - t0) * 1000.0
-            logger.info(
+            logger.debug(
                 "[camera] device_id=%s bytes=%d accepted=true infer_ms=%.1f faces=- "
                 "status=recognize_error channel=%s err=%s",
                 device_id,
@@ -512,7 +512,7 @@ class CameraFaceService(metaclass=SingletonMeta):
         infer_ms = (time.monotonic() - t0) * 1000.0
         n_faces = len(faces or [])
         self._frame_count[device_id] = self._frame_count.get(device_id, 0) + 1
-        logger.info(
+        logger.debug(
             "[camera] device_id=%s bytes=%d accepted=true infer_ms=%.1f faces=%d status=ok channel=%s source=%s",
             device_id,
             nbytes,
